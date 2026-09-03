@@ -1,0 +1,757 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SecureEnroll Data Model</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@400;600&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+  :root {
+    --ground:   #F1F4F7;
+    --surface:  #FFFFFF;
+    --surface-2:#E9EEF3;
+    --ink:      #16212B;
+    --muted:    #5D6E7E;
+    --faint:    #8496A5;
+    --rule:     #CFD9E2;
+    --accent:   #2F4B7C;
+    --accent-soft: #E3EAF3;
+    --amber:    #9A5B15;
+    --amber-soft:#F5E9D8;
+    --shadow:   0 1px 2px rgba(22,33,43,.06), 0 8px 24px -16px rgba(22,33,43,.28);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:   #0E141A;
+      --surface:  #171F27;
+      --surface-2:#1E2831;
+      --ink:      #DCE5EC;
+      --muted:    #93A3B1;
+      --faint:    #6E7F8D;
+      --rule:     #2B3743;
+      --accent:   #8AACDE;
+      --accent-soft: #1D2A3A;
+      --amber:    #D9A160;
+      --amber-soft:#2E2418;
+      --shadow:   0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:   #0E141A;
+    --surface:  #171F27;
+    --surface-2:#1E2831;
+    --ink:      #DCE5EC;
+    --muted:    #93A3B1;
+    --faint:    #6E7F8D;
+    --rule:     #2B3743;
+    --accent:   #8AACDE;
+    --accent-soft: #1D2A3A;
+    --amber:    #D9A160;
+    --amber-soft:#2E2418;
+    --shadow:   0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 20px 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  /* ---------- masthead: styled like a records form header ---------- */
+  header.masthead {
+    padding: 52px 0 26px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: Spectral, Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(30px, 4.4vw, 46px);
+    line-height: 1.1;
+    letter-spacing: -.015em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    max-width: 62ch;
+    color: var(--muted);
+    font-size: 16.5px;
+    margin: 0;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    margin-top: 30px;
+    border-top: 1px solid var(--rule);
+  }
+  .meta-cell {
+    flex: 1 1 190px;
+    padding: 12px 18px 12px 0;
+    border-right: 1px solid var(--rule);
+  }
+  .meta-cell:last-child { border-right: 0; }
+  .meta-cell:not(:first-child) { padding-left: 18px; }
+  .meta-k {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 3px;
+  }
+  .meta-v { font-size: 14px; color: var(--ink); }
+
+  /* ---------- sections ---------- */
+  section { margin-top: 56px; }
+  h2 {
+    font-family: Spectral, Georgia, serif;
+    font-weight: 600;
+    font-size: 25px;
+    letter-spacing: -.01em;
+    margin: 0 0 6px;
+  }
+  .lede { color: var(--muted); max-width: 66ch; margin: 0 0 26px; }
+  h3 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 34px 0 14px;
+  }
+  p { max-width: 68ch; }
+
+  /* ---------- diagram ---------- */
+  figure.erd {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .erd-scroll { overflow-x: auto; padding: 8px; }
+  .erd-scroll svg { display: block; min-width: 940px; width: 100%; height: auto; }
+  figcaption {
+    border-top: 1px solid var(--rule);
+    padding: 13px 18px;
+    font-size: 13.5px;
+    color: var(--muted);
+    background: var(--surface-2);
+  }
+
+  .ent-box   { fill: var(--surface); stroke: var(--rule); stroke-width: 1; }
+  .ent-head  { fill: var(--accent-soft); stroke: var(--rule); stroke-width: 1; }
+  .ent-name  { fill: var(--ink); font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 700; }
+  .ent-col   { fill: var(--muted); font-family: "JetBrains Mono", monospace; font-size: 10.5px; }
+  .ent-col.key { fill: var(--ink); font-weight: 500; }
+  .flag      { fill: var(--accent); font-size: 9px; font-weight: 700; }
+  .enc       { fill: var(--amber); font-size: 11px; }
+  .rel       { stroke: var(--faint); stroke-width: 1.3; fill: none; }
+  .rel-label { fill: var(--faint); font-family: "JetBrains Mono", monospace; font-size: 9.5px; }
+  .arrowhead { fill: var(--faint); }
+  .grp       { fill: var(--faint); font-family: "Public Sans", sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .14em; }
+
+  /* ---------- legend ---------- */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 26px;
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .legend b {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--accent);
+  }
+  .legend .dot { color: var(--amber); }
+
+  /* ---------- table cards ---------- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+    gap: 16px;
+  }
+  .tbl {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .tbl > header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 11px 14px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule);
+  }
+  .tbl h4 {
+    margin: 0;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .tbl .note { font-size: 11.5px; color: var(--faint); }
+  .cols { list-style: none; margin: 0; padding: 6px 0; }
+  .cols li {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 14px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+  }
+  .cols li + li { border-top: 1px dotted var(--rule); }
+  .cname { color: var(--ink); }
+  .ctype { color: var(--faint); font-size: 10.5px; margin-left: auto; white-space: nowrap; }
+  .chip {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    padding: 1px 5px;
+    border-radius: 2px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .chip.enc { background: var(--amber-soft); color: var(--amber); }
+
+  /* ---------- matrix ---------- */
+  .matrix-wrap {
+    overflow-x: auto;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+  }
+  table.matrix { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 13px; }
+  table.matrix th, table.matrix td { padding: 9px 14px; text-align: left; }
+  table.matrix thead th {
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    border-bottom: 1px solid var(--rule);
+    font-weight: 700;
+  }
+  table.matrix tbody th {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
+    font-weight: 400;
+    color: var(--ink);
+  }
+  table.matrix td { text-align: center; }
+  table.matrix thead th:not(:first-child) { text-align: center; }
+  table.matrix tbody tr + tr th,
+  table.matrix tbody tr + tr td { border-top: 1px dotted var(--rule); }
+  .yes { color: var(--accent); font-weight: 700; }
+  .no  { color: var(--rule); }
+
+  /* ---------- notes ---------- */
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 28px; }
+  .note-item { border-top: 2px solid var(--accent); padding-top: 12px; }
+  .note-item h4 {
+    margin: 0 0 6px;
+    font-size: 15px;
+    font-family: Spectral, Georgia, serif;
+    font-weight: 600;
+  }
+  .note-item p { margin: 0; font-size: 14px; color: var(--muted); max-width: none; }
+  code {
+    font-family: "JetBrains Mono", monospace;
+    font-size: .88em;
+    background: var(--surface-2);
+    padding: 1px 4px;
+    border-radius: 2px;
+  }
+
+  footer.foot {
+    margin-top: 64px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 12.5px;
+    color: var(--faint);
+  }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Database design reference</p>
+  <h1>SecureEnroll Data Model</h1>
+  <p class="standfirst">Thirteen tables behind the enrollment system: who may act, whose data is held, what is encrypted at rest, and what the audit log records. Build the schema from this before writing a single API route.</p>
+  <div class="meta-row">
+    <div class="meta-cell"><span class="meta-k">System</span><span class="meta-v">Caloocan City Elementary School</span></div>
+    <div class="meta-cell"><span class="meta-k">Engine</span><span class="meta-v">PostgreSQL 16 &middot; pgcrypto</span></div>
+    <div class="meta-cell"><span class="meta-k">Roles</span><span class="meta-v">Parent &middot; Registrar &middot; Admin</span></div>
+    <div class="meta-cell"><span class="meta-k">Tables</span><span class="meta-v">13</span></div>
+  </div>
+</header>
+
+<section>
+  <h2>Entity relationship diagram</h2>
+  <p class="lede">Four clusters, left to right: who is allowed to do what, who holds an account, whose records are stored, and what is being applied for.</p>
+
+  <figure class="erd">
+    <div class="erd-scroll">
+      <svg viewBox="0 0 1260 750" role="img" aria-label="Entity relationship diagram for SecureEnroll. Roles and permissions join through role_permissions and attach to users. Users have one guardian profile and generate audit log entries. Guardians link to students through student_guardians. Students, school years, grade levels and sections all feed enrollment_applications, which owns uploaded documents.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="arrowhead" d="M 0 0 L 10 5 L 0 10 z"></path>
+          </marker>
+        </defs>
+
+        <!-- group labels -->
+        <text class="grp" x="40"  y="56">ACCESS CONTROL</text>
+        <text class="grp" x="330" y="56">ACCOUNTS</text>
+        <text class="grp" x="620" y="56">PEOPLE</text>
+        <text class="grp" x="910" y="56">ENROLLMENT</text>
+
+        <!-- ============ relationships (drawn first, behind boxes) ============ -->
+        <path class="rel" d="M150,164 L150,200" marker-end="url(#ah)"></path>
+        <path class="rel" d="M150,304 L150,268" marker-end="url(#ah)"></path>
+        <path class="rel" d="M260,122 L330,122" marker-end="url(#ah)"></path>
+        <path class="rel" d="M440,196 L440,304" marker-end="url(#ah)"></path>
+        <path class="rel" d="M550,120 L620,120" marker-end="url(#ah)"></path>
+        <path class="rel" d="M730,180 L730,230" marker-end="url(#ah)"></path>
+        <path class="rel" d="M730,370 L730,314" marker-end="url(#ah)"></path>
+        <path class="rel" d="M840,428 L875,428 L875,520 L910,520" marker-end="url(#ah)"></path>
+        <path class="rel" d="M910,130 L880,130 L880,360 L910,360" marker-end="url(#ah)"></path>
+        <path class="rel" d="M910,256 L892,256 L892,392 L910,392" marker-end="url(#ah)"></path>
+        <path class="rel" d="M1020,420 L1020,470" marker-end="url(#ah)"></path>
+        <path class="rel" d="M1130,130 L1200,130 L1200,500 L1130,500" marker-end="url(#ah)"></path>
+        <path class="rel" d="M1130,256 L1168,256 L1168,540 L1130,540" marker-end="url(#ah)"></path>
+        <path class="rel" d="M1020,570 L1020,610" marker-end="url(#ah)"></path>
+
+        <text class="rel-label" x="295" y="115" text-anchor="middle">role_id</text>
+        <text class="rel-label" x="447" y="254">user_id</text>
+        <text class="rel-label" x="585" y="113" text-anchor="middle">1 : 1</text>
+        <text class="rel-label" x="866" y="421" text-anchor="middle">student_id</text>
+        <text class="rel-label" x="1195" y="122" text-anchor="end">school_year_id</text>
+        <text class="rel-label" x="1163" y="248" text-anchor="end">grade_level_id</text>
+        <text class="rel-label" x="1027" y="596">application_id</text>
+
+        <!-- ============ 1. roles ============ -->
+        <rect class="ent-box"  x="40" y="80" width="220" height="84" rx="3"></rect>
+        <rect class="ent-head" x="40" y="80" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="52" y="98">roles</text>
+        <text class="ent-col key" x="52" y="121">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col" x="52" y="137">name</text>
+        <text class="ent-col" x="52" y="153">description</text>
+
+        <!-- ============ 2. role_permissions ============ -->
+        <rect class="ent-box"  x="40" y="200" width="220" height="68" rx="3"></rect>
+        <rect class="ent-head" x="40" y="200" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="52" y="218">role_permissions</text>
+        <text class="ent-col key" x="52" y="241">role_id <tspan class="flag">FK</tspan></text>
+        <text class="ent-col key" x="52" y="257">permission_id <tspan class="flag">FK</tspan></text>
+
+        <!-- ============ 3. permissions ============ -->
+        <rect class="ent-box"  x="40" y="304" width="220" height="84" rx="3"></rect>
+        <rect class="ent-head" x="40" y="304" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="52" y="322">permissions</text>
+        <text class="ent-col key" x="52" y="345">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col" x="52" y="361">code</text>
+        <text class="ent-col" x="52" y="377">description</text>
+
+        <!-- ============ 4. users ============ -->
+        <rect class="ent-box"  x="330" y="80" width="220" height="116" rx="3"></rect>
+        <rect class="ent-head" x="330" y="80" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="342" y="98">users</text>
+        <text class="ent-col key" x="342" y="121">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col" x="342" y="137">email</text>
+        <text class="ent-col" x="342" y="153">password_hash</text>
+        <text class="ent-col key" x="342" y="169">role_id <tspan class="flag">FK</tspan></text>
+        <text class="ent-col" x="342" y="185">is_active</text>
+
+        <!-- ============ 5. audit_logs ============ -->
+        <rect class="ent-box"  x="330" y="304" width="220" height="116" rx="3"></rect>
+        <rect class="ent-head" x="330" y="304" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="342" y="322">audit_logs</text>
+        <text class="ent-col key" x="342" y="345">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col key" x="342" y="361">user_id <tspan class="flag">FK</tspan></text>
+        <text class="ent-col" x="342" y="377">action</text>
+        <text class="ent-col" x="342" y="393">entity_id</text>
+        <text class="ent-col" x="342" y="409">ip_address</text>
+
+        <!-- ============ 6. guardians ============ -->
+        <rect class="ent-box"  x="620" y="80" width="220" height="100" rx="3"></rect>
+        <rect class="ent-head" x="620" y="80" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="632" y="98">guardians</text>
+        <text class="ent-col key" x="632" y="121">user_id <tspan class="flag">PK FK</tspan></text>
+        <text class="ent-col" x="632" y="137">last_name</text>
+        <text class="ent-col" x="632" y="153">contact_number <tspan class="enc">&#9679;</tspan></text>
+        <text class="ent-col" x="632" y="169">address <tspan class="enc">&#9679;</tspan></text>
+
+        <!-- ============ 7. student_guardians ============ -->
+        <rect class="ent-box"  x="620" y="230" width="220" height="84" rx="3"></rect>
+        <rect class="ent-head" x="620" y="230" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="632" y="248">student_guardians</text>
+        <text class="ent-col key" x="632" y="271">student_id <tspan class="flag">FK</tspan></text>
+        <text class="ent-col key" x="632" y="287">guardian_id <tspan class="flag">FK</tspan></text>
+        <text class="ent-col" x="632" y="303">relationship</text>
+
+        <!-- ============ 8. students ============ -->
+        <rect class="ent-box"  x="620" y="370" width="220" height="116" rx="3"></rect>
+        <rect class="ent-head" x="620" y="370" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="632" y="388">students</text>
+        <text class="ent-col key" x="632" y="411">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col" x="632" y="427">lrn_encrypted <tspan class="enc">&#9679;</tspan></text>
+        <text class="ent-col" x="632" y="443">lrn_hash</text>
+        <text class="ent-col" x="632" y="459">last_name</text>
+        <text class="ent-col" x="632" y="475">birth_date <tspan class="enc">&#9679;</tspan></text>
+
+        <!-- ============ 9. school_years ============ -->
+        <rect class="ent-box"  x="910" y="80" width="220" height="100" rx="3"></rect>
+        <rect class="ent-head" x="910" y="80" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="922" y="98">school_years</text>
+        <text class="ent-col key" x="922" y="121">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col" x="922" y="137">label</text>
+        <text class="ent-col" x="922" y="153">opens_at</text>
+        <text class="ent-col" x="922" y="169">closes_at</text>
+
+        <!-- ============ 10. grade_levels ============ -->
+        <rect class="ent-box"  x="910" y="214" width="220" height="84" rx="3"></rect>
+        <rect class="ent-head" x="910" y="214" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="922" y="232">grade_levels</text>
+        <text class="ent-col key" x="922" y="255">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col" x="922" y="271">name</text>
+        <text class="ent-col" x="922" y="287">sort_order</text>
+
+        <!-- ============ 11. sections ============ -->
+        <rect class="ent-box"  x="910" y="336" width="220" height="84" rx="3"></rect>
+        <rect class="ent-head" x="910" y="336" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="922" y="354">sections</text>
+        <text class="ent-col key" x="922" y="377">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col" x="922" y="393">name</text>
+        <text class="ent-col" x="922" y="409">capacity</text>
+
+        <!-- ============ 12. enrollment_applications ============ -->
+        <rect class="ent-box"  x="910" y="470" width="220" height="100" rx="3"></rect>
+        <rect class="ent-head" x="910" y="470" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="922" y="488">enrollment_applications</text>
+        <text class="ent-col key" x="922" y="511">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col key" x="922" y="527">student_id <tspan class="flag">FK</tspan></text>
+        <text class="ent-col" x="922" y="543">status</text>
+        <text class="ent-col key" x="922" y="559">reviewed_by <tspan class="flag">FK</tspan></text>
+
+        <!-- ============ 13. documents ============ -->
+        <rect class="ent-box"  x="910" y="610" width="220" height="100" rx="3"></rect>
+        <rect class="ent-head" x="910" y="610" width="220" height="26" rx="3"></rect>
+        <text class="ent-name" x="922" y="628">documents</text>
+        <text class="ent-col key" x="922" y="651">id <tspan class="flag">PK</tspan></text>
+        <text class="ent-col key" x="922" y="667">application_id <tspan class="flag">FK</tspan></text>
+        <text class="ent-col" x="922" y="683">doc_type</text>
+        <text class="ent-col" x="922" y="699">checksum</text>
+      </svg>
+    </div>
+    <figcaption>Every enrollment record traces back to a named user account, and every user reaches the system through exactly one role. Arrows point from the referenced table toward the table holding the foreign key.</figcaption>
+  </figure>
+
+  <div class="legend">
+    <span><b>PK</b> primary key</span>
+    <span><b>FK</b> foreign key</span>
+    <span><span class="dot">&#9679;</span> encrypted at rest (BYTEA via pgcrypto)</span>
+    <span>Only key columns are shown; full column lists follow.</span>
+  </div>
+</section>
+
+<section>
+  <h2>Who may do what</h2>
+  <p class="lede">Permissions live in the database, not in <code>if</code> statements. The API loads a user's permission codes at login and checks the code — never the role name — before every protected action.</p>
+  <div class="matrix-wrap">
+    <table class="matrix">
+      <thead>
+        <tr><th>Permission code</th><th>Parent</th><th>Registrar</th><th>Admin</th></tr>
+      </thead>
+      <tbody>
+        <tr><th>application.create</th><td class="yes">&#10003;</td><td class="no">&mdash;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>application.view_own</th><td class="yes">&#10003;</td><td class="no">&mdash;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>application.view_all</th><td class="no">&mdash;</td><td class="yes">&#10003;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>application.review</th><td class="no">&mdash;</td><td class="yes">&#10003;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>application.approve</th><td class="no">&mdash;</td><td class="yes">&#10003;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>document.upload</th><td class="yes">&#10003;</td><td class="no">&mdash;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>document.verify</th><td class="no">&mdash;</td><td class="yes">&#10003;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>student.view_all</th><td class="no">&mdash;</td><td class="yes">&#10003;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>user.manage</th><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>audit.view</th><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="yes">&#10003;</td></tr>
+        <tr><th>settings.manage</th><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="yes">&#10003;</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Design decisions worth defending</h2>
+  <div class="notes">
+    <div class="note-item">
+      <h4>Encrypt identifiers, not names</h4>
+      <p>An encrypted column cannot be searched or sorted. Names stay in plaintext so the registrar can look up a pupil; the Learner Reference Number, birth date, contact number and address are encrypted, because nothing in the system needs to sort by them.</p>
+    </div>
+    <div class="note-item">
+      <h4>The blind index</h4>
+      <p>We still need to catch a duplicate LRN. <code>lrn_hash</code> stores a SHA&#8209;256 of the LRN beside the encrypted value: unique, checkable, and not reversible back to the number.</p>
+    </div>
+    <div class="note-item">
+      <h4>Duplicates die at the database</h4>
+      <p><code>UNIQUE (student_id, school_year_id)</code> makes a double enrollment impossible even if two parents submit at the same instant. Validation in React is a courtesy; the constraint is the guarantee.</p>
+    </div>
+    <div class="note-item">
+      <h4>The audit log is append-only</h4>
+      <p>No route in the API issues <code>UPDATE</code> or <code>DELETE</code> against <code>audit_logs</code>. A record that can be edited proves nothing, which is the whole point of non-repudiation.</p>
+    </div>
+    <div class="note-item">
+      <h4>Roles are rows, not strings</h4>
+      <p>Adding a principal or a cashier role later means one <code>INSERT</code> and a few permission grants. Hardcoding <code>if (user.role === 'admin')</code> across the codebase is how the excessive-privilege problem in the literature starts.</p>
+    </div>
+    <div class="note-item">
+      <h4>Files live outside the web root</h4>
+      <p><code>documents.file_path</code> points at storage the web server will not serve directly. Downloads go through an authenticated route that checks the permission first, and <code>checksum</code> proves the file was not swapped afterwards.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Full column reference</h2>
+  <p class="lede">Column names and types as they appear in <code>schema.sql</code>. Run that file against an empty database to create all of this in one pass.</p>
+
+  <h3>Access control</h3>
+  <div class="grid">
+    <div class="tbl">
+      <header><h4>roles</h4><span class="note">3 seeded rows</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">SMALLSERIAL</span></li>
+        <li><span class="cname">name</span><span class="chip">UNIQUE</span><span class="ctype">VARCHAR(30)</span></li>
+        <li><span class="cname">description</span><span class="ctype">TEXT</span></li>
+      </ul>
+    </div>
+    <div class="tbl">
+      <header><h4>permissions</h4><span class="note">11 seeded rows</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">SMALLSERIAL</span></li>
+        <li><span class="cname">code</span><span class="chip">UNIQUE</span><span class="ctype">VARCHAR(60)</span></li>
+        <li><span class="cname">description</span><span class="ctype">TEXT</span></li>
+      </ul>
+    </div>
+    <div class="tbl">
+      <header><h4>role_permissions</h4><span class="note">join table</span></header>
+      <ul class="cols">
+        <li><span class="cname">role_id</span><span class="chip">PK FK</span><span class="ctype">SMALLINT</span></li>
+        <li><span class="cname">permission_id</span><span class="chip">PK FK</span><span class="ctype">SMALLINT</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Accounts</h3>
+  <div class="grid">
+    <div class="tbl">
+      <header><h4>users</h4><span class="note">one row per login</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">BIGSERIAL</span></li>
+        <li><span class="cname">email</span><span class="chip">UNIQUE</span><span class="ctype">VARCHAR(255)</span></li>
+        <li><span class="cname">password_hash</span><span class="ctype">TEXT</span></li>
+        <li><span class="cname">role_id</span><span class="chip">FK</span><span class="ctype">SMALLINT</span></li>
+        <li><span class="cname">is_active</span><span class="ctype">BOOLEAN</span></li>
+        <li><span class="cname">email_verified_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+        <li><span class="cname">failed_login_attempts</span><span class="ctype">SMALLINT</span></li>
+        <li><span class="cname">locked_until</span><span class="ctype">TIMESTAMPTZ</span></li>
+        <li><span class="cname">last_login_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+        <li><span class="cname">created_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+        <li><span class="cname">updated_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+      </ul>
+    </div>
+    <div class="tbl">
+      <header><h4>audit_logs</h4><span class="note">append-only</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">BIGSERIAL</span></li>
+        <li><span class="cname">user_id</span><span class="chip">FK</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">action</span><span class="ctype">VARCHAR(60)</span></li>
+        <li><span class="cname">entity_type</span><span class="ctype">VARCHAR(40)</span></li>
+        <li><span class="cname">entity_id</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">ip_address</span><span class="ctype">INET</span></li>
+        <li><span class="cname">user_agent</span><span class="ctype">TEXT</span></li>
+        <li><span class="cname">details</span><span class="ctype">JSONB</span></li>
+        <li><span class="cname">created_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>People</h3>
+  <div class="grid">
+    <div class="tbl">
+      <header><h4>guardians</h4><span class="note">1:1 with users</span></header>
+      <ul class="cols">
+        <li><span class="cname">user_id</span><span class="chip">PK FK</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">first_name</span><span class="ctype">VARCHAR(60)</span></li>
+        <li><span class="cname">middle_name</span><span class="ctype">VARCHAR(60)</span></li>
+        <li><span class="cname">last_name</span><span class="ctype">VARCHAR(60)</span></li>
+        <li><span class="cname">contact_number</span><span class="chip enc">ENC</span><span class="ctype">BYTEA</span></li>
+        <li><span class="cname">address</span><span class="chip enc">ENC</span><span class="ctype">BYTEA</span></li>
+        <li><span class="cname">valid_id_type</span><span class="ctype">VARCHAR(40)</span></li>
+      </ul>
+    </div>
+    <div class="tbl">
+      <header><h4>students</h4><span class="note">the pupil record</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">BIGSERIAL</span></li>
+        <li><span class="cname">lrn_encrypted</span><span class="chip enc">ENC</span><span class="ctype">BYTEA</span></li>
+        <li><span class="cname">lrn_hash</span><span class="chip">UNIQUE</span><span class="ctype">CHAR(64)</span></li>
+        <li><span class="cname">first_name</span><span class="ctype">VARCHAR(60)</span></li>
+        <li><span class="cname">middle_name</span><span class="ctype">VARCHAR(60)</span></li>
+        <li><span class="cname">last_name</span><span class="ctype">VARCHAR(60)</span></li>
+        <li><span class="cname">birth_date</span><span class="chip enc">ENC</span><span class="ctype">BYTEA</span></li>
+        <li><span class="cname">sex</span><span class="ctype">CHAR(1)</span></li>
+      </ul>
+    </div>
+    <div class="tbl">
+      <header><h4>student_guardians</h4><span class="note">join table</span></header>
+      <ul class="cols">
+        <li><span class="cname">student_id</span><span class="chip">PK FK</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">guardian_id</span><span class="chip">PK FK</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">relationship</span><span class="ctype">VARCHAR(30)</span></li>
+        <li><span class="cname">is_primary</span><span class="ctype">BOOLEAN</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>School structure and enrollment</h3>
+  <div class="grid">
+    <div class="tbl">
+      <header><h4>school_years</h4><span class="note">'2026-2027'</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">SMALLSERIAL</span></li>
+        <li><span class="cname">label</span><span class="chip">UNIQUE</span><span class="ctype">VARCHAR(9)</span></li>
+        <li><span class="cname">opens_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+        <li><span class="cname">closes_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+        <li><span class="cname">is_active</span><span class="ctype">BOOLEAN</span></li>
+      </ul>
+    </div>
+    <div class="tbl">
+      <header><h4>grade_levels</h4><span class="note">Kinder &ndash; Grade 6</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">SMALLSERIAL</span></li>
+        <li><span class="cname">name</span><span class="chip">UNIQUE</span><span class="ctype">VARCHAR(20)</span></li>
+        <li><span class="cname">sort_order</span><span class="ctype">SMALLINT</span></li>
+      </ul>
+    </div>
+    <div class="tbl">
+      <header><h4>sections</h4><span class="note">per year, per level</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">SERIAL</span></li>
+        <li><span class="cname">name</span><span class="ctype">VARCHAR(40)</span></li>
+        <li><span class="cname">grade_level_id</span><span class="chip">FK</span><span class="ctype">SMALLINT</span></li>
+        <li><span class="cname">school_year_id</span><span class="chip">FK</span><span class="ctype">SMALLINT</span></li>
+        <li><span class="cname">capacity</span><span class="ctype">SMALLINT</span></li>
+      </ul>
+    </div>
+    <div class="tbl">
+      <header><h4>enrollment_applications</h4><span class="note">the central record</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">BIGSERIAL</span></li>
+        <li><span class="cname">student_id</span><span class="chip">FK</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">school_year_id</span><span class="chip">FK</span><span class="ctype">SMALLINT</span></li>
+        <li><span class="cname">grade_level_id</span><span class="chip">FK</span><span class="ctype">SMALLINT</span></li>
+        <li><span class="cname">section_id</span><span class="chip">FK</span><span class="ctype">INTEGER</span></li>
+        <li><span class="cname">status</span><span class="ctype">VARCHAR(20)</span></li>
+        <li><span class="cname">submitted_by</span><span class="chip">FK</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">submitted_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+        <li><span class="cname">reviewed_by</span><span class="chip">FK</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">reviewed_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+        <li><span class="cname">remarks</span><span class="ctype">TEXT</span></li>
+      </ul>
+    </div>
+    <div class="tbl">
+      <header><h4>documents</h4><span class="note">uploads per application</span></header>
+      <ul class="cols">
+        <li><span class="cname">id</span><span class="chip">PK</span><span class="ctype">BIGSERIAL</span></li>
+        <li><span class="cname">application_id</span><span class="chip">FK</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">doc_type</span><span class="ctype">VARCHAR(40)</span></li>
+        <li><span class="cname">file_path</span><span class="ctype">TEXT</span></li>
+        <li><span class="cname">mime_type</span><span class="ctype">VARCHAR(80)</span></li>
+        <li><span class="cname">file_size</span><span class="ctype">INTEGER</span></li>
+        <li><span class="cname">checksum</span><span class="ctype">CHAR(64)</span></li>
+        <li><span class="cname">status</span><span class="ctype">VARCHAR(20)</span></li>
+        <li><span class="cname">verified_by</span><span class="chip">FK</span><span class="ctype">BIGINT</span></li>
+        <li><span class="cname">verified_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+        <li><span class="cname">uploaded_at</span><span class="ctype">TIMESTAMPTZ</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Application status flow</h2>
+  <p class="lede">The <code>status</code> column on <code>enrollment_applications</code> accepts six values, and a CHECK constraint rejects anything else. Only a user holding <code>application.approve</code> can move a record into the last two.</p>
+  <figure class="erd">
+    <div class="erd-scroll">
+      <svg viewBox="0 0 900 270" role="img" aria-label="Status flow. Draft moves to submitted, then to under review. From under review the registrar sends the application to approved, to rejected, or to needs revision, which returns the parent to submitted.">
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="arrowhead" d="M 0 0 L 10 5 L 0 10 z"></path>
+          </marker>
+        </defs>
+
+        <path class="rel" d="M150,116 L210,116" marker-end="url(#ah2)"></path>
+        <path class="rel" d="M370,116 L430,116" marker-end="url(#ah2)"></path>
+        <path class="rel" d="M590,110 L630,110 L630,56 L670,56" marker-end="url(#ah2)"></path>
+        <path class="rel" d="M590,122 L630,122 L630,176 L670,176" marker-end="url(#ah2)"></path>
+        <path class="rel" d="M550,142 L550,222 L520,222" marker-end="url(#ah2)"></path>
+        <path class="rel" d="M360,200 L360,142" marker-end="url(#ah2)"></path>
+
+        <rect class="ent-box" x="30"  y="90" width="120" height="52" rx="3"></rect>
+        <text class="ent-name" x="90"  y="121" text-anchor="middle">draft</text>
+        <rect class="ent-box" x="210" y="90" width="160" height="52" rx="3"></rect>
+        <text class="ent-name" x="290" y="121" text-anchor="middle">submitted</text>
+        <rect class="ent-box" x="430" y="90" width="160" height="52" rx="3"></rect>
+        <text class="ent-name" x="510" y="121" text-anchor="middle">under_review</text>
+        <rect class="ent-head" x="670" y="30" width="150" height="52" rx="3"></rect>
+        <text class="ent-name" x="745" y="61" text-anchor="middle">approved</text>
+        <rect class="ent-head" x="670" y="150" width="150" height="52" rx="3"></rect>
+        <text class="ent-name" x="745" y="181" text-anchor="middle">rejected</text>
+        <rect class="ent-box" x="350" y="200" width="170" height="44" rx="3"></rect>
+        <text class="ent-name" x="435" y="227" text-anchor="middle">needs_revision</text>
+
+        <text class="rel-label" x="180" y="110" text-anchor="middle">parent</text>
+        <text class="rel-label" x="400" y="110" text-anchor="middle">registrar</text>
+        <text class="rel-label" x="558" y="185">corrections</text>
+        <text class="rel-label" x="352" y="178" text-anchor="end">resubmit</text>
+      </svg>
+    </div>
+    <figcaption>Six statuses, one direction of travel except for the correction loop. Every transition writes a row to <code>audit_logs</code> naming the user who made it.</figcaption>
+  </figure>
+</section>
+
+<footer class="foot">
+  SecureEnroll &middot; A Secure Online Enrollment System with Encrypted Student Data and Role-Based Access Control &middot;
+  University of Caloocan City &ndash; North Campus &middot; Information Assurance and Security 1
+</footer>
+
+</div>
+
+</body>
+</html>
