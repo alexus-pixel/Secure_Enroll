@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const authRoutes = require('./routes/authRoutes');
 const cors = require('cors');
+const applicationRoutes = require('./routes/applicationRoutes');
 const pool = require('./db/pool');
 
 const app = express();
@@ -21,4 +22,5 @@ app.get('/api/health', async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.use('/api/auth', authRoutes);
+app.use('/api/applications', applicationRoutes);
 app.listen(PORT, () => console.log(`SecureEnroll API running on port ${PORT}`));
