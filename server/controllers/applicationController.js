@@ -1,7 +1,8 @@
 const pool = require('../db/pool');
 const { createStudent } = require('../db/students');
 const { upsertGuardian } = require('../db/guardians');
-const { linkStudentGuardian, createApplication, getMyApplications } = require('../db/applications');
+const { linkStudentGuardian, createApplication, getMyApplications, getApplicationForGuardian } = require('../db/applications');
+const { getDocumentsForApplication } = require('../db/documents');
 
 async function logAudit(userId, action, entityType, entityId, req) {
   await pool.query(
@@ -60,4 +61,16 @@ async function mine(req, res) {
   }
 }
 
-module.exports = { submit, mine };
+async function detail(req, res) {
+  try {
+    const application = await getApplicationForGuardian(req.params.id, req.user.id);
+    if (!application) return res.status(404).json({ message: 'Application not found.' });
+    const documents = await getDocumentsForApplication(req.params.id);
+    res.json({ ...application, documents });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Could not load application.' });
+  }
+}
+
+module.exports = { submit, mine, detail };

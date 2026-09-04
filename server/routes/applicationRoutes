@@ -1,10 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { authenticate, requirePermission } = require('../middleware/auth');
-const { submit, mine } = require('../controllers/applicationController');
+const { submit, mine, detail } = require('../controllers/applicationController');
+
 
 router.post('/', authenticate, requirePermission('application.create'), submit);
 router.get('/mine', authenticate, requirePermission('application.view_own'), mine);
+router.get('/:id', authenticate, requirePermission('application.view_own'), detail);
 
 const { upload } = require('../middleware/upload');
 const { uploadDocument, listDocuments } = require('../controllers/documentController');

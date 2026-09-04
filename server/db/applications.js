@@ -34,4 +34,21 @@ async function getMyApplications(guardianId) {
   return result.rows;
 }
 
-module.exports = { linkStudentGuardian, createApplication, getMyApplications };
+async function getApplicationForGuardian(applicationId, guardianId) {
+  const result = await pool.query(
+    `SELECT ea.id, s.first_name, s.last_name, gl.name AS grade_level,
+            sy.label AS school_year, ea.status, ea.submitted_at, ea.reviewed_at,
+            ea.remarks, sec.name AS section
+     FROM enrollment_applications ea
+     JOIN students s ON s.id = ea.student_id
+     JOIN student_guardians sg ON sg.student_id = s.id
+     JOIN grade_levels gl ON gl.id = ea.grade_level_id
+     JOIN school_years sy ON sy.id = ea.school_year_id
+     LEFT JOIN sections sec ON sec.id = ea.section_id
+     WHERE ea.id = $1 AND sg.guardian_id = $2`,
+    [applicationId, guardianId]
+  );
+  return result.rows[0] || null;
+}
+
+module.exports = { linkStudentGuardian, createApplication, getMyApplications, getApplicationForGuardian };
