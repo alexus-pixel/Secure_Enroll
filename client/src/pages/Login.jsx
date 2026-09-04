@@ -13,8 +13,13 @@ export default function Login() {
     e.preventDefault();
     setError('');
     try {
-      await login(email, password);
-      navigate('/dashboard');
+      const user = await login(email, password);
+
+      if (user.role === 'admin') {
+        navigate('/admin/users');
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed.');
     }
@@ -22,6 +27,7 @@ export default function Login() {
 
   return (
     <form onSubmit={handleSubmit}>
+
       <h1>SecureEnroll — Sign In</h1>
       {error && <p style={{ color: 'red' }}>{error}</p>}
       <input type="email" placeholder="Email" value={email}

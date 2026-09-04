@@ -8,6 +8,7 @@ const pool = require('./db/pool');
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use('/api/admin', require('./routes/adminRoutes'));
 
 // Health check: proves Express is running AND can reach Postgres
 app.get('/api/health', async (req, res) => {
