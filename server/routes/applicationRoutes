@@ -1,0 +1,9 @@
+const express = require('express');
+const router = express.Router();
+const { authenticate, requirePermission } = require('../middleware/auth');
+const { submit, mine } = require('../controllers/applicationController');
+
+router.post('/', authenticate, requirePermission('application.create'), submit);
+router.get('/mine', authenticate, requirePermission('application.view_own'), mine);
+
+module.exports = router;
