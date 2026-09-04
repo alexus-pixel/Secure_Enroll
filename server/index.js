@@ -23,4 +23,10 @@ app.get('/api/health', async (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
+
+app.use((err, req, res, next) => {
+  if (err) return res.status(400).json({ message: err.message });
+  next();
+});
+
 app.listen(PORT, () => console.log(`SecureEnroll API running on port ${PORT}`));

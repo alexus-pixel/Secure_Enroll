@@ -6,4 +6,10 @@ const { submit, mine } = require('../controllers/applicationController');
 router.post('/', authenticate, requirePermission('application.create'), submit);
 router.get('/mine', authenticate, requirePermission('application.view_own'), mine);
 
+const { upload } = require('../middleware/upload');
+const { uploadDocument, listDocuments } = require('../controllers/documentController');
+
+router.post('/:id/documents', authenticate, requirePermission('document.upload'), upload.single('file'), uploadDocument);
+router.get('/:id/documents', authenticate, requirePermission('application.view_own'), listDocuments);
+
 module.exports = router;
