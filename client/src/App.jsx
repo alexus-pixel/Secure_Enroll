@@ -6,6 +6,7 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import NewApplication from './pages/NewApplication';
 import ApplicationDetail from './pages/ApplicationDetail';
+import AccountSettings from './pages/AccountSettings';
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/applications/new" element={<ProtectedRoute><NewApplication /></ProtectedRoute>} />
           <Route path="/applications/:id" element={<ProtectedRoute><ApplicationDetail /></ProtectedRoute>} />
+          <Route path="/settings" element={<ProtectedRoute><AccountSettings /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

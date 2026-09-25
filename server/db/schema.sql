@@ -98,7 +98,7 @@ CREATE TABLE guardians (
     middle_name      VARCHAR(60),
     last_name        VARCHAR(60) NOT NULL,
     contact_number   BYTEA       NOT NULL,   -- encrypted
-    address          BYTEA       NOT NULL,   -- encrypted
+    address          BYTEA,                  -- encrypted; filled in later at enrollment time
     valid_id_type    VARCHAR(40),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()

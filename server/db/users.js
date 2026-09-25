@@ -28,4 +28,26 @@ async function createUser({ email, passwordHash, roleId }) {
   return result.rows[0];
 }
 
-module.exports = { findRoleIdByName, findUserByEmail, createUser };
+async function findUserById(id) {
+  const result = await pool.query(
+    `SELECT u.id, u.email, u.password_hash, r.name AS role_name,
+            g.first_name, g.middle_name, g.last_name
+     FROM users u
+     JOIN roles r ON r.id = u.role_id
+     LEFT JOIN guardians g ON g.user_id = u.id
+     WHERE u.id = $1`,
+    [id]
+  );
+  return result.rows[0];
+}
+
+async function updateUserPassword(userId, passwordHash) {
+  await pool.query(
+    `UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1`,
+    [userId, passwordHash]
+  );
+}
+
+module.exports = {
+  findRoleIdByName, findUserByEmail, findUserById, createUser, updateUserPassword,
+};
