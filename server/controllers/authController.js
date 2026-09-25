@@ -5,6 +5,7 @@ const {
 } = require('../db/users');
 const { createGuardianProfile, getGuardianProfile, updateGuardianProfile } = require('../db/guardians');
 const { isValidEmail, isValidName, isValidContactNumber, passwordIssues } = require('../utils/validators');
+const { checkEmailDomain } = require('../utils/emailDomain');
 const pool = require('../db/pool');
 
 async function logAudit(userId, action, req) {
@@ -44,6 +45,11 @@ async function register(req, res) {
 
     if (problems.length) {
       return res.status(400).json({ message: problems[0], errors: problems });
+    }
+
+    const domainCheck = await checkEmailDomain(email);
+    if (!domainCheck.ok) {
+      return res.status(400).json({ message: domainCheck.reason });
     }
 
     const normalizedEmail = email.toLowerCase().trim();
@@ -207,4 +213,34 @@ async function changePassword(req, res) {
   }
 }
 
-module.exports = { register, login, getMe, updateProfile, changePassword };
+async function checkEmail(req, res) {
+  try {
+    const email = (req.query.email || '').toString();
+
+    if (!isValidEmail(email)) {
+      return res.json({ valid: false, reason: 'Enter a valid email address.' });
+    }
+
+    const domainCheck = await checkEmailDomain(email);
+    if (!domainCheck.ok) {
+      return res.json({ valid: false, reason: domainCheck.reason });
+    }
+
+    const existing = await findUserByEmail(email.toLowerCase().trim());
+    if (existing) {
+      return res.json({ valid: false, reason: 'An account with that email already exists.' });
+    }
+
+    res.json({ valid: true });
+  } catch (err) {
+    console.error(err);
+    // Fail open: if OUR check breaks (DNS resolver unreachable, etc.) that's
+    // not evidence the user's address is fake. register() re-validates
+    // everything from scratch anyway, so nothing bad slips through.
+    res.json({ valid: true });
+  }
+}
+
+module.exports = {
+  register, login, getMe, updateProfile, changePassword, checkEmail,
+};

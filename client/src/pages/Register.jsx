@@ -29,6 +29,7 @@ export default function Register() {
   });
   const [touched, setTouched] = useState({});
   const [errors, setErrors] = useState({});
+  const [emailChecking, setEmailChecking] = useState(false);
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
@@ -49,6 +50,30 @@ export default function Register() {
   const handleBlur = (field) => () => {
     setTouched((prev) => ({ ...prev, [field]: true }));
     setErrors((prev) => ({ ...prev, [field]: validateField(field, form) }));
+  };
+
+  // Email gets an extra async pass: the sync check above only confirms the
+  // *shape* looks like an email. This confirms the domain can actually
+  // receive mail (and isn't already registered) before the parent fills
+  // out the rest of the form.
+  const handleEmailBlur = async () => {
+    setTouched((prev) => ({ ...prev, email: true }));
+    const formatError = validateEmail(form.email);
+    if (formatError) {
+      setErrors((prev) => ({ ...prev, email: formatError }));
+      return;
+    }
+    setEmailChecking(true);
+    try {
+      const { data } = await api.get('/auth/check-email', { params: { email: form.email.trim() } });
+      setErrors((prev) => ({ ...prev, email: data.valid ? '' : data.reason }));
+    } catch {
+      // A network hiccup here shouldn't block the user -- register()
+      // re-checks everything, authoritatively, on submit regardless.
+      setErrors((prev) => ({ ...prev, email: '' }));
+    } finally {
+      setEmailChecking(false);
+    }
   };
 
   async function handleSubmit(e) {
@@ -129,9 +154,10 @@ export default function Register() {
           <div className="field">
             <label className="label" htmlFor="email">Email Address</label>
             <input id="email" className={`input${errors.email ? ' input-error' : ''}`} type="email"
-              value={form.email} onChange={update('email')} onBlur={handleBlur('email')}
+              value={form.email} onChange={update('email')} onBlur={handleEmailBlur}
               autoComplete="email" required />
-            {errors.email && <p className="field-error">{errors.email}</p>}
+            {emailChecking && <p className="hint">Checking email&hellip;</p>}
+            {!emailChecking && errors.email && <p className="field-error">{errors.email}</p>}
           </div>
 
           <div className="field">
