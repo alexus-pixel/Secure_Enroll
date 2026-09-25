@@ -8,6 +8,10 @@ const GRADE_LEVELS = [
   { id: 4, name: 'Grade 3' }, { id: 5, name: 'Grade 4' }, { id: 6, name: 'Grade 5' }, { id: 7, name: 'Grade 6' },
 ];
 
+// A student can't have been born in the future -- the date picker
+// shouldn't even offer those days as an option.
+const TODAY = new Date().toISOString().slice(0, 10);
+
 export default function NewApplication() {
   const [form, setForm] = useState({
     firstName: '', middleName: '', lastName: '', birthDate: '', sex: 'F',
@@ -64,7 +68,7 @@ export default function NewApplication() {
             </div>
             <div className="field-grid cols-2">
               <div><label className="label">Birth date</label>
-                <input className="input" type="date" value={form.birthDate} onChange={update('birthDate')} required /></div>
+                <input className="input" type="date" value={form.birthDate} onChange={update('birthDate')} max={TODAY} required /></div>
               <div><label className="label">Sex</label>
                 <select className="input" value={form.sex} onChange={update('sex')}>
                   <option value="F">Female</option><option value="M">Male</option>
