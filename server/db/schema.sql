@@ -80,6 +80,23 @@ CREATE TABLE audit_logs (
 CREATE INDEX idx_audit_logs_user    ON audit_logs (user_id, created_at DESC);
 CREATE INDEX idx_audit_logs_entity  ON audit_logs (entity_type, entity_id);
 
+-- Single-use tokens for email verification and password reset. Only the
+-- SHA-256 hash of a token is ever stored -- same reasoning as password
+-- hashing: if this table leaked, nobody could use a row to act as the
+-- user, because the raw token that would need to be replayed was never
+-- written down anywhere.
+CREATE TABLE auth_tokens (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose     VARCHAR(20) NOT NULL CHECK (purpose IN ('email_verify','password_reset')),
+    token_hash  CHAR(64)    NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used_at     TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_auth_tokens_user_purpose ON auth_tokens (user_id, purpose);
+
 
 -- ============================================================
 -- 3. PEOPLE

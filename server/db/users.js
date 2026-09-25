@@ -30,7 +30,7 @@ async function createUser({ email, passwordHash, roleId }) {
 
 async function findUserById(id) {
   const result = await pool.query(
-    `SELECT u.id, u.email, u.password_hash, r.name AS role_name,
+    `SELECT u.id, u.email, u.password_hash, u.email_verified_at, r.name AS role_name,
             g.first_name, g.middle_name, g.last_name
      FROM users u
      JOIN roles r ON r.id = u.role_id

@@ -13,6 +13,7 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const justRegistered = location.state?.registered;
+  const justReset = location.state?.passwordReset;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -52,6 +53,9 @@ export default function Login() {
           {justRegistered && !error && (
             <div className="alert alert-note">Account created &mdash; please sign in.</div>
           )}
+          {justReset && !error && (
+            <div className="alert alert-note">Password updated &mdash; please sign in.</div>
+          )}
           {error && <div className="alert alert-error">{error}</div>}
 
           <div className="field">
@@ -67,6 +71,7 @@ export default function Login() {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
           />
+          <p className="forgot-link"><Link to="/forgot-password">Forgot password?</Link></p>
 
           <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>
             {submitting ? 'Signing in\u2026' : 'Log in'}

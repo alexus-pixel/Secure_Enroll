@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import api from '../api/client';
 
 const ROLE_LABELS = { parent: 'Parent / Guardian', registrar: 'Registrar', admin: 'Administrator' };
 
@@ -53,11 +55,30 @@ function GearIcon() {
 // current page. For the common "Dashboard > X" case, pass the shorthand
 // `crumb="X"` instead and this builds that two-item trail automatically.
 export default function AppNav({ crumb, crumbs }) {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const location = useLocation();
   const onSettings = location.pathname.startsWith('/settings');
   const items = crumbs || (crumb ? [{ label: 'Dashboard', to: '/dashboard' }, { label: crumb }] : null);
   const initial = (user?.firstName || user?.email || '?').trim().charAt(0).toUpperCase();
+
+  // A locally-cached session can be stale (e.g. verified in another tab
+  // since last login), so refresh the verified flag whenever the shell
+  // mounts rather than trusting only what's in localStorage.
+  useEffect(() => {
+    api.get('/auth/me').then(({ data }) => updateUser(data)).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [resendState, setResendState] = useState('idle'); // idle | sending | sent
+  async function resendVerification() {
+    setResendState('sending');
+    try {
+      await api.post('/auth/resend-verification');
+      setResendState('sent');
+    } catch {
+      setResendState('idle');
+    }
+  }
 
   return (
     <>
@@ -99,6 +120,19 @@ export default function AppNav({ crumb, crumbs }) {
           <button className="btn-ghost" onClick={logout}>Log out</button>
         </div>
       </header>
+
+      {user && user.emailVerified === false && (
+        <div className="verify-banner">
+          <span>Please verify your email address to submit enrollment applications.</span>
+          {resendState === 'sent' ? (
+            <span className="verify-banner-sent">Verification email sent &mdash; check your inbox.</span>
+          ) : (
+            <button className="btn-ghost btn-sm" onClick={resendVerification} disabled={resendState === 'sending'}>
+              {resendState === 'sending' ? 'Sending\u2026' : 'Resend email'}
+            </button>
+          )}
+        </div>
+      )}
     </>
   );
 }
