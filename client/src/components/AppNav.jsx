@@ -5,13 +5,24 @@ import api from '../api/client';
 
 const ROLE_LABELS = { parent: 'Parent / Guardian', registrar: 'Registrar', admin: 'Administrator' };
 
-function Mark() {
+function Mark({ size = 20 }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" />
       <path d="M3 7.5V16l9 5 9-5V7.5" />
       <path d="M12 12v9" />
+    </svg>
+  );
+}
+
+function HamburgerIcon({ size = 26 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round">
+      <line x1="4" y1="7" x2="20" y2="7" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+      <line x1="4" y1="17" x2="20" y2="17" />
     </svg>
   );
 }
@@ -110,7 +121,8 @@ export default function AppNav({ crumb, crumbs }) {
       <aside className={`sidebar${expanded ? ' expanded' : ''}`}>
         <button type="button" className="sidebar-brand" onClick={() => setExpanded((v) => !v)}
           aria-label={expanded ? 'Collapse menu' : 'Expand menu'} aria-expanded={expanded}>
-          <Mark />
+          <span className="sidebar-brand-icon sidebar-brand-icon-default"><Mark size={26} /></span>
+          <span className="sidebar-brand-icon sidebar-brand-icon-hover"><HamburgerIcon size={26} /></span>
         </button>
         <nav className="sidebar-nav">
           <Link to="/dashboard" className={`sidebar-icon${!onSettings && !onSchedule ? ' active' : ''}`}

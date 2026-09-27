@@ -84,9 +84,23 @@ a:hover { text-decoration: underline; }
   align-self: center;
   background: none;
   border: none;
-  padding: 0;
+  padding: 4px;
   cursor: pointer;
+  position: relative;
+  width: 34px;
+  height: 34px;
 }
+.sidebar-brand-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity .12s ease;
+}
+.sidebar-brand-icon-hover { opacity: 0; }
+.sidebar-brand:hover .sidebar-brand-icon-default { opacity: 0; }
+.sidebar-brand:hover .sidebar-brand-icon-hover { opacity: 1; }
 .sidebar.expanded .sidebar-brand { align-self: flex-start; padding-left: 6px; }
 .sidebar-nav { display: flex; flex-direction: column; gap: 10px; }
 .sidebar-icon {
@@ -270,6 +284,7 @@ input[type="file"].input { padding: 7px 9px; font-size: 12.5px; }
 .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .hint { font-size: 11.5px; color: var(--faint); margin: -8px 0 14px; }
+.hint.hint-spaced { margin-top: 6px; }
 .check-row { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 18px; font-size: 12.5px; color: var(--muted); }
 
 .input-icon-wrap { position: relative; }

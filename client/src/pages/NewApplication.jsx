@@ -246,7 +246,7 @@ export default function NewApplication() {
                 placeholder="12-digit LRN, leave blank if none yet" maxLength={12} />
               {lrnError
                 ? <p className="field-error">{lrnError}</p>
-                : <p className="hint">Leave this blank for a first-time Kinder/Grade 1 entrant &mdash; the school assigns one.</p>}
+                : <p className="hint hint-spaced">Leave this blank for a first-time Kinder/Grade 1 entrant &mdash; the school assigns one.</p>}
             </div>
           </div>
 
