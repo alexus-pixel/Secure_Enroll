@@ -292,7 +292,7 @@ input[type="file"].input { padding: 7px 9px; font-size: 12.5px; }
 .full-name-box .section-label { margin-bottom: 14px; text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
 
 @media (max-width: 640px) {
-  .cols-2, .cols-3 { grid-template-columns: 1fr; }
+  .cols-2, .cols-3, .choice-grid { grid-template-columns: 1fr; }
 }
 
 /* ---------- alerts ---------- */
@@ -370,6 +370,27 @@ table.data tr.is-selected { background: var(--accent-soft); }
 .doc-row-rejected { border-left: 4px solid var(--danger); }
 .doc-row-neutral { border-left: 4px solid var(--border); }
 
+.choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
+.choice-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.choice-card.selected { border-left-color: var(--accent); background: var(--accent-soft); }
+.choice-selected-label { font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--accent); }
+.choice-title { font-size: 14px; font-weight: 600; }
+.choice-desc { font-size: 12.5px; color: var(--muted); }
+
 .link-button {
   background: none;
   border: none;
@@ -425,4 +446,14 @@ table.data tr.is-selected { background: var(--accent-soft); }
 /* ---------- misc ---------- */
 .muted { color: var(--muted); }
 .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13.5px; }
-.back-link { display: inline-block; font-size: 12.5px; margin-bottom: 14px; }
+.back-link {
+  display: inline-block;
+  font-size: 12.5px;
+  margin-bottom: 14px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-family: inherit;
+  cursor: pointer;
+}

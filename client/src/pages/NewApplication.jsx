@@ -19,10 +19,10 @@ const DOC_LABELS = {
 const TODAY = new Date().toISOString().slice(0, 10);
 
 export default function NewApplication() {
-  // Two ways into this page: search for a returning student by LRN
-  // (default -- most enrollments after the first year are this), or skip
-  // straight to a blank application for a student with no LRN on file yet.
-  const [mode, setMode] = useState('search');
+  // Three steps: choose (New vs. Old student, the entry point), then
+  // either search (LRN lookup) or fresh (the full form).
+  const [mode, setMode] = useState('choose');
+  const [studentType, setStudentType] = useState('new');
   const navigate = useNavigate();
 
   // ---------------- Find Returning Student ----------------
@@ -112,6 +112,7 @@ export default function NewApplication() {
       <>
         <AppNav crumb="New Enrollment Application" />
         <div className="container container-narrow">
+          <button type="button" className="back-link" onClick={() => setMode('choose')}>&larr; Go Back</button>
           <div className="page-head">
             <div>
               <h1>Find Returning Student</h1>
@@ -189,35 +190,24 @@ export default function NewApplication() {
               </button>
             </>
           )}
-
-          <p className="hint" style={{ marginTop: 20 }}>
-            Enrolling for the first time, or don&rsquo;t have an LRN?{' '}
-            <button type="button" className="link-button" onClick={() => setMode('fresh')}>
-              Start a new application
-            </button>
-          </p>
         </div>
       </>
     );
   }
 
-  return (
-    <>
-      <AppNav crumb="New Enrollment Application" />
-      <div className="container container-narrow">
-        <div className="page-head">
-          <div>
-            <h1>New Enrollment Application</h1>
-            <p>School Year 2026&ndash;2027</p>
+  if (mode === 'fresh') {
+    return (
+      <>
+        <AppNav crumb="New Enrollment Application" />
+        <div className="container container-narrow">
+          <button type="button" className="back-link" onClick={() => setMode('choose')}>&larr; Go Back</button>
+          <div className="page-head">
+            <div>
+              <h1>New Enrollment Application</h1>
+              <p>School Year 2026&ndash;2027</p>
+            </div>
           </div>
-        </div>
-        <p className="hint">
-          Already have an LRN?{' '}
-          <button type="button" className="link-button" onClick={() => setMode('search')}>
-            Search for a returning student
-          </button>
-        </p>
-        {error && <div className="alert alert-error">{error}</div>}
+          {error && <div className="alert alert-error">{error}</div>}
 
         <form onSubmit={handleSubmit}>
           <div className="card">
@@ -294,6 +284,51 @@ export default function NewApplication() {
             <button type="button" className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Cancel</button>
           </div>
         </form>
+        </div>
+      </>
+    );
+  }
+
+  // ---------------- New / Old student choice (entry point) ----------------
+  return (
+    <>
+      <AppNav crumb="New Enrollment Application" />
+      <div className="container container-narrow">
+        <button type="button" className="back-link" onClick={() => navigate('/dashboard')}>&larr; Go Back</button>
+        <div className="page-head">
+          <div>
+            <h1>New Enrollment Application</h1>
+            <p>School Year 2026&ndash;2027</p>
+          </div>
+        </div>
+
+        <div className="card">
+          <h3>Is this student NEW or ALREADY ENROLLED before?</h3>
+          <p className="hint">Returning students (e.g. moving up from Grade 5 to Grade 6) can skip re-entering their information.</p>
+
+          <div className="choice-grid">
+            <button type="button" className={`choice-card${studentType === 'new' ? ' selected' : ''}`}
+              onClick={() => setStudentType('new')}>
+              {studentType === 'new' && <span className="choice-selected-label">SELECTED</span>}
+              <span className="choice-title">New Student</span>
+              <span className="choice-desc">
+                First time enrolling at Caloocan City Elementary School. Fill out full student and guardian information.
+              </span>
+            </button>
+            <button type="button" className={`choice-card${studentType === 'old' ? ' selected' : ''}`}
+              onClick={() => setStudentType('old')}>
+              {studentType === 'old' && <span className="choice-selected-label">SELECTED</span>}
+              <span className="choice-title">Old Student</span>
+              <span className="choice-desc">
+                Already has a Learner Reference Number (LRN) on file. Look up their existing record instead.
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <button className="btn btn-primary" onClick={() => setMode(studentType === 'old' ? 'search' : 'fresh')}>
+          Continue
+        </button>
       </div>
     </>
   );
