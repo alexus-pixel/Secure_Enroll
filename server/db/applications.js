@@ -51,4 +51,13 @@ async function getApplicationForGuardian(applicationId, guardianId) {
   return result.rows[0] || null;
 }
 
-module.exports = { linkStudentGuardian, createApplication, getMyApplications, getApplicationForGuardian };
+async function getActiveSchoolYear() {
+  const result = await pool.query(
+    `SELECT id, label FROM school_years WHERE is_active = true LIMIT 1`
+  );
+  return result.rows[0] || null;
+}
+
+module.exports = {
+  linkStudentGuardian, createApplication, getMyApplications, getApplicationForGuardian, getActiveSchoolYear,
+};

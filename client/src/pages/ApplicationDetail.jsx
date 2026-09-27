@@ -75,16 +75,24 @@ export default function ApplicationDetail() {
           <p className="section-label">Documents</p>
           {Object.entries(DOC_TYPES).map(([key, label]) => {
             const doc = uploaded[key];
+            // Gated per document, not per application: a registrar can flag
+            // one specific file as rejected while the rest of the
+            // application sits fine, so only a missing or rejected
+            // document should ever show an upload control.
+            const needsUpload = !doc || doc.status === 'rejected';
+            const rowClass = !doc ? 'doc-row-neutral'
+              : doc.status === 'verified' ? 'doc-row-done'
+              : doc.status === 'rejected' ? 'doc-row-rejected' : 'doc-row-pending';
             return (
-              <div className="doc-row" key={key}>
+              <div className={`doc-row ${rowClass}`} key={key}>
                 <div>
                   <div className="doc-name">{label}</div>
                   <div className="doc-sub">{doc ? `Uploaded ${new Date(doc.uploaded_at).toLocaleDateString()}` : 'Not yet uploaded'}</div>
                 </div>
-                {doc && app.status !== 'needs_revision'
-                  ? <span className={`pill pill-${doc.status}`}>{doc.status}</span>
-                  : <input className="input" style={{ maxWidth: 260 }} type="file"
-                      accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => upload(key, e.target.files[0])} />}
+                {needsUpload
+                  ? <input className="input" style={{ maxWidth: 260 }} type="file"
+                      accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => upload(key, e.target.files[0])} />
+                  : <span className={`pill pill-${doc.status}`}>{doc.status}</span>}
               </div>
             );
           })}
