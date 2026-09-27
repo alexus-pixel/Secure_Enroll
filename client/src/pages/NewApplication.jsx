@@ -79,12 +79,13 @@ export default function NewApplication() {
 
   // ---------------- Fresh application ----------------
   const [form, setForm] = useState({
-    firstName: '', middleName: '', lastName: '', birthDate: '', sex: 'F',
+    firstName: '', middleName: '', lastName: '', birthDate: '', sex: 'F', lrn: '',
     guardianFirstName: '', guardianMiddleName: '', guardianLastName: '',
     relationship: 'Mother', contactNumber: '', address: '',
     gradeLevelId: '1',
   });
   const [error, setError] = useState('');
+  const [lrnError, setLrnError] = useState('');
   const update = (field) => (e) => setForm({ ...form, [field]: e.target.value });
   const [files, setFiles] = useState({ birth_certificate: null, form_138: null, good_moral: null });
   const pickFile = (docType) => (e) => setFiles({ ...files, [docType]: e.target.files[0] });
@@ -92,8 +93,19 @@ export default function NewApplication() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    setLrnError('');
+
+    // LRN is optional here -- most first-time Kinder/Grade 1 entrants won't
+    // have one yet, DepEd assigns it. But if one IS entered, it must look
+    // like a real LRN, so a typo doesn't silently create an unfindable
+    // record for next year's promotion search.
+    if (form.lrn && !/^\d{12}$/.test(form.lrn.trim())) {
+      setLrnError('LRN should be exactly 12 digits.');
+      return;
+    }
+
     try {
-      const { data } = await api.post('/applications', form);
+      const { data } = await api.post('/applications', { ...form, lrn: form.lrn.trim() || undefined });
       for (const [docType, file] of Object.entries(files)) {
         if (!file) continue;
         const fd = new FormData();
@@ -227,6 +239,14 @@ export default function NewApplication() {
                 <select className="input" value={form.sex} onChange={update('sex')}>
                   <option value="F">Female</option><option value="M">Male</option>
                 </select></div>
+            </div>
+            <div className="field">
+              <label className="label">Learner Reference Number (LRN) &mdash; if already assigned</label>
+              <input className={`input${lrnError ? ' input-error' : ''}`} value={form.lrn} onChange={update('lrn')}
+                placeholder="12-digit LRN, leave blank if none yet" maxLength={12} />
+              {lrnError
+                ? <p className="field-error">{lrnError}</p>
+                : <p className="hint">Leave this blank for a first-time Kinder/Grade 1 entrant &mdash; the school assigns one.</p>}
             </div>
           </div>
 

@@ -51,6 +51,18 @@ function GearIcon() {
   );
 }
 
+function CalendarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4.5" width="18" height="16" rx="2" />
+      <line x1="3" y1="9.5" x2="21" y2="9.5" />
+      <line x1="8" y1="2.5" x2="8" y2="6.5" />
+      <line x1="16" y1="2.5" x2="16" y2="6.5" />
+    </svg>
+  );
+}
+
 // crumbs: [{ label, to? }, ...] — the last item (no `to`) renders as the
 // current page. For the common "Dashboard > X" case, pass the shorthand
 // `crumb="X"` instead and this builds that two-item trail automatically.
@@ -58,8 +70,21 @@ export default function AppNav({ crumb, crumbs }) {
   const { user, logout, updateUser } = useAuth();
   const location = useLocation();
   const onSettings = location.pathname.startsWith('/settings');
+  const onSchedule = location.pathname.startsWith('/schedule');
   const items = crumbs || (crumb ? [{ label: 'Dashboard', to: '/dashboard' }, { label: crumb }] : null);
   const initial = (user?.firstName || user?.email || '?').trim().charAt(0).toUpperCase();
+
+  // Collapsed (icon-only) vs expanded (icon + label) is a per-browser
+  // preference, not per-page state -- AppNav remounts on every navigation,
+  // so this has to live somewhere that survives that, hence localStorage
+  // instead of a plain useState default. The CSS variable is what actually
+  // resizes everything (sidebar, topbar, container, the banner) at once,
+  // since they all read var(--sidebar-w) already.
+  const [expanded, setExpanded] = useState(() => localStorage.getItem('sidebarExpanded') === 'true');
+  useEffect(() => {
+    document.documentElement.style.setProperty('--sidebar-w', expanded ? '220px' : '84px');
+    localStorage.setItem('sidebarExpanded', String(expanded));
+  }, [expanded]);
 
   // A locally-cached session can be stale (e.g. verified in another tab
   // since last login), so refresh the verified flag whenever the shell
@@ -82,18 +107,26 @@ export default function AppNav({ crumb, crumbs }) {
 
   return (
     <>
-      <aside className="sidebar">
-        <Link to="/dashboard" className="sidebar-brand" aria-label="SecureEnroll — Dashboard">
+      <aside className={`sidebar${expanded ? ' expanded' : ''}`}>
+        <button type="button" className="sidebar-brand" onClick={() => setExpanded((v) => !v)}
+          aria-label={expanded ? 'Collapse menu' : 'Expand menu'} aria-expanded={expanded}>
           <Mark />
-        </Link>
+        </button>
         <nav className="sidebar-nav">
-          <Link to="/dashboard" className={`sidebar-icon${!onSettings ? ' active' : ''}`}
-            aria-label="Applications" title="Applications">
+          <Link to="/dashboard" className={`sidebar-icon${!onSettings && !onSchedule ? ' active' : ''}`}
+            aria-label="Enrollment Applications" title="Enrollment Applications">
             <ApplicationsIcon />
+            {expanded && <span className="sidebar-label">Enrollment Applications</span>}
           </Link>
           <Link to="/settings" className={`sidebar-icon${onSettings ? ' active' : ''}`}
             aria-label="Account Settings" title="Account Settings">
             <GearIcon />
+            {expanded && <span className="sidebar-label">Account Settings</span>}
+          </Link>
+          <Link to="/schedule" className={`sidebar-icon${onSchedule ? ' active' : ''}`}
+            aria-label="Student's Schedule" title="Student's Schedule">
+            <CalendarIcon />
+            {expanded && <span className="sidebar-label">Student&rsquo;s Schedule</span>}
           </Link>
         </nav>
       </aside>

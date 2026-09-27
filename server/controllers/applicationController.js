@@ -18,7 +18,7 @@ async function submit(req, res) {
   const client = await pool.connect();
   try {
     const {
-      firstName, middleName, lastName, birthDate, sex,
+      firstName, middleName, lastName, birthDate, sex, lrn,
       guardianFirstName, guardianMiddleName, guardianLastName,
       relationship, contactNumber, address, validIdType,
       gradeLevelId,
@@ -26,6 +26,9 @@ async function submit(req, res) {
 
     if (!firstName || !lastName || !birthDate || !sex || !gradeLevelId) {
       return res.status(400).json({ message: 'Missing required fields.' });
+    }
+    if (lrn && !/^\d{12}$/.test(lrn)) {
+      return res.status(400).json({ message: 'LRN should be exactly 12 digits.' });
     }
 
     // The school year is never taken from the client -- a parent submitting
@@ -37,7 +40,7 @@ async function submit(req, res) {
     }
 
     await client.query('BEGIN');
-    const studentId = await createStudent(client, { firstName, middleName, lastName, birthDate, sex });
+    const studentId = await createStudent(client, { firstName, middleName, lastName, birthDate, sex, lrn });
     await upsertGuardian(client, {
       userId: req.user.id, firstName: guardianFirstName, middleName: guardianMiddleName,
       lastName: guardianLastName, contactNumber, address, validIdType,
@@ -53,6 +56,9 @@ async function submit(req, res) {
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.code === '23505') {
+      if (err.constraint === 'students_lrn_hash_key') {
+        return res.status(409).json({ message: 'That LRN is already on file for another student.' });
+      }
       return res.status(409).json({ message: 'This student is already enrolled for that school year.' });
     }
     console.error(err);
