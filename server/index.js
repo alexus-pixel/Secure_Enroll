@@ -3,6 +3,7 @@ const express = require('express');
 const authRoutes = require('./routes/authRoutes');
 const cors = require('cors');
 const applicationRoutes = require('./routes/applicationRoutes');
+const registrarRoutes = require('./routes/registrar');
 const pool = require('./db/pool');
 
 const app = express();
@@ -23,10 +24,14 @@ app.get('/api/health', async (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
+app.use('/api/registrar', registrarRoutes);
 
 app.use((err, req, res, next) => {
-  if (err) return res.status(400).json({ message: err.message });
-  next();
+  console.error(err);
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({
+    message: status >= 500 ? 'Something went wrong on the server.' : err.message,
+  });
 });
 
 app.listen(PORT, () => console.log(`SecureEnroll API running on port ${PORT}`));
