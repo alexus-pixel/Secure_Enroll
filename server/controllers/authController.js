@@ -6,7 +6,7 @@ const {
 const { createGuardianProfile, getGuardianProfile, updateGuardianProfile } = require('../db/guardians');
 const { isValidEmail, isValidName, isValidContactNumber, passwordIssues } = require('../utils/validators');
 const { checkEmailDomain } = require('../utils/emailDomain');
-const { issueToken, findValidToken, consumeToken } = require('../db/authTokens');
+const { issueToken, findValidToken, findTokenRecord, consumeToken } = require('../db/authTokens');
 const { sendMail, verificationEmail, passwordResetEmail } = require('../utils/mailer');
 const pool = require('../db/pool');
 
@@ -264,17 +264,32 @@ async function verifyEmail(req, res) {
   try {
     const token = (req.query.token || '').toString();
     const row = await findValidToken(token, 'email_verify');
-    if (!row) {
-      return res.status(400).json({ message: 'This verification link is invalid or has expired.' });
+
+    if (row) {
+      await pool.query(
+        `UPDATE users SET email_verified_at = NOW() WHERE id = $1 AND email_verified_at IS NULL`,
+        [row.user_id]
+      );
+      await consumeToken(row.id);
+      await logAudit(row.user_id, 'EMAIL_VERIFIED', req);
+      return res.json({ message: 'Email verified. You can now log in.' });
     }
 
-    await pool.query(
-      `UPDATE users SET email_verified_at = NOW() WHERE id = $1 AND email_verified_at IS NULL`,
-      [row.user_id]
-    );
-    await consumeToken(row.id);
-    await logAudit(row.user_id, 'EMAIL_VERIFIED', req);
-    res.json({ message: 'Email verified. You can now log in.' });
+    // Not currently valid -- but before calling it dead, check whether
+    // THIS exact link's account is already verified. This is the common
+    // case of clicking an older email after a newer "resend" already
+    // succeeded: the old link is correctly invalidated, but "invalid or
+    // expired" is a confusing thing to tell someone who actually already
+    // finished verifying.
+    const record = await findTokenRecord(token, 'email_verify');
+    if (record) {
+      const userResult = await pool.query('SELECT email_verified_at FROM users WHERE id = $1', [record.user_id]);
+      if (userResult.rows[0]?.email_verified_at) {
+        return res.json({ message: 'Your email is already verified \u2014 you can log in.' });
+      }
+    }
+
+    res.status(400).json({ message: 'This verification link is invalid or has expired.' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Could not verify your email.' });

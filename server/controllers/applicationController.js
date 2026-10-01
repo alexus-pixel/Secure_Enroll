@@ -27,16 +27,23 @@ async function submit(req, res) {
     if (!firstName || !lastName || !birthDate || !sex || !gradeLevelId) {
       return res.status(400).json({ message: 'Missing required fields.' });
     }
-    // Same rule as the client: only Kinder (grade_level_id 1 in this
-    // system's seed data) may omit an LRN. Checked again here because the
-    // client-side check is just UX -- anyone calling this endpoint
-    // directly could skip it otherwise.
-    const isKinder = String(gradeLevelId) === '1';
-    if (!isKinder && !lrn) {
-      return res.status(400).json({ message: 'LRN is required for Grade 1 and above.' });
-    }
     if (lrn && !/^\d{12}$/.test(lrn)) {
       return res.status(400).json({ message: 'LRN should be exactly 12 digits.' });
+    }
+
+    // Kinder (sort_order 0) is the one level where a genuinely new learner
+    // has no LRN yet -- DepEd issues it immediately on first entry there.
+    // Anyone entering at Grade 1-6 should already have one from wherever
+    // they started, so it's required rather than optional at that point.
+    // Keyed off sort_order from the DB, not a hardcoded grade id, since
+    // ids can drift from whatever a fresh seed happens to assign.
+    const gradeResult = await pool.query('SELECT sort_order FROM grade_levels WHERE id = $1', [gradeLevelId]);
+    const gradeRow = gradeResult.rows[0];
+    if (!gradeRow) {
+      return res.status(400).json({ message: 'Unrecognized grade level.' });
+    }
+    if (gradeRow.sort_order > 0 && !lrn) {
+      return res.status(400).json({ message: 'LRN is required when enrolling into Grade 1 through Grade 6.' });
     }
 
     // The school year is never taken from the client -- a parent submitting

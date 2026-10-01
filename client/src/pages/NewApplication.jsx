@@ -89,6 +89,7 @@ export default function NewApplication() {
   const [error, setError] = useState('');
   useScrollToError(error);
   const [lrnError, setLrnError] = useState('');
+  useScrollToError(lrnError);
   const update = (field) => (e) => setForm({ ...form, [field]: e.target.value });
   const [files, setFiles] = useState({ birth_certificate: null, form_138: null, good_moral: null });
   const pickFile = (docType) => (e) => setFiles({ ...files, [docType]: e.target.files[0] });
@@ -98,10 +99,6 @@ export default function NewApplication() {
     setError('');
     setLrnError('');
 
-    // LRN is optional here -- most first-time Kinder/Grade 1 entrants won't
-    // have one yet, DepEd assigns it. But if one IS entered, it must look
-    // like a real LRN, so a typo doesn't silently create an unfindable
-    // record for next year's promotion search.
     // LRN is only genuinely optional for Kinder -- reaching Grade 1 or
     // above under the mandatory K-12 system means the student has
     // necessarily been enrolled somewhere in DepEd's system before, so
@@ -110,11 +107,12 @@ export default function NewApplication() {
     // only at Kinder entry (or Grade 1 via the KCEP catch-up track,
     // which this simple form doesn't distinguish from a transferee).
     const isKinder = form.gradeLevelId === '1';
-    if (!isKinder && !form.lrn.trim()) {
-      setLrnError('LRN is required for Grade 1 and above \u2014 only Kinder entrants may not have one yet.');
+    const trimmedLrn = form.lrn.trim();
+    if (!trimmedLrn && !isKinder) {
+      setLrnError('LRN is required when enrolling into Grade 1 through Grade 6 \u2014 only Kinder entrants may not have one yet.');
       return;
     }
-    if (form.lrn && !/^\d{12}$/.test(form.lrn.trim())) {
+    if (trimmedLrn && !/^\d{12}$/.test(trimmedLrn)) {
       setLrnError('LRN should be exactly 12 digits.');
       return;
     }

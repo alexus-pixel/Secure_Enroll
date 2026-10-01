@@ -48,4 +48,18 @@ async function consumeToken(id) {
   await pool.query(`UPDATE auth_tokens SET used_at = NOW() WHERE id = $1`, [id]);
 }
 
-module.exports = { issueToken, findValidToken, consumeToken };
+// Unlike findValidToken, this returns the row even if it's already been
+// used or has expired -- used only to explain WHY a token isn't valid
+// (e.g. distinguishing "you already verified" from "this link is dead"),
+// never to grant anything on its own.
+async function findTokenRecord(rawToken, purpose) {
+  if (!rawToken) return null;
+  const tokenHash = sha256(rawToken);
+  const result = await pool.query(
+    `SELECT id, user_id, used_at, expires_at FROM auth_tokens WHERE token_hash = $1 AND purpose = $2`,
+    [tokenHash, purpose]
+  );
+  return result.rows[0] || null;
+}
+
+module.exports = { issueToken, findValidToken, findTokenRecord, consumeToken };
