@@ -1,4 +1,6 @@
-const { findReturningStudentForGuardian, getDocumentsOnFileForStudent } = require('../db/students');
+const {
+  findReturningStudentForGuardian, getDocumentsOnFileForStudent, guardianOwnsStudent, addLrnIfMissing,
+} = require('../db/students');
 
 const DOC_TYPES = ['birth_certificate', 'form_138', 'good_moral'];
 
@@ -45,4 +47,30 @@ async function lookup(req, res) {
   }
 }
 
-module.exports = { lookup };
+async function addLrn(req, res) {
+  try {
+    const studentId = req.params.id;
+    const lrn = (req.body.lrn || '').toString().trim();
+
+    if (!/^\d{12}$/.test(lrn)) {
+      return res.status(400).json({ message: 'LRN should be exactly 12 digits.' });
+    }
+    if (!(await guardianOwnsStudent(req.user.id, studentId))) {
+      return res.status(403).json({ message: 'That student is not linked to your account.' });
+    }
+
+    const added = await addLrnIfMissing(studentId, lrn);
+    if (!added) {
+      return res.status(409).json({ message: 'This student already has an LRN on file. Contact the school to correct it.' });
+    }
+    res.json({ message: 'LRN saved.' });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'That LRN is already on file for another student.' });
+    }
+    console.error(err);
+    res.status(500).json({ message: 'Could not save that LRN.' });
+  }
+}
+
+module.exports = { lookup, addLrn };

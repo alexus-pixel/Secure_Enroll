@@ -38,6 +38,30 @@ export default function ApplicationDetail() {
     }
   }
 
+  const [lrn, setLrn] = useState('');
+  const [lrnError, setLrnError] = useState('');
+  const [lrnSaving, setLrnSaving] = useState(false);
+  const [lrnSaved, setLrnSaved] = useState(false);
+
+  async function saveLrn(e) {
+    e.preventDefault();
+    setLrnError('');
+    if (!/^\d{12}$/.test(lrn.trim())) {
+      setLrnError('LRN should be exactly 12 digits.');
+      return;
+    }
+    setLrnSaving(true);
+    try {
+      await api.patch(`/students/${app.student_id}/lrn`, { lrn: lrn.trim() });
+      setLrnSaved(true);
+      load();
+    } catch (err) {
+      setLrnError(err.response?.data?.message || 'Could not save that LRN.');
+    } finally {
+      setLrnSaving(false);
+    }
+  }
+
   if (error) return <p style={{ color: 'red', padding: 24 }}>{error}</p>;
   if (!app) return <p style={{ padding: 24 }}>Loading...</p>;
 
@@ -97,6 +121,30 @@ export default function ApplicationDetail() {
             );
           })}
         </div>
+
+        {!app.has_lrn && (
+          <div className="card">
+            <h3>Learner Reference Number (LRN)</h3>
+            {lrnSaved ? (
+              <div className="alert alert-note">LRN saved.</div>
+            ) : (
+              <form onSubmit={saveLrn}>
+                <p className="hint hint-spaced">
+                  Not on file yet. If the school or DepEd has since assigned one, add it here so it carries
+                  over automatically next school year.
+                </p>
+                <div className="field" style={{ maxWidth: 280 }}>
+                  <input className={`input${lrnError ? ' input-error' : ''}`} value={lrn}
+                    onChange={(e) => setLrn(e.target.value)} placeholder="12-digit LRN" maxLength={12} />
+                  {lrnError && <p className="field-error">{lrnError}</p>}
+                </div>
+                <button className="btn btn-secondary" type="submit" disabled={lrnSaving}>
+                  {lrnSaving ? 'Saving\u2026' : 'Save LRN'}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
       </div>
     </>
   );

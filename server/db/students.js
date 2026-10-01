@@ -76,7 +76,21 @@ async function getDocumentsOnFileForStudent(studentId) {
   return result.rows.map((r) => r.doc_type);
 }
 
+// Only ever fills in a currently-blank LRN -- the WHERE guard means this
+// silently affects 0 rows (rather than clobbering a correct value) if one
+// is already on file, so the caller can tell the two cases apart.
+async function addLrnIfMissing(studentId, lrn) {
+  const result = await pool.query(
+    `UPDATE students
+     SET lrn_encrypted = pgp_sym_encrypt($2::text, $3), lrn_hash = $4
+     WHERE id = $1 AND lrn_hash IS NULL
+     RETURNING id`,
+    [studentId, lrn, process.env.ENCRYPTION_KEY, lrnHash(lrn)]
+  );
+  return result.rows.length > 0;
+}
+
 module.exports = {
   lrnHash, createStudent, findReturningStudentForGuardian, guardianOwnsStudent,
-  getDocumentsOnFileForStudent,
+  getDocumentsOnFileForStudent, addLrnIfMissing,
 };

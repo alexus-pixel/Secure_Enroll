@@ -36,9 +36,9 @@ async function getMyApplications(guardianId) {
 
 async function getApplicationForGuardian(applicationId, guardianId) {
   const result = await pool.query(
-    `SELECT ea.id, s.first_name, s.last_name, gl.name AS grade_level,
+    `SELECT ea.id, s.id AS student_id, s.first_name, s.last_name, gl.name AS grade_level,
             sy.label AS school_year, ea.status, ea.submitted_at, ea.reviewed_at,
-            ea.remarks, sec.name AS section
+            ea.remarks, sec.name AS section, (s.lrn_hash IS NOT NULL) AS has_lrn
      FROM enrollment_applications ea
      JOIN students s ON s.id = ea.student_id
      JOIN student_guardians sg ON sg.student_id = s.id
