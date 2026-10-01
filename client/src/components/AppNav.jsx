@@ -38,7 +38,7 @@ export function Brand() {
 
 function ApplicationsIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="4" width="18" height="16" rx="2" />
       <line x1="7" y1="9" x2="17" y2="9" />
@@ -51,7 +51,7 @@ function ApplicationsIcon() {
 function GearIcon() {
   const ticks = Array.from({ length: 8 });
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none">
       {ticks.map((_, i) => (
         <line key={i} x1="12" y1="2.75" x2="12" y2="5.25" stroke="currentColor"
           strokeWidth="2" strokeLinecap="round" transform={`rotate(${i * 45} 12 12)`} />
@@ -64,7 +64,7 @@ function GearIcon() {
 
 function CalendarIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="4.5" width="18" height="16" rx="2" />
       <line x1="3" y1="9.5" x2="21" y2="9.5" />
@@ -97,13 +97,31 @@ export default function AppNav({ crumb, crumbs }) {
     localStorage.setItem('sidebarExpanded', String(expanded));
   }, [expanded]);
 
+  const [toast, setToast] = useState(null); // { text, tone: 'success' | 'error' }
+
   // A locally-cached session can be stale (e.g. verified in another tab
   // since last login), so refresh the verified flag whenever the shell
-  // mounts rather than trusting only what's in localStorage.
+  // mounts rather than trusting only what's in localStorage. If that
+  // refresh reveals the account just became verified (wasn't before,
+  // is now), that's worth a one-time toast -- otherwise the "Resend
+  // email" banner just silently vanishes on the next page load with no
+  // explanation, which is exactly what prompted this.
   useEffect(() => {
-    api.get('/auth/me').then(({ data }) => updateUser(data)).catch(() => {});
+    const wasVerified = user?.emailVerified;
+    api.get('/auth/me').then(({ data }) => {
+      updateUser(data);
+      if (!wasVerified && data.emailVerified) {
+        setToast({ text: 'Your email is now verified.', tone: 'success' });
+      }
+    }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   const [resendState, setResendState] = useState('idle'); // idle | sending | sent
   async function resendVerification() {
@@ -111,8 +129,12 @@ export default function AppNav({ crumb, crumbs }) {
     try {
       await api.post('/auth/resend-verification');
       setResendState('sent');
-    } catch {
+    } catch (err) {
       setResendState('idle');
+      setToast({
+        text: err.response?.data?.message || 'Could not resend the email \u2014 try again in a moment.',
+        tone: 'error',
+      });
     }
   }
 
@@ -177,6 +199,9 @@ export default function AppNav({ crumb, crumbs }) {
             </button>
           )}
         </div>
+      )}
+      {toast && (
+        <div className={`toast toast-${toast.tone}`} role="status">{toast.text}</div>
       )}
     </>
   );
