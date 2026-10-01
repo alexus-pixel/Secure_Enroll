@@ -3,10 +3,12 @@ import { Link } from 'react-router-dom';
 import { Brand } from '../components/AppNav';
 import api from '../api/client';
 import { validateEmail } from '../utils/validators';
+import { useScrollToError } from '../hooks/useScrollToError';
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
+  useScrollToError(error);
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
 

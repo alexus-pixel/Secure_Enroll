@@ -27,6 +27,14 @@ async function submit(req, res) {
     if (!firstName || !lastName || !birthDate || !sex || !gradeLevelId) {
       return res.status(400).json({ message: 'Missing required fields.' });
     }
+    // Same rule as the client: only Kinder (grade_level_id 1 in this
+    // system's seed data) may omit an LRN. Checked again here because the
+    // client-side check is just UX -- anyone calling this endpoint
+    // directly could skip it otherwise.
+    const isKinder = String(gradeLevelId) === '1';
+    if (!isKinder && !lrn) {
+      return res.status(400).json({ message: 'LRN is required for Grade 1 and above.' });
+    }
     if (lrn && !/^\d{12}$/.test(lrn)) {
       return res.status(400).json({ message: 'LRN should be exactly 12 digits.' });
     }

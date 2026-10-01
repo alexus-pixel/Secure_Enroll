@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
 import AppNav from '../components/AppNav';
+import { useScrollToError } from '../hooks/useScrollToError';
 
 const DOC_TYPES = {
   birth_certificate: 'Birth Certificate',
@@ -13,6 +14,7 @@ export default function ApplicationDetail() {
   const { id } = useParams();
   const [app, setApp] = useState(null);
   const [error, setError] = useState('');
+  useScrollToError(error);
 
   async function load() {
     try {

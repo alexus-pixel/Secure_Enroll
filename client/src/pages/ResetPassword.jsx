@@ -4,6 +4,7 @@ import { Brand } from '../components/AppNav';
 import PasswordInput from '../components/PasswordInput';
 import api from '../api/client';
 import { validatePassword, validateConfirmPassword } from '../utils/validators';
+import { useScrollToError } from '../hooks/useScrollToError';
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -14,6 +15,7 @@ export default function ResetPassword() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');
+  useScrollToError(formError);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e) {

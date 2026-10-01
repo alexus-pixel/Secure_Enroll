@@ -6,6 +6,7 @@ import PasswordInput from '../components/PasswordInput';
 import {
   validateName, validateEmail, validateContactNumber, validatePassword, validateConfirmPassword,
 } from '../utils/validators';
+import { useScrollToError } from '../hooks/useScrollToError';
 
 const FIELDS = ['lastName', 'firstName', 'middleName', 'email', 'contactNumber', 'password', 'confirmPassword'];
 
@@ -31,6 +32,7 @@ export default function Register() {
   const [errors, setErrors] = useState({});
   const [emailChecking, setEmailChecking] = useState(false);
   const [formError, setFormError] = useState('');
+  useScrollToError(formError);
   const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
 

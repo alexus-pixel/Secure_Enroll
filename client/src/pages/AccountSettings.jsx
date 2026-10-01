@@ -4,6 +4,7 @@ import PasswordInput from '../components/PasswordInput';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { validateName, validatePassword, validateConfirmPassword } from '../utils/validators';
+import { useScrollToError } from '../hooks/useScrollToError';
 
 export default function AccountSettings() {
   const { user, updateUser } = useAuth();
@@ -13,6 +14,7 @@ export default function AccountSettings() {
   const [profileErrors, setProfileErrors] = useState({});
   const [profileMessage, setProfileMessage] = useState('');
   const [profileError, setProfileError] = useState('');
+  useScrollToError(profileError);
   const [savingProfile, setSavingProfile] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -58,6 +60,7 @@ export default function AccountSettings() {
   const [pwErrors, setPwErrors] = useState({});
   const [pwMessage, setPwMessage] = useState('');
   const [pwError, setPwError] = useState('');
+  useScrollToError(pwError);
   const [savingPassword, setSavingPassword] = useState(false);
 
   function updatePwField(field) {

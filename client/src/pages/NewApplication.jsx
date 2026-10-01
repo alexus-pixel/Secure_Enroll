@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import AppNav from '../components/AppNav';
+import { useScrollToError } from '../hooks/useScrollToError';
 
 const GRADE_LEVELS = [
   { id: 1, name: 'Kinder' }, { id: 2, name: 'Grade 1' }, { id: 3, name: 'Grade 2' },
@@ -29,6 +30,7 @@ export default function NewApplication() {
   const [lrn, setLrn] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
+  useScrollToError(searchError);
   const [result, setResult] = useState(null);
   const [promoFiles, setPromoFiles] = useState({});
   const [promoting, setPromoting] = useState(false);
@@ -85,6 +87,7 @@ export default function NewApplication() {
     gradeLevelId: '1',
   });
   const [error, setError] = useState('');
+  useScrollToError(error);
   const [lrnError, setLrnError] = useState('');
   const update = (field) => (e) => setForm({ ...form, [field]: e.target.value });
   const [files, setFiles] = useState({ birth_certificate: null, form_138: null, good_moral: null });
@@ -99,6 +102,18 @@ export default function NewApplication() {
     // have one yet, DepEd assigns it. But if one IS entered, it must look
     // like a real LRN, so a typo doesn't silently create an unfindable
     // record for next year's promotion search.
+    // LRN is only genuinely optional for Kinder -- reaching Grade 1 or
+    // above under the mandatory K-12 system means the student has
+    // necessarily been enrolled somewhere in DepEd's system before, so
+    // they should already have one (this is a transferee, not a
+    // first-timer). Per DepEd policy, new LRNs are issued immediately
+    // only at Kinder entry (or Grade 1 via the KCEP catch-up track,
+    // which this simple form doesn't distinguish from a transferee).
+    const isKinder = form.gradeLevelId === '1';
+    if (!isKinder && !form.lrn.trim()) {
+      setLrnError('LRN is required for Grade 1 and above \u2014 only Kinder entrants may not have one yet.');
+      return;
+    }
     if (form.lrn && !/^\d{12}$/.test(form.lrn.trim())) {
       setLrnError('LRN should be exactly 12 digits.');
       return;
@@ -241,12 +256,18 @@ export default function NewApplication() {
                 </select></div>
             </div>
             <div className="field">
-              <label className="label">Learner Reference Number (LRN) &mdash; if already assigned</label>
+              <label className="label">
+                Learner Reference Number (LRN){form.gradeLevelId === '1' ? ' \u2014 if already assigned' : ''}
+              </label>
               <input className={`input${lrnError ? ' input-error' : ''}`} value={form.lrn} onChange={update('lrn')}
-                placeholder="12-digit LRN, leave blank if none yet" maxLength={12} />
+                placeholder="12-digit LRN" maxLength={12} required={form.gradeLevelId !== '1'} />
               {lrnError
                 ? <p className="field-error">{lrnError}</p>
-                : <p className="hint hint-spaced">Leave this blank for a first-time Kinder/Grade 1 entrant &mdash; the school assigns one.</p>}
+                : <p className="hint hint-spaced">
+                    {form.gradeLevelId === '1'
+                      ? 'Leave this blank for a first-time Kinder entrant \u2014 the school assigns one.'
+                      : 'Required \u2014 a student entering Grade 1 or above should already have an LRN from a previous enrollment.'}
+                  </p>}
             </div>
           </div>
 
