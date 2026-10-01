@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "seed:admin-demo": "node db/seed_admin_demo.js"
   },
   "keywords": [],
   "author": "",
@@ -16,9 +17,14 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.3.0",
-    "pg": "^8.23.0"
+    "nodemailer": "^10.0.10",
+    "pdfkit": "^0.15.1",
+    "pg": "^8.23.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
