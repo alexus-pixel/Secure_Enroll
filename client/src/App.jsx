@@ -7,6 +7,12 @@ import Dashboard from './pages/Dashboard';
 import NewApplication from './pages/NewApplication';
 import ApplicationDetail from './pages/ApplicationDetail';
 
+import RegistrarLayout from './layouts/RegistrarLayout';
+import RegistrarDashboard from './pages/registrar/Dashboard';
+import RegistrarApplicationView from './pages/registrar/ApplicationView';
+import RegistrarWalkIn from './pages/registrar/WalkInEnrollment';
+import RegistrarAccountSettings from './pages/registrar/AccountSettings';
+
 function App() {
   return (
     <AuthProvider>
@@ -17,6 +23,21 @@ function App() {
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/applications/new" element={<ProtectedRoute><NewApplication /></ProtectedRoute>} />
           <Route path="/applications/:id" element={<ProtectedRoute><ApplicationDetail /></ProtectedRoute>} />
+
+          {/* Registrar */}
+          <Route
+            path="/registrar"
+            element={
+              <ProtectedRoute roles={['registrar']}>
+                <RegistrarLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<RegistrarDashboard />} />
+            <Route path="applications/:id" element={<RegistrarApplicationView />} />
+            <Route path="walk-in" element={<RegistrarWalkIn />} />
+            <Route path="settings" element={<RegistrarAccountSettings />} />
+          </Route>
         </Routes>
       </BrowserRouter>
     </AuthProvider>

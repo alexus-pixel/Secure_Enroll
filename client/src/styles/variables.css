@@ -1,0 +1,18 @@
+:root {
+  --blue: #1e4598;
+  --blue-dark: #163577;
+  --orange-bg: #fbe9d0;
+  --orange-text: #c2760f;
+  --green: #2fa57a;
+  --red: #c0392b;
+  --bg: #f5f5f5;
+  --border: #e3e3e3;
+  --text: #111;
+  --muted: #6b7280;
+}
+
+body {
+  font-family: 'Poppins', sans-serif;
+  background: var(--bg);
+  margin: 0;
+}
