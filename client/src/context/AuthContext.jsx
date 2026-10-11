@@ -14,6 +14,9 @@ export function AuthProvider({ children }) {
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
+    // Returned so the caller (Login.jsx) can route by role right away,
+    // instead of always sending every role to the same /dashboard.
+    return data.user;
   }
 
   function logout() {
