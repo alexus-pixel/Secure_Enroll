@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const pool = require('../db/pool');
+const { notifyLrnRecorded } = require('../mailer');
 
 const AY = `(SELECT id FROM school_years WHERE is_active LIMIT 1)`;
 const REQUIRED = [
@@ -22,7 +23,6 @@ function audit(db, req, action, entityId, details) {
 
 // ---------- Dashboard ----------
 exports.list = async (req, res) => {
-  
   const stats = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE submitted_at > NOW() - INTERVAL '7 days')::int AS "newThisWeek",
@@ -52,6 +52,7 @@ exports.get = async (req, res) => {
   const { rows: [a] } = await pool.query(
     `SELECT a.id, a.status, a.remarks, a.grade_qualification AS "gradeQualification",
             a.submitted_at AS submitted,
+            s.id AS "studentId",
             s.lrn_hash IS NULL AS "missingLrn",
             s.last_name || ', ' || s.first_name AS student, g.name AS grade,
             gd.first_name || ' ' || gd.last_name AS guardian
@@ -328,10 +329,8 @@ exports.changePassword = async (req, res) => {
   ]);
   res.json({ ok: true });
 };
-// ---------- Missing LRN ----------
-// Paste at the bottom of server/controllers/registrarController.js.
-// `crypto`, `pool`, and `AY` are already defined at the top of that file.
 
+// ---------- Missing LRN ----------
 const LRN_FORMAT = /^\d{12}$/;
 
 // Students in the active school year who still have no LRN.
@@ -393,6 +392,7 @@ exports.setLrn = async (req, res) => {
     );
 
     await client.query('COMMIT');
+    notifyLrnRecorded(req.params.studentId); // runs in the background, never throws
     res.json({ ok: true });
   } catch (err) {
     await client.query('ROLLBACK');

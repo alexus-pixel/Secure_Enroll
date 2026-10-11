@@ -29,4 +29,8 @@ router.post('/walk-in', requirePermission(CAN_WALK_IN), wrap(c.walkIn));
 router.get('/learners/:lrn', requirePermission(CAN_WALK_IN), wrap(c.lookupLearner));
 router.post('/learners/:studentId/promote', requirePermission(CAN_WALK_IN), wrap(c.promote));
 
+// ---------- Missing LRN ----------
+router.get('/students/missing-lrn', requirePermission('student.view_all'), wrap(c.listMissingLrn));
+router.patch('/students/:studentId/lrn', requirePermission(CAN_REVIEW), wrap(c.setLrn));
+
 module.exports = router;
