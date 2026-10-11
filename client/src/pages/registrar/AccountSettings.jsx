@@ -47,15 +47,15 @@ export default function AccountSettings() {
         <div className="reg-row reg-row-profile">
           <div className="reg-field">
             <label>First name</label>
-            <input className="reg-input" value={profile.firstName} onChange={(e) => setProfile({ ...profile, firstName: e.target.value })} />
+            <input className="reg-input" autoComplete="off" value={profile.firstName} onChange={(e) => setProfile({ ...profile, firstName: e.target.value })} />
           </div>
           <div className="reg-field">
             <label>Last name</label>
-            <input className="reg-input" value={profile.lastName} onChange={(e) => setProfile({ ...profile, lastName: e.target.value })} />
+            <input className="reg-input" autoComplete="off" value={profile.lastName} onChange={(e) => setProfile({ ...profile, lastName: e.target.value })} />
           </div>
           <div className="reg-field">
             <label>M.I</label>
-            <input className="reg-input" maxLength={2} value={profile.middleInitial} onChange={(e) => setProfile({ ...profile, middleInitial: e.target.value })} />
+            <input className="reg-input" autoComplete="off" maxLength={2} value={profile.middleInitial} onChange={(e) => setProfile({ ...profile, middleInitial: e.target.value })} />
           </div>
         </div>
         <div className="reg-field">
@@ -70,16 +70,16 @@ export default function AccountSettings() {
         {pwNotice && <div className={`reg-notice reg-notice-${pwNotice.type}`}>{pwNotice.text}</div>}
         <div className="reg-field">
           <label>Current password</label>
-          <input className="reg-input" type="password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
+          <input className="reg-input" type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
         </div>
         <div className="reg-row reg-row-2">
           <div className="reg-field">
             <label>New password</label>
-            <input className="reg-input" type="password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
+            <input className="reg-input" type="password" autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
           </div>
           <div className="reg-field">
             <label>Confirm new password</label>
-            <input className="reg-input" type="password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />
+            <input className="reg-input" type="password" autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />
           </div>
         </div>
         <button className="reg-btn reg-btn-blue" onClick={updatePassword}>Update Password</button>

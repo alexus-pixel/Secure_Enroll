@@ -1,6 +1,4 @@
-export default function WalkInEnrollment() {
-  return <h1>Walk-In Enrollment</h1>;
-}import { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 const GRADES = ['Kinder', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];

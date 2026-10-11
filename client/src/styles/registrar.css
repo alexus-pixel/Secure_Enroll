@@ -1,37 +1,63 @@
-.reg-shell { display: flex; min-height: 100vh; }
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap');
+
+/* Registrar theme: defined here so it works even if theme.css has no --blue etc. */
+.reg-shell {
+  --blue: #1e4a9a;
+  --blue-dark: #173a78;
+  --blue-active: #2f63bf;
+  --orange-bg: #fbe9d0;
+  --orange-text: #c9801b;
+  --orange-border: #f0c98d;
+  --green: #2f9e75;
+  --green-bg: #dcf3e9;
+  --red: #d93f3b;
+  --red-bg: #fde2e0;
+  --text: #111827;
+  --muted: #6b7a90;
+  --border: #dfe3ea;
+  --page-bg: #f4f4f5;
+
+  display: flex;
+  min-height: 100vh;
+  font-family: 'Poppins', system-ui, 'Segoe UI', Roboto, sans-serif;
+  color: var(--text);
+  text-align: left;
+}
 
 /* Sidebar */
 .reg-sidebar { width: 72px; background: var(--blue); display: flex; flex-direction: column; flex-shrink: 0; }
-.reg-logo { height: 72px; display: grid; place-items: center; color: #fff; border-bottom: 1px solid rgba(255,255,255,.15); }
-.reg-nav { display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 16px; }
-.reg-nav-link { width: 44px; height: 44px; display: grid; place-items: center; color: #fff; border-radius: 8px; opacity: .8; }
-.reg-nav-link:hover { opacity: 1; }
-.reg-nav-link.active { background: rgba(255,255,255,.18); opacity: 1; }
+.reg-logo { height: 72px; display: grid; place-items: center; color: #fff; }
+.reg-nav { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 16px; }
+.reg-nav-link { width: 44px; height: 44px; display: grid; place-items: center; color: #fff; border-radius: 8px; text-decoration: none; transition: background .15s; }
+.reg-nav-link:hover { background: rgba(255,255,255,.12); }
+.reg-nav-link.active { background: var(--blue-active); }
 
 /* Main + Topbar */
-.reg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.reg-topbar { height: 72px; background: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 32px; }
+.reg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--page-bg); }
+.reg-topbar { height: 72px; background: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 32px; flex-shrink: 0; }
 .reg-topbar-left, .reg-topbar-right { display: flex; align-items: center; gap: 20px; }
-.reg-role-pill { background: var(--orange-bg); color: var(--orange-text); font-size: 11px; font-weight: 600; padding: 12px 44px; border-radius: 999px; }
+.reg-role-pill { background: var(--orange-bg); color: var(--orange-text); font-size: 10px; font-weight: 600; letter-spacing: .02em; padding: 14px 44px; border-radius: 999px; white-space: nowrap; }
 .reg-crumbs { font-size: 11px; color: var(--muted); }
 .reg-crumbs a { color: var(--muted); text-decoration: none; }
 .reg-crumbs strong { color: var(--blue); font-weight: 500; }
-.reg-welcome { font-size: 12px; font-weight: 500; color: var(--blue); }
-.reg-avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--blue); color: #fff; display: grid; place-items: center; font-weight: 600; }
-.reg-logout { font-family: inherit; font-size: 12px; padding: 6px 12px; background: #fff; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.reg-crumb-sep { margin: 0 4px; }
+.reg-welcome { font-size: 11px; font-weight: 600; color: var(--blue); }
+.reg-avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--blue); color: #fff; display: grid; place-items: center; font-weight: 600; font-size: 14px; }
+.reg-logout { font-family: inherit; font-size: 10px; padding: 6px 12px; background: #fff; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.reg-logout:hover { background: #f4f6fa; }
 
 /* Page area */
 .reg-content { flex: 1; padding: 40px 32px; }
 
 /* Shared page styles */
 .reg-page { max-width: 1100px; margin: 0 auto; }
-.reg-title { font-size: 24px; font-weight: 600; margin: 0 0 6px; }
+.reg-title { font-size: 22px; font-weight: 600; margin: 0 0 6px; color: #000; }
 .reg-subtitle { font-size: 11px; color: var(--muted); margin: 0 0 32px; }
 
 /* Stat cards */
 .reg-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
 .reg-stat-card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 22px 20px; }
-.reg-stat-value { font-size: 24px; font-weight: 600; margin-bottom: 10px; }
+.reg-stat-value { font-size: 22px; font-weight: 600; margin-bottom: 10px; color: #000; }
 .reg-stat-label { font-size: 11px; color: var(--text); }
 
 /* Table */
@@ -47,8 +73,8 @@
 .reg-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 4px 12px; border-radius: 999px; }
 .reg-badge-submitted { background: #eceff3; color: #4b5563; }
 .reg-badge-under_review { background: var(--orange-bg); color: var(--orange-text); }
-.reg-badge-needs_revision { background: #fde2e0; color: var(--red); }
-.reg-badge-approved { background: #dcf3e9; color: var(--green); }
+.reg-badge-needs_revision { background: var(--red-bg); color: var(--red); }
+.reg-badge-approved { background: var(--green-bg); color: var(--green); }
 
 /* Narrow pages (view, walk-in, settings) */
 .reg-narrow { max-width: 680px; }
@@ -57,14 +83,14 @@
 /* Cards */
 .reg-card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; margin-bottom: 16px; }
 .reg-card-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin: 0 0 14px; }
-.reg-card-title { font-size: 12px; font-weight: 600; margin: 0 0 14px; }
+.reg-card-title { font-size: 12px; font-weight: 600; margin: 0 0 14px; color: #000; }
 .reg-help { font-size: 10px; color: var(--muted); margin: -6px 0 14px; }
 .reg-help-top { margin: 14px 0 0; }
 
 /* List items (documents, requirements) */
 .reg-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
 .reg-item:last-child { margin-bottom: 0; }
-.reg-item-name { font-size: 12px; font-weight: 600; }
+.reg-item-name { font-size: 12px; font-weight: 600; color: #000; }
 .reg-item-meta { font-size: 10px; color: var(--muted); margin-top: 3px; }
 .reg-item-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .reg-record { border: 1px solid var(--border); border-left: 4px solid var(--green); border-radius: 6px; padding: 12px 14px; }
@@ -73,19 +99,20 @@
 .reg-btn { font-family: inherit; font-size: 11px; font-weight: 600; padding: 7px 16px; border-radius: 6px; border: 1px solid transparent; background: #fff; cursor: pointer; }
 .reg-btn-green { background: var(--green); color: #fff; }
 .reg-btn-green.dim { opacity: .4; }
-.reg-btn-red { color: var(--red); border-color: var(--red); }
+.reg-btn-red { background: #fff; color: var(--red); border-color: var(--red); }
 .reg-btn-red.on { background: var(--red); color: #fff; }
 .reg-btn-blue { background: var(--blue); color: #fff; }
 .reg-btn-blue:hover { background: var(--blue-dark); }
-.reg-btn-orange { color: var(--orange-text); border-color: var(--orange-text); }
-.reg-btn-plain { color: var(--text); border-color: var(--border); }
+.reg-btn-orange { background: #fff; color: var(--orange-text); border-color: var(--orange-text); }
+.reg-btn-plain { background: #fff; color: var(--text); border-color: var(--border); }
 .reg-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
 /* Notices and banner */
 .reg-notice { font-size: 11px; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }
-.reg-notice-error { background: #fde2e0; color: var(--red); }
-.reg-notice-ok { background: #dcf3e9; color: var(--green); }
-.reg-banner { background: var(--orange-bg); border: 1px solid #f0c98d; color: var(--orange-text); font-size: 11px; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; }
+.reg-notice-error { background: var(--red-bg); color: var(--red); }
+.reg-notice-ok { background: var(--green-bg); color: var(--green); }
+.reg-banner { background: var(--orange-bg); border: 1px solid var(--orange-border); color: var(--text); font-size: 11px; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; }
+.reg-banner strong { color: var(--orange-text); font-weight: 600; }
 
 /* Forms */
 .reg-row { display: grid; gap: 14px; }
@@ -95,16 +122,17 @@
 .reg-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; min-width: 0; }
 .reg-field label { font-size: 10px; font-weight: 500; color: var(--muted); }
 .reg-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: #fff; font-family: inherit; font-size: 11px; color: var(--text); }
+.reg-input:focus { outline: 2px solid rgba(30, 74, 154, .25); border-color: var(--blue); }
 .reg-input:disabled { background: #e5e5e5; color: var(--muted); }
 .reg-input-narrow { max-width: 260px; }
 .reg-textarea { width: 100%; box-sizing: border-box; min-height: 70px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 11px; resize: vertical; }
 
 /* New / Old student option cards */
+.reg-option { text-align: left; background: #fff; color: var(--text); border: 1px solid var(--border); border-left: 4px solid #9aa5b8; border-radius: 8px; padding: 16px; font-family: inherit; cursor: pointer; }
 .reg-options { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.reg-option { text-align: left; background: #fff; border: 1px solid var(--border); border-left: 4px solid #9aa5b8; border-radius: 8px; padding: 16px; font-family: inherit; cursor: pointer; }
 .reg-option.selected { border-color: var(--blue); border-left-color: var(--blue); }
 .reg-option-tag { display: block; font-size: 9px; font-weight: 600; color: var(--blue); margin-bottom: 8px; }
-.reg-option h4 { font-size: 12px; margin: 0 0 8px; }
+.reg-option h4 { font-size: 12px; margin: 0 0 8px; color: #000; }
 .reg-option p { font-size: 10px; color: var(--muted); margin: 0; }
 
 /* Received-document rows */
@@ -112,3 +140,4 @@
 .reg-receive:last-child { margin-bottom: 0; }
 .reg-receive-status { display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 600; color: var(--muted); }
 .reg-receive-status.on { color: var(--green); }
+.reg-receive .reg-badge-approved { border: 1px solid var(--green); background: #e6f6ef; }

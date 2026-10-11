@@ -12,6 +12,7 @@ import RegistrarDashboard from './pages/registrar/Dashboard';
 import RegistrarApplicationView from './pages/registrar/ApplicationView';
 import RegistrarWalkIn from './pages/registrar/WalkInEnrollment';
 import RegistrarAccountSettings from './pages/registrar/AccountSettings';
+import RegistrarMissingLrn from './pages/registrar/MissingLrn';
 
 function App() {
   return (
@@ -37,7 +38,8 @@ function App() {
             <Route path="applications/:id" element={<RegistrarApplicationView />} />
             <Route path="walk-in" element={<RegistrarWalkIn />} />
             <Route path="settings" element={<RegistrarAccountSettings />} />
-          </Route>
+            <Route path="missing-lrn" element={<RegistrarMissingLrn />} />
+          </Route>  
         </Routes>
       </BrowserRouter>
     </AuthProvider>

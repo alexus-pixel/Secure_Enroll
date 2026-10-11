@@ -1,5 +1,4 @@
-require('dotenv').config();
-const express = require('express');
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });const express = require('express');
 const authRoutes = require('./routes/authRoutes');
 const cors = require('cors');
 const applicationRoutes = require('./routes/applicationRoutes');

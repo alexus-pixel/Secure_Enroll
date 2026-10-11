@@ -54,7 +54,12 @@ export default function ApplicationView() {
 
   return (
     <div className="reg-page reg-narrow">
-      <button className="reg-back" onClick={() => navigate(-1)}>‹ Go Back</button>
+      <button className="reg-back" onClick={() => navigate(-1)}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+        Go Back
+      </button>
 
       <h1 className="reg-title">{app.student}</h1>
       <p className="reg-subtitle">
