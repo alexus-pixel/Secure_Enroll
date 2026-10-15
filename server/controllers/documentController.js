@@ -4,6 +4,9 @@ const pool = require('../db/pool');
 const {
   applicationBelongsToGuardian, createDocument, getDocumentsForApplication,
 } = require('../db/documents');
+const { matchesDeclaredType } = require('../utils/fileSignature');
+
+const VALID_DOC_TYPES = ['birth_certificate', 'form_138', 'good_moral'];
 
 function sha256(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
@@ -15,14 +18,19 @@ async function uploadDocument(req, res) {
     const { docType } = req.body;
 
     if (!req.file) return res.status(400).json({ message: 'No file received.' });
-    if (!docType) {
+    if (!VALID_DOC_TYPES.includes(docType)) {
       fs.unlinkSync(req.file.path);
-      return res.status(400).json({ message: 'Document type is required.' });
+      return res.status(400).json({ message: 'Unrecognized document type.' });
     }
 
     if (!(await applicationBelongsToGuardian(applicationId, req.user.id))) {
       fs.unlinkSync(req.file.path);
       return res.status(403).json({ message: 'This application is not yours.' });
+    }
+
+    if (!matchesDeclaredType(req.file.path, req.file.mimetype)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ message: 'That file does not appear to be a valid PDF, JPG, or PNG.' });
     }
 
     const doc = await createDocument({

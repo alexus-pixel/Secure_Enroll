@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
 import AppNav from '../components/AppNav';
+import { useScrollToError } from '../hooks/useScrollToError';
 
 const DOC_TYPES = {
   birth_certificate: 'Birth Certificate',
@@ -13,6 +14,7 @@ export default function ApplicationDetail() {
   const { id } = useParams();
   const [app, setApp] = useState(null);
   const [error, setError] = useState('');
+  useScrollToError(error);
 
   async function load() {
     try {
@@ -35,6 +37,30 @@ export default function ApplicationDetail() {
       load();
     } catch (err) {
       setError(err.response?.data?.message || 'Upload failed.');
+    }
+  }
+
+  const [lrn, setLrn] = useState('');
+  const [lrnError, setLrnError] = useState('');
+  const [lrnSaving, setLrnSaving] = useState(false);
+  const [lrnSaved, setLrnSaved] = useState(false);
+
+  async function saveLrn(e) {
+    e.preventDefault();
+    setLrnError('');
+    if (!/^\d{12}$/.test(lrn.trim())) {
+      setLrnError('LRN should be exactly 12 digits.');
+      return;
+    }
+    setLrnSaving(true);
+    try {
+      await api.patch(`/students/${app.student_id}/lrn`, { lrn: lrn.trim() });
+      setLrnSaved(true);
+      load();
+    } catch (err) {
+      setLrnError(err.response?.data?.message || 'Could not save that LRN.');
+    } finally {
+      setLrnSaving(false);
     }
   }
 
@@ -75,20 +101,52 @@ export default function ApplicationDetail() {
           <p className="section-label">Documents</p>
           {Object.entries(DOC_TYPES).map(([key, label]) => {
             const doc = uploaded[key];
+            // Gated per document, not per application: a registrar can flag
+            // one specific file as rejected while the rest of the
+            // application sits fine, so only a missing or rejected
+            // document should ever show an upload control.
+            const needsUpload = !doc || doc.status === 'rejected';
+            const rowClass = !doc ? 'doc-row-neutral'
+              : doc.status === 'verified' ? 'doc-row-done'
+              : doc.status === 'rejected' ? 'doc-row-rejected' : 'doc-row-pending';
             return (
-              <div className="doc-row" key={key}>
+              <div className={`doc-row ${rowClass}`} key={key}>
                 <div>
                   <div className="doc-name">{label}</div>
                   <div className="doc-sub">{doc ? `Uploaded ${new Date(doc.uploaded_at).toLocaleDateString()}` : 'Not yet uploaded'}</div>
                 </div>
-                {doc && app.status !== 'needs_revision'
-                  ? <span className={`pill pill-${doc.status}`}>{doc.status}</span>
-                  : <input className="input" style={{ maxWidth: 260 }} type="file"
-                      accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => upload(key, e.target.files[0])} />}
+                {needsUpload
+                  ? <input className="input" style={{ maxWidth: 260 }} type="file"
+                      accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => upload(key, e.target.files[0])} />
+                  : <span className={`pill pill-${doc.status}`}>{doc.status}</span>}
               </div>
             );
           })}
         </div>
+
+        {!app.has_lrn && (
+          <div className="card">
+            <h3>Learner Reference Number (LRN)</h3>
+            {lrnSaved ? (
+              <div className="alert alert-note">LRN saved.</div>
+            ) : (
+              <form onSubmit={saveLrn}>
+                <p className="hint hint-spaced">
+                  Not on file yet. If the school or DepEd has since assigned one, add it here so it carries
+                  over automatically next school year.
+                </p>
+                <div className="field" style={{ maxWidth: 280 }}>
+                  <input className={`input${lrnError ? ' input-error' : ''}`} value={lrn}
+                    onChange={(e) => setLrn(e.target.value)} placeholder="12-digit LRN" maxLength={12} />
+                  {lrnError && <p className="field-error">{lrnError}</p>}
+                </div>
+                <button className="btn btn-secondary" type="submit" disabled={lrnSaving}>
+                  {lrnSaving ? 'Saving\u2026' : 'Save LRN'}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
       </div>
     </>
   );

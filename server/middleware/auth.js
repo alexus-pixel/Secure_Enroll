@@ -41,4 +41,22 @@ function requirePermission(permissionCode) {
   };
 }
 
-module.exports = { authenticate, requirePermission };
+// Gate for actions that shouldn't happen until the account's email is
+// confirmed (e.g. submitting a child's documents). Checked fresh against
+// the database rather than trusting a claim baked into the JWT at login
+// time, so verifying mid-session takes effect immediately rather than
+// waiting for the token to expire and be reissued.
+async function requireVerifiedEmail(req, res, next) {
+  try {
+    const result = await pool.query('SELECT email_verified_at FROM users WHERE id = $1', [req.user.id]);
+    if (!result.rows[0]?.email_verified_at) {
+      return res.status(403).json({ message: 'Please verify your email address first.' });
+    }
+    next();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Could not confirm your account status.' });
+  }
+}
+
+module.exports = { authenticate, requirePermission, requireVerifiedEmail };

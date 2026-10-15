@@ -13,4 +13,33 @@ async function upsertGuardian(db, { userId, firstName, middleName, lastName, con
   return result.rows[0].user_id;
 }
 
-module.exports = { upsertGuardian };
+// Used right after account creation: no address yet, that's collected
+// later at enrollment, so upsertGuardian is called with address: null.
+async function createGuardianProfile(db, { userId, firstName, middleName, lastName, contactNumber }) {
+  return upsertGuardian(db, {
+    userId, firstName, middleName, lastName, contactNumber, address: null, validIdType: null,
+  });
+}
+
+// Profile fields only — the /auth/me and Account Settings screens never
+// need to decrypt contact_number or address, so we don't touch pgcrypto here.
+async function getGuardianProfile(db, userId) {
+  const result = await db.query(
+    `SELECT first_name, middle_name, last_name FROM guardians WHERE user_id = $1`,
+    [userId]
+  );
+  return result.rows[0] || null;
+}
+
+async function updateGuardianProfile(db, userId, { firstName, middleName, lastName }) {
+  const result = await db.query(
+    `UPDATE guardians
+     SET first_name = $2, middle_name = $3, last_name = $4, updated_at = NOW()
+     WHERE user_id = $1
+     RETURNING first_name, middle_name, last_name`,
+    [userId, firstName, middleName || null, lastName]
+  );
+  return result.rows[0] || null;
+}
+
+module.exports = { upsertGuardian, createGuardianProfile, getGuardianProfile, updateGuardianProfile };
