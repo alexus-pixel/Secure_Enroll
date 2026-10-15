@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const {
   register, login, getMe, updateProfile, changePassword, checkEmail,
-  verifyEmail, resendVerification, forgotPassword, resetPassword,
+  verifyEmail, resendVerification, resendVerificationByTicket, verificationStatus,
+  forgotPassword, resetPassword,
 } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
 const { rateLimit, loginLimiter } = require('../middleware/rateLimit');
@@ -20,6 +21,10 @@ router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: 8 }), regist
 router.post('/login', loginLimiter, login);
 router.get('/check-email', rateLimit({ windowMs: 60 * 1000, max: 20 }), checkEmail);
 router.get('/verify-email', rateLimit({ windowMs: 60 * 1000, max: 10 }), verifyEmail);
+// Used by the "Verifying email" screen for someone who cannot sign in yet.
+// Both are authorised by the short-lived ticket in the request body.
+router.post('/verification-status', rateLimit({ windowMs: 60 * 1000, max: 60 }), verificationStatus);
+router.post('/verification-resend', rateLimit({ windowMs: 10 * 60 * 1000, max: 10 }), resendVerificationByTicket);
 router.post('/forgot-password', rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }), forgotPassword);
 router.post('/reset-password', rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }), resetPassword);
 
@@ -29,6 +34,6 @@ router.post('/reset-password', rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }),
 router.get('/me', authenticate, getMe);
 router.patch('/me', authenticate, updateProfile);
 router.put('/me/password', authenticate, changePassword);
-router.post('/resend-verification', authenticate, rateLimit({ windowMs: 5 * 60 * 1000, max: 3 }), resendVerification);
+router.post('/resend-verification', authenticate, rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), resendVerification);
 
 module.exports = router;

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { Brand } from '../components/AppNav';
 import api from '../api/client';
+import { VerifiedDialog } from '../components/VerifyEmailOverlay';
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
+  const navigate = useNavigate();
   const [status, setStatus] = useState(token ? 'checking' : 'error'); // checking | success | error
   const [message, setMessage] = useState(token ? '' : 'This verification link is missing its token.');
 
@@ -14,7 +16,7 @@ export default function VerifyEmail() {
     api.get('/auth/verify-email', { params: { token } })
       .then(({ data }) => {
         setStatus('success');
-        setMessage(data.message || 'Email verified.');
+        setMessage(data.message || 'Your email address has been verified.');
       })
       .catch((err) => {
         setStatus('error');
@@ -28,10 +30,10 @@ export default function VerifyEmail() {
         <div>
           <Brand />
           <h2>Verify your email</h2>
-          <p>Confirming your address keeps enrollment applications tied to a real, reachable parent or guardian.</p>
+          <p>Confirming your email address keeps each enrollment application linked to a real, reachable parent or guardian.</p>
         </div>
         <div className="auth-foot">
-          This system is full of dummy data and all the information is only made up for
+          This system contains only dummy data. All information is made up for
           demonstration purposes.
         </div>
       </aside>
@@ -40,7 +42,7 @@ export default function VerifyEmail() {
         <div className="auth-form">
           {status === 'checking' && (
             <>
-              <h1>Verifying&hellip;</h1>
+              <h1>Verifying email&hellip;</h1>
               <p className="sub">One moment while we confirm your link.</p>
             </>
           )}
@@ -48,17 +50,19 @@ export default function VerifyEmail() {
             <>
               <h1>Email verified</h1>
               <div className="alert alert-note">{message}</div>
-              <Link className="btn btn-primary" style={{ width: '100%', textAlign: 'center', display: 'block' }} to="/">
+              <Link className="btn btn-primary" style={{ width: '100%', textAlign: 'center', display: 'block' }}
+                to="/" state={{ verified: true }}>
                 Go to sign in
               </Link>
+              <VerifiedDialog onContinue={() => navigate('/', { state: { verified: true } })} />
             </>
           )}
           {status === 'error' && (
             <>
-              <h1>Link didn&rsquo;t work</h1>
+              <h1>This link did not work</h1>
               <div className="alert alert-error">{message}</div>
               <p className="auth-alt">
-                <Link to="/">Log in</Link> and resend the verification email from Account Settings.
+                Please <Link to="/">sign in</Link> to receive a new verification email.
               </p>
             </>
           )}

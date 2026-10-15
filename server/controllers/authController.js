@@ -33,16 +33,103 @@ function publicUser(row) {
 const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+// ---------------------------------------------------------------------
+// Email verification gate
+//
+// A parent cannot sign in until their email address is verified. When a
+// sign-in is refused for that reason, the response carries a short-lived
+// "ticket". The ticket proves the caller just entered the correct
+// password, and it lets the page (a) poll whether the link has been
+// clicked and (b) ask for another email, without needing a login token.
+// It is signed with a DIFFERENT secret from login tokens, so it can never
+// be used to call the rest of the API.
+// ---------------------------------------------------------------------
+const VERIFY_TICKET_TTL = '30m';
+const RESEND_COOLDOWN_SECONDS = 60;
+
+const ticketSecret = () => `${process.env.JWT_SECRET}:email-verify-ticket`;
+
+function signVerificationTicket(userId) {
+  return jwt.sign({ sub: String(userId), purpose: 'email-verify-wait' }, ticketSecret(), {
+    expiresIn: VERIFY_TICKET_TTL,
+  });
+}
+
+function readVerificationTicket(ticket) {
+  try {
+    const payload = jwt.verify(String(ticket || ''), ticketSecret());
+    return payload.purpose === 'email-verify-wait' ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+// Only parents sign up on their own, so only parents must verify. Staff
+// accounts are created by an administrator, and old walk-in placeholder
+// addresses (@walkin.invalid) cannot receive mail at all.
+function requiresEmailVerification(user) {
+  return user.role_name === 'parent'
+    && !user.email_verified_at
+    && !/@walkin\.invalid$/i.test(user.email || '');
+}
+
+// When a verification email last went out successfully, per user. Used
+// only to space out requests, so keeping it in memory is enough.
+const lastVerificationSent = new Map();
+
+function secondsUntilResend(userId) {
+  const last = lastVerificationSent.get(String(userId));
+  if (!last) return 0;
+  const left = RESEND_COOLDOWN_SECONDS * 1000 - (Date.now() - last);
+  return left > 0 ? Math.ceil(left / 1000) : 0;
+}
+
+// Returns { ok } instead of hiding the outcome: callers must be able to
+// tell the user whether the email really went out.
 async function sendVerificationEmail(userId, email) {
-  // Never let a mail-provider hiccup fail the caller's request -- log it
-  // and let the user retry via "resend verification email" instead.
   try {
     const token = await issueToken(userId, 'email_verify', EMAIL_VERIFY_TTL_MS);
     const { subject, text, html } = verificationEmail(token);
     await sendMail({ to: email, subject, text, html });
+    lastVerificationSent.set(String(userId), Date.now());
+    return { ok: true };
   } catch (err) {
     console.error('Could not send verification email:', err);
+    return { ok: false };
   }
+}
+
+// Sends a verification email unless one went out in the last minute.
+async function ensureVerificationEmail(user) {
+  const wait = secondsUntilResend(user.id);
+  if (wait > 0) return { ok: true, retryAfter: wait };
+  const result = await sendVerificationEmail(user.id, user.email);
+  return { ok: result.ok, retryAfter: result.ok ? RESEND_COOLDOWN_SECONDS : 0 };
+}
+
+// Shared by both resend endpoints. Answers honestly: 429 while the
+// cooldown runs, 502 if the mail provider failed, 200 only if it was sent.
+async function resendFor(user, res) {
+  if (user.email_verified_at) {
+    return res.json({ verified: true, message: 'Your email address is already verified.' });
+  }
+  const wait = secondsUntilResend(user.id);
+  if (wait > 0) {
+    return res.status(429).json({
+      message: `Please wait ${wait} second${wait === 1 ? '' : 's'} before requesting another email.`,
+      retryAfter: wait,
+    });
+  }
+  const result = await sendVerificationEmail(user.id, user.email);
+  if (!result.ok) {
+    return res.status(502).json({
+      message: 'We could not send the verification email right now. Please try again in a few minutes.',
+    });
+  }
+  return res.json({
+    message: 'Verification email sent. Please check your inbox and your spam folder.',
+    retryAfter: RESEND_COOLDOWN_SECONDS,
+  });
 }
 
 async function register(req, res) {
@@ -73,7 +160,7 @@ async function register(req, res) {
     const normalizedEmail = email.toLowerCase().trim();
     const existing = await findUserByEmail(normalizedEmail);
     if (existing) {
-      return res.status(409).json({ message: 'An account with that email already exists.' });
+      return res.status(409).json({ message: 'An account with that email address already exists.' });
     }
 
     const roleId = await findRoleIdByName('parent'); // public sign-up is always a parent
@@ -91,12 +178,18 @@ async function register(req, res) {
     await client.query('COMMIT');
 
     await logAudit(user.id, 'REGISTER', req);
-    await sendVerificationEmail(user.id, user.email);
-    res.status(201).json({ id: user.id, email: user.email });
+    const mail = await ensureVerificationEmail(user);
+    res.status(201).json({
+      id: user.id,
+      email: user.email,
+      emailSent: mail.ok,
+      retryAfter: mail.retryAfter,
+      verificationTicket: signVerificationTicket(user.id),
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error(err);
-    res.status(500).json({ message: 'Registration failed.' });
+    res.status(500).json({ message: 'Registration failed. Please try again.' });
   } finally {
     client.release();
   }
@@ -114,7 +207,7 @@ async function login(req, res) {
     if (!user) return genericError();
 
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      return res.status(423).json({ message: 'Account temporarily locked. Try again later.' });
+      return res.status(423).json({ message: 'This account is temporarily locked. Please try again later.' });
     }
 
     const match = await bcrypt.compare(password || '', user.password_hash);
@@ -132,6 +225,25 @@ async function login(req, res) {
 
     if (!user.is_active) {
       return res.status(403).json({ message: 'This account has been disabled.' });
+    }
+
+    // Correct password, but the email address has not been verified yet:
+    // refuse the sign-in, make sure a verification link is on its way, and
+    // hand the page a ticket so it can wait for the link to be clicked.
+    if (requiresEmailVerification(user)) {
+      await pool.query(
+        'UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1',
+        [user.id]
+      );
+      const mail = await ensureVerificationEmail(user);
+      await logAudit(user.id, 'LOGIN_BLOCKED_UNVERIFIED', req);
+      return res.status(403).json({
+        code: 'EMAIL_NOT_VERIFIED',
+        message: 'Please verify your email address before signing in.',
+        emailSent: mail.ok,
+        retryAfter: mail.retryAfter,
+        ticket: signVerificationTicket(user.id),
+      });
     }
 
     await pool.query(
@@ -155,7 +267,7 @@ async function login(req, res) {
     res.json({ token, user: publicUser(full) });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Login failed.' });
+    res.status(500).json({ message: 'We could not sign you in. Please try again.' });
   }
 }
 
@@ -166,7 +278,7 @@ async function getMe(req, res) {
     res.json(publicUser(user));
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Could not load your account.' });
+    res.status(500).json({ message: 'We could not load your account. Please try again.' });
   }
 }
 
@@ -193,7 +305,7 @@ async function updateProfile(req, res) {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Could not update your profile.' });
+    res.status(500).json({ message: 'We could not update your profile. Please try again.' });
   }
 }
 
@@ -201,7 +313,7 @@ async function changePassword(req, res) {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) {
-      return res.status(400).json({ message: 'Current and new password are required.' });
+      return res.status(400).json({ message: 'Your current password and a new password are required.' });
     }
 
     const user = await findUserById(req.user.id);
@@ -228,7 +340,7 @@ async function changePassword(req, res) {
     res.json({ message: 'Password updated.' });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Could not update your password.' });
+    res.status(500).json({ message: 'We could not update your password. Please try again.' });
   }
 }
 
@@ -247,7 +359,7 @@ async function checkEmail(req, res) {
 
     const existing = await findUserByEmail(email.toLowerCase().trim());
     if (existing) {
-      return res.json({ valid: false, reason: 'An account with that email already exists.' });
+      return res.json({ valid: false, reason: 'An account with that email address already exists.' });
     }
 
     res.json({ valid: true });
@@ -272,7 +384,7 @@ async function verifyEmail(req, res) {
       );
       await consumeToken(row.id);
       await logAudit(row.user_id, 'EMAIL_VERIFIED', req);
-      return res.json({ message: 'Email verified. You can now log in.' });
+      return res.json({ message: 'Your email address has been verified. You can now sign in.' });
     }
 
     // Not currently valid -- but before calling it dead, check whether
@@ -285,37 +397,66 @@ async function verifyEmail(req, res) {
     if (record) {
       const userResult = await pool.query('SELECT email_verified_at FROM users WHERE id = $1', [record.user_id]);
       if (userResult.rows[0]?.email_verified_at) {
-        return res.json({ message: 'Your email is already verified \u2014 you can log in.' });
+        return res.json({ message: 'Your email address is already verified. You can sign in.' });
       }
     }
 
     res.status(400).json({ message: 'This verification link is invalid or has expired.' });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Could not verify your email.' });
+    res.status(500).json({ message: 'We could not verify your email address. Please try again.' });
   }
 }
 
+// For a signed-in user (the banner shown to a parent who is already in).
 async function resendVerification(req, res) {
   try {
     const user = await findUserById(req.user.id);
     if (!user) return res.status(404).json({ message: 'Account not found.' });
-    if (user.email_verified_at) {
-      return res.json({ message: 'Your email is already verified.' });
-    }
-
-    await sendVerificationEmail(user.id, user.email);
-    res.json({ message: 'Verification email sent.' });
+    return await resendFor(user, res);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Could not resend the verification email.' });
+    res.status(500).json({ message: 'We could not resend the verification email. Please try again.' });
+  }
+}
+
+// For someone who could not sign in yet: authorised by the ticket from
+// register() or from the refused sign-in, not by a login token.
+async function resendVerificationByTicket(req, res) {
+  try {
+    const userId = readVerificationTicket(req.body?.ticket);
+    if (!userId) {
+      return res.status(401).json({ message: 'This verification session has expired. Please sign in again.' });
+    }
+    const user = await findUserById(userId);
+    if (!user) return res.status(404).json({ message: 'Account not found.' });
+    return await resendFor(user, res);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'We could not resend the verification email. Please try again.' });
+  }
+}
+
+// Polled by the "Verifying email" screen until the link has been clicked.
+async function verificationStatus(req, res) {
+  try {
+    const userId = readVerificationTicket(req.body?.ticket);
+    if (!userId) {
+      return res.status(401).json({ message: 'This verification session has expired. Please sign in again.' });
+    }
+    const result = await pool.query('SELECT email_verified_at FROM users WHERE id = $1', [userId]);
+    if (!result.rows[0]) return res.status(404).json({ message: 'Account not found.' });
+    res.json({ verified: Boolean(result.rows[0].email_verified_at) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'We could not check your verification status.' });
   }
 }
 
 async function forgotPassword(req, res) {
   // Always the same response, whether or not the account exists -- this
   // endpoint must never become a way to check which emails are registered.
-  const generic = () => res.json({ message: 'If an account exists for that email, a reset link has been sent.' });
+  const generic = () => res.json({ message: 'If an account exists for that email address, we have sent a reset link.' });
 
   try {
     const { email } = req.body;
@@ -359,14 +500,15 @@ async function resetPassword(req, res) {
     );
 
     await logAudit(row.user_id, 'PASSWORD_RESET_COMPLETED', req);
-    res.json({ message: 'Password updated. You can now log in.' });
+    res.json({ message: 'Your password has been updated. You can now sign in.' });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Could not reset your password.' });
+    res.status(500).json({ message: 'We could not reset your password. Please try again.' });
   }
 }
 
 module.exports = {
   register, login, getMe, updateProfile, changePassword, checkEmail,
-  verifyEmail, resendVerification, forgotPassword, resetPassword,
+  verifyEmail, resendVerification, resendVerificationByTicket, verificationStatus,
+  forgotPassword, resetPassword,
 };

@@ -145,7 +145,7 @@ export default function AppNav({ crumb, crumbs }) {
     } catch (err) {
       setResendState('idle');
       setToast({
-        text: err.response?.data?.message || 'Could not resend the email — try again in a moment.',
+        text: err.response?.data?.message || 'We could not resend the email. Please try again in a moment.',
         tone: 'error',
       });
     }

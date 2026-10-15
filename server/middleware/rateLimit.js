@@ -6,9 +6,13 @@ const expressRateLimit = require('express-rate-limit');
 // multi-instance production deployment would move this bucket into Redis
 // or similar so limits are shared across processes.
 // ---------------------------------------------------------------------
-const buckets = new Map();
-
 function rateLimit({ windowMs, max }) {
+  // Each limiter keeps its OWN buckets. Previously every route shared one
+  // bucket per IP, so a few harmless calls to one route (for example the
+  // sign-up form's email check) used up the allowance of another route
+  // (for example "resend verification email") and produced a 429.
+  const buckets = new Map();
+
   return (req, res, next) => {
     const key = req.ip;
     const now = Date.now();
@@ -16,9 +20,14 @@ function rateLimit({ windowMs, max }) {
 
     if (!bucket || now - bucket.start > windowMs) {
       buckets.set(key, { start: now, count: 1 });
+      // Keep memory bounded: drop expired buckets once the map gets large.
+      if (buckets.size > 5000) {
+        for (const [k, b] of buckets) if (now - b.start > windowMs) buckets.delete(k);
+      }
       return next();
     }
     if (bucket.count >= max) {
+      res.set('Retry-After', String(Math.ceil((bucket.start + windowMs - now) / 1000)));
       return res.status(429).json({ message: 'Too many requests. Please try again shortly.' });
     }
     bucket.count += 1;

@@ -38,10 +38,10 @@ export default function ForgotPassword() {
         <div>
           <Brand />
           <h2>Reset your password</h2>
-          <p>We&rsquo;ll email you a link to choose a new one.</p>
+          <p>We will email you a link to choose a new password.</p>
         </div>
         <div className="auth-foot">
-          This system is full of dummy data and all the information is only made up for
+          This system contains only dummy data. All information is made up for
           demonstration purposes.
         </div>
       </aside>
@@ -52,14 +52,14 @@ export default function ForgotPassword() {
             <>
               <h1>Check your email</h1>
               <div className="alert alert-note">
-                If an account exists for that email, a reset link has been sent. The link expires in 1 hour.
+                If an account exists for that email address, we have sent a reset link. The link expires in 1 hour.
               </div>
               <p className="auth-alt"><Link to="/">Back to sign in</Link></p>
             </>
           ) : (
             <form onSubmit={handleSubmit} noValidate>
               <h1>Forgot password</h1>
-              <p className="sub">Enter the email address on your account.</p>
+              <p className="sub">Enter the email address for your account.</p>
 
               <div className="field">
                 <label className="label" htmlFor="email">Email Address</label>

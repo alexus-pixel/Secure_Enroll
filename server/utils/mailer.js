@@ -64,11 +64,12 @@ function verificationEmail(token) {
   const link = `${CLIENT_URL}/verify-email?token=${token}`;
   return {
     subject: 'Verify your SecureEnroll account',
-    text: `Welcome to SecureEnroll! Confirm your email address:\n\n${link}\n\n`
-      + `This link expires in 24 hours. If you didn't create this account, you can ignore this email.`,
-    html: `<p>Welcome to SecureEnroll! Confirm your email address:</p>`
+    text: `Welcome to SecureEnroll!\n\nPlease confirm your email address by opening the link below:\n\n${link}\n\n`
+      + `This link expires in 24 hours. If you did not create this account, you can safely ignore this email.`,
+    html: `<p>Welcome to SecureEnroll!</p>`
+      + `<p>Please confirm your email address by clicking the link below:</p>`
       + `<p><a href="${link}">${link}</a></p>`
-      + `<p>This link expires in 24 hours. If you didn't create this account, you can ignore this email.</p>`,
+      + `<p>This link expires in 24 hours. If you did not create this account, you can safely ignore this email.</p>`,
   };
 }
 
@@ -76,11 +77,11 @@ function passwordResetEmail(token) {
   const link = `${CLIENT_URL}/reset-password?token=${token}`;
   return {
     subject: 'Reset your SecureEnroll password',
-    text: `We received a request to reset your SecureEnroll password:\n\n${link}\n\n`
-      + `This link expires in 1 hour. If you didn't request this, your password won't change -- you can ignore this email.`,
-    html: `<p>We received a request to reset your SecureEnroll password:</p>`
+    text: `We received a request to reset your SecureEnroll password. Open the link below to choose a new one:\n\n${link}\n\n`
+      + `This link expires in 1 hour. If you did not request this, you can ignore this email and your password will stay the same.`,
+    html: `<p>We received a request to reset your SecureEnroll password. Click the link below to choose a new one:</p>`
       + `<p><a href="${link}">${link}</a></p>`
-      + `<p>This link expires in 1 hour. If you didn't request this, your password won't change -- you can ignore this email.</p>`,
+      + `<p>This link expires in 1 hour. If you did not request this, you can ignore this email and your password will stay the same.</p>`,
   };
 }
 

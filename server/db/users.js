@@ -8,7 +8,7 @@ async function findRoleIdByName(roleName) {
 async function findUserByEmail(email) {
   const result = await pool.query(
     `SELECT u.id, u.email, u.password_hash, u.is_active,
-            u.failed_login_attempts, u.locked_until,
+            u.failed_login_attempts, u.locked_until, u.email_verified_at,
             r.name AS role_name
      FROM users u
      JOIN roles r ON r.id = u.role_id

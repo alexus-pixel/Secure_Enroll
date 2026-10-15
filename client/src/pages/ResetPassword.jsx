@@ -23,7 +23,7 @@ export default function ResetPassword() {
     setFormError('');
 
     if (!token) {
-      setFormError('This reset link is missing its token. Request a new one below.');
+      setFormError('This reset link is incomplete. Please request a new one.');
       return;
     }
 
@@ -39,7 +39,7 @@ export default function ResetPassword() {
       await api.post('/auth/reset-password', { token, newPassword: password });
       navigate('/', { state: { passwordReset: true } });
     } catch (err) {
-      setFormError(err.response?.data?.message || 'Could not reset your password.');
+      setFormError(err.response?.data?.message || 'We could not reset your password. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -51,10 +51,10 @@ export default function ResetPassword() {
         <div>
           <Brand />
           <h2>Choose a new password</h2>
-          <p>Pick something you haven&rsquo;t used on this account before.</p>
+          <p>Choose a password that you have not used on this account before.</p>
         </div>
         <div className="auth-foot">
-          This system is full of dummy data and all the information is only made up for
+          This system contains only dummy data. All information is made up for
           demonstration purposes.
         </div>
       </aside>

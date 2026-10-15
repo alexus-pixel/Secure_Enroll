@@ -6,6 +6,7 @@ import PasswordInput from '../components/PasswordInput';
 import {
   validateName, validateEmail, validateContactNumber, validatePassword, validateConfirmPassword,
 } from '../utils/validators';
+import VerifyEmailOverlay from '../components/VerifyEmailOverlay';
 import { useScrollToError } from '../hooks/useScrollToError';
 
 const FIELDS = ['lastName', 'firstName', 'middleName', 'email', 'contactNumber', 'password', 'confirmPassword'];
@@ -35,6 +36,8 @@ export default function Register() {
   useScrollToError(formError);
   const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
+  // Set after sign-up succeeds: shows the "Verifying email" overlay.
+  const [pending, setPending] = useState(null);
 
   const update = (field) => (e) => {
     const next = { ...form, [field]: e.target.value };
@@ -90,7 +93,7 @@ export default function Register() {
 
     setSubmitting(true);
     try {
-      await api.post('/auth/register', {
+      const { data } = await api.post('/auth/register', {
         email: form.email.trim(),
         password: form.password,
         firstName: form.firstName.trim(),
@@ -98,9 +101,18 @@ export default function Register() {
         lastName: form.lastName.trim(),
         contactNumber: form.contactNumber.trim(),
       });
-      navigate('/', { state: { registered: true } });
+      if (data.verificationTicket) {
+        setPending({
+          ticket: data.verificationTicket,
+          emailSent: data.emailSent,
+          retryAfter: data.retryAfter,
+          email: form.email.trim(),
+        });
+      } else {
+        navigate('/', { state: { registered: true } });
+      }
     } catch (err) {
-      setFormError(err.response?.data?.message || 'Registration failed.');
+      setFormError(err.response?.data?.message || 'Registration failed. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -115,7 +127,7 @@ export default function Register() {
           <p>One account lets you enroll each of your children and track every application.</p>
         </div>
         <div className="auth-foot">
-          This system is full of dummy data and all the information is only made up for
+          This system contains only dummy data. All information is made up for
           demonstration purposes.
         </div>
       </aside>
@@ -123,7 +135,7 @@ export default function Register() {
       <main className="auth-main">
         <form className="auth-form" onSubmit={handleSubmit} noValidate>
           <h1>Create Account</h1>
-          <p className="sub">For parents and guardians enrolling a child.</p>
+          <p className="sub">For parents and guardians who are enrolling a child.</p>
           {formError && <div className="alert alert-error">{formError}</div>}
 
           <div className="full-name-box">
@@ -186,9 +198,21 @@ export default function Register() {
           <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>
             {submitting ? 'Creating account\u2026' : 'Create Account'}
           </button>
-          <p className="auth-alt">Already registered? <Link to="/">Log in</Link></p>
+          <p className="auth-alt">Already registered? <Link to="/">Sign in</Link></p>
         </form>
       </main>
+
+      {pending && (
+        <VerifyEmailOverlay
+          ticket={pending.ticket}
+          email={pending.email}
+          emailSent={pending.emailSent}
+          retryAfter={pending.retryAfter}
+          variant="register"
+          onVerified={() => navigate('/', { state: { verified: true } })}
+          onClose={() => navigate('/', { state: { registered: true } })}
+        />
+      )}
     </div>
   );
 }
