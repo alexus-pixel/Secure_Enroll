@@ -22,7 +22,32 @@ function getTransporter() {
   return transporter;
 }
 
+// Brevo transactional email API. Used when BREVO_API_KEY is set; otherwise
+// sendMail falls back to SMTP, or to printing the email in dev.
+async function sendViaBrevo({ to, subject, text, html }) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': process.env.BREVO_API_KEY,
+      'content-type': 'application/json',
+      accept: 'application/json',
+    },
+    body: JSON.stringify({
+      sender: {
+        name: process.env.BREVO_SENDER_NAME || 'SecureEnroll',
+        email: process.env.BREVO_SENDER_EMAIL,
+      },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html || `<p>${text}</p>`,
+      textContent: text,
+    }),
+  });
+  if (!res.ok) throw new Error(`Brevo ${res.status}: ${await res.text()}`);
+}
+
 async function sendMail({ to, subject, text, html }) {
+  if (process.env.BREVO_API_KEY) return sendViaBrevo({ to, subject, text, html });
   const t = getTransporter();
   if (!t) {
     console.log('\n----- DEV EMAIL (SMTP not configured, printing instead of sending) -----');
