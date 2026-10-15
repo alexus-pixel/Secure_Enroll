@@ -28,6 +28,17 @@ async function uploadDocument(req, res) {
       return res.status(403).json({ message: 'This application is not yours.' });
     }
 
+    // A document the registrar has already verified is final.
+    const latest = await pool.query(
+      `SELECT status FROM documents WHERE application_id = $1 AND doc_type = $2
+       ORDER BY uploaded_at DESC, id DESC LIMIT 1`,
+      [applicationId, docType]
+    );
+    if (latest.rows[0]?.status === 'verified') {
+      fs.unlinkSync(req.file.path);
+      return res.status(409).json({ message: 'That document has already been verified.' });
+    }
+
     if (!matchesDeclaredType(req.file.path, req.file.mimetype)) {
       fs.unlinkSync(req.file.path);
       return res.status(400).json({ message: 'That file does not appear to be a valid PDF, JPG, or PNG.' });
@@ -41,6 +52,14 @@ async function uploadDocument(req, res) {
       fileSize: req.file.size,
       checksum: sha256(req.file.path),
     });
+
+    // A replacement for a flagged or rejected document sends a returned
+    // application back to the registrar's queue.
+    await pool.query(
+      `UPDATE enrollment_applications SET status = 'submitted'
+       WHERE id = $1 AND status = 'needs_revision'`,
+      [applicationId]
+    );
 
     await pool.query(
       `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, ip_address, user_agent)

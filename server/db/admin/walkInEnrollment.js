@@ -42,6 +42,22 @@ async function findStudentByLrn(lrn) {
   return { ...student, last_enrollment: lastApp.rows[0] || null };
 }
 
+async function getGradeLevels() {
+  const result = await pool.query('SELECT id, name FROM grade_levels ORDER BY sort_order');
+  return result.rows;
+}
+
+// Sections of one grade level in the active school year.
+async function getSectionsForGrade(gradeLevelId) {
+  const result = await pool.query(
+    `SELECT s.id, s.name FROM sections s
+     JOIN school_years sy ON sy.id = s.school_year_id AND sy.is_active
+     WHERE s.grade_level_id = $1 ORDER BY s.name`,
+    [gradeLevelId]
+  );
+  return result.rows;
+}
+
 async function getRequiredDocumentTypes() {
   const result = await pool.query(
     'SELECT code, label, is_required FROM required_document_types ORDER BY sort_order'
@@ -222,5 +238,5 @@ async function createWalkInEnrollment({
 }
 
 module.exports = {
-  hashLrn, findStudentByLrn, getRequiredDocumentTypes, findOrCreateGuardianAccount, createWalkInEnrollment,
+  hashLrn, findStudentByLrn, getGradeLevels, getSectionsForGrade, getRequiredDocumentTypes, findOrCreateGuardianAccount, createWalkInEnrollment,
 };

@@ -11,6 +11,26 @@ async function requiredDocuments(req, res) {
   }
 }
 
+async function gradeLevels(req, res) {
+  try {
+    res.json(await walkInDb.getGradeLevels());
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Could not load grade levels.' });
+  }
+}
+
+async function sections(req, res) {
+  try {
+    const gradeLevelId = Number(req.query.gradeLevelId);
+    if (!Number.isInteger(gradeLevelId) || gradeLevelId <= 0) return res.json([]);
+    res.json(await walkInDb.getSectionsForGrade(gradeLevelId));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Could not load sections.' });
+  }
+}
+
 async function lookupByLrn(req, res) {
   try {
     const student = await walkInDb.findStudentByLrn(req.query.lrn);
@@ -58,4 +78,4 @@ async function create(req, res) {
   }
 }
 
-module.exports = { requiredDocuments, lookupByLrn, create };
+module.exports = { requiredDocuments, gradeLevels, sections, lookupByLrn, create };

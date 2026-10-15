@@ -24,8 +24,8 @@ async function createDocument({ applicationId, docType, filePath, mimeType, file
 
 async function getDocumentsForApplication(applicationId) {
   const result = await pool.query(
-    `SELECT id, doc_type, status, uploaded_at FROM documents
-     WHERE application_id = $1 ORDER BY uploaded_at`,
+    `SELECT id, doc_type, status, uploaded_at, review_note FROM documents
+     WHERE application_id = $1 ORDER BY uploaded_at, id`,
     [applicationId]
   );
   return result.rows;

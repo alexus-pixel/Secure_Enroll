@@ -28,6 +28,8 @@ export default function LrnEntry({ studentId, onSaved }) {
     <div>
       <div style={{ display: 'flex', gap: 8 }}>
         <input
+          className="reg-input"
+          style={{ maxWidth: 190 }}
           value={lrn}
           onChange={(e) => setLrn(e.target.value.replace(/\D/g, '').slice(0, 12))}
           inputMode="numeric"
@@ -35,11 +37,11 @@ export default function LrnEntry({ studentId, onSaved }) {
           placeholder="12-digit LRN"
           aria-label="LRN"
         />
-        <button type="button" onClick={save} disabled={busy || lrn.length !== 12}>
+        <button type="button" className="reg-btn reg-btn-blue" onClick={save} disabled={busy || lrn.length !== 12}>
           {busy ? 'Saving...' : 'Save LRN'}
         </button>
       </div>
-      {error && <div style={{ color: '#b91c1c', fontSize: 13, marginTop: 4 }}>{error}</div>}
+      {error && <div className="dv-error" style={{ marginTop: 4 }}>{error}</div>}
     </div>
   );
 }

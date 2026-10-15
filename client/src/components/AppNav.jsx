@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import {
+  ClipboardList, Settings, CalendarDays, UserPlus, Hash, LayoutDashboard, Users, GraduationCap,
+  ScrollText, School, BarChart3, Menu, X,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 
@@ -36,42 +40,45 @@ export function Brand() {
   );
 }
 
-function ApplicationsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <line x1="7" y1="9" x2="17" y2="9" />
-      <line x1="7" y1="13" x2="17" y2="13" />
-      <line x1="7" y1="17" x2="13" y2="17" />
-    </svg>
-  );
+// One navigation list per role. Every portal (parent, registrar, admin)
+// renders this same sidebar, so the look and behaviour never drift apart.
+// `also` lists extra path prefixes that should keep the item highlighted
+// (for example an application's detail page highlights "Applications").
+const NAV_ITEMS = {
+  parent: [
+    { to: '/dashboard', label: 'Enrollment Applications', icon: ClipboardList, also: ['/applications'] },
+    { to: '/settings', label: 'Account Settings', icon: Settings },
+    { to: '/schedule', label: "Student's Schedule", icon: CalendarDays },
+  ],
+  registrar: [
+    { to: '/registrar', label: 'Applications', icon: ClipboardList, exact: true, also: ['/registrar/applications'] },
+    { to: '/registrar/walk-in', label: 'Walk-in Enrollment', icon: UserPlus },
+    { to: '/registrar/missing-lrn', label: 'Missing LRN', icon: Hash },
+    { to: '/registrar/settings', label: 'Account Settings', icon: Settings },
+  ],
+  admin: [
+    { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/admin/users', label: 'User Management', icon: Users },
+    { to: '/admin/teachers', label: 'Teachers', icon: GraduationCap },
+    { to: '/admin/schedules', label: 'Class Schedules', icon: CalendarDays },
+    { to: '/admin/walk-in-enrollment', label: 'Walk-in Enrollment', icon: UserPlus },
+    { to: '/admin/audit-log', label: 'Audit Log', icon: ScrollText },
+    { to: '/admin/system-settings', label: 'System Settings', icon: Settings },
+    { to: '/admin/school-settings', label: 'School Settings', icon: School },
+    { to: '/admin/reports', label: 'Reports & Export', icon: BarChart3 },
+  ],
+};
+
+function isActive(item, pathname) {
+  const under = (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+  if (item.exact ? pathname === item.to : under(item.to)) return true;
+  return (item.also || []).some(under);
 }
 
-function GearIcon() {
-  const ticks = Array.from({ length: 8 });
-  return (
-    <svg viewBox="0 0 24 24" width="24" height="24" fill="none">
-      {ticks.map((_, i) => (
-        <line key={i} x1="12" y1="2.75" x2="12" y2="5.25" stroke="currentColor"
-          strokeWidth="2" strokeLinecap="round" transform={`rotate(${i * 45} 12 12)`} />
-      ))}
-      <circle cx="12" cy="12" r="6.25" stroke="currentColor" strokeWidth="2" />
-      <circle cx="12" cy="12" r="2.15" fill="currentColor" />
-    </svg>
-  );
-}
-
-function CalendarIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4.5" width="18" height="16" rx="2" />
-      <line x1="3" y1="9.5" x2="21" y2="9.5" />
-      <line x1="8" y1="2.5" x2="8" y2="6.5" />
-      <line x1="16" y1="2.5" x2="16" y2="6.5" />
-    </svg>
-  );
+// "fiona.jarder@ucc.edu.ph" -> "Fiona", for accounts with no name on file.
+function nameFromEmail(email) {
+  const first = (email || '').split('@')[0].split(/[._-]/)[0];
+  return first ? first.charAt(0).toUpperCase() + first.slice(1) : '';
 }
 
 // crumbs: [{ label, to? }, ...] — the last item (no `to`) renders as the
@@ -80,37 +87,43 @@ function CalendarIcon() {
 export default function AppNav({ crumb, crumbs }) {
   const { user, logout, updateUser } = useAuth();
   const location = useLocation();
-  const onSettings = location.pathname.startsWith('/settings');
-  const onSchedule = location.pathname.startsWith('/schedule');
-  const items = crumbs || (crumb ? [{ label: 'Dashboard', to: '/dashboard' }, { label: crumb }] : null);
-  const initial = (user?.firstName || user?.email || '?').trim().charAt(0).toUpperCase();
+  const role = user?.role;
+  const navItems = NAV_ITEMS[role] || [];
+  const homePath = navItems[0]?.to || '/';
+  const items = crumbs || (crumb ? [{ label: 'Dashboard', to: homePath }, { label: crumb }] : null);
+  const displayName = user?.firstName || user?.full_name?.split(' ')[0] || nameFromEmail(user?.email) || 'there';
+  const initial = displayName.trim().charAt(0).toUpperCase() || '?';
 
   // Collapsed (icon-only) vs expanded (icon + label) is a per-browser
-  // preference, not per-page state -- AppNav remounts on every navigation,
-  // so this has to live somewhere that survives that, hence localStorage
-  // instead of a plain useState default. The CSS variable is what actually
-  // resizes everything (sidebar, topbar, container, the banner) at once,
-  // since they all read var(--sidebar-w) already.
+  // preference, not per-page state, so it lives in localStorage. The CSS
+  // variable is what actually resizes everything (sidebar, topbar,
+  // container, the banner) at once, since they all read var(--sidebar-w).
   const [expanded, setExpanded] = useState(() => localStorage.getItem('sidebarExpanded') === 'true');
   useEffect(() => {
     document.documentElement.style.setProperty('--sidebar-w', expanded ? '220px' : '84px');
     localStorage.setItem('sidebarExpanded', String(expanded));
   }, [expanded]);
 
+  // On phones the sidebar is a slide-in drawer opened from the topbar.
+  const [mobileOpen, setMobileOpen] = useState(false);
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setMobileOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileOpen]);
+
   const [toast, setToast] = useState(null); // { text, tone: 'success' | 'error' }
 
   // A locally-cached session can be stale (e.g. verified in another tab
-  // since last login), so refresh the verified flag whenever the shell
-  // mounts rather than trusting only what's in localStorage. If that
-  // refresh reveals the account just became verified (wasn't before,
-  // is now), that's worth a one-time toast -- otherwise the "Resend
-  // email" banner just silently vanishes on the next page load with no
-  // explanation, which is exactly what prompted this.
+  // since last login, or the name was just edited), so refresh it whenever
+  // the shell mounts rather than trusting only what's in localStorage. If
+  // that reveals the account just became verified, show a one-time toast.
   useEffect(() => {
     const wasVerified = user?.emailVerified;
     api.get('/auth/me').then(({ data }) => {
       updateUser(data);
-      if (!wasVerified && data.emailVerified) {
+      if (role === 'parent' && !wasVerified && data.emailVerified) {
         setToast({ text: 'Your email is now verified.', tone: 'success' });
       }
     }).catch(() => {});
@@ -132,7 +145,7 @@ export default function AppNav({ crumb, crumbs }) {
     } catch (err) {
       setResendState('idle');
       setToast({
-        text: err.response?.data?.message || 'Could not resend the email \u2014 try again in a moment.',
+        text: err.response?.data?.message || 'Could not resend the email — try again in a moment.',
         tone: 'error',
       });
     }
@@ -140,35 +153,41 @@ export default function AppNav({ crumb, crumbs }) {
 
   return (
     <>
-      <aside className={`sidebar${expanded ? ' expanded' : ''}`}>
+      <aside className={`sidebar${expanded ? ' expanded' : ''}${mobileOpen ? ' mobile-open' : ''}`} aria-label="Main navigation">
         <button type="button" className="sidebar-brand" onClick={() => setExpanded((v) => !v)}
           aria-label={expanded ? 'Collapse menu' : 'Expand menu'} aria-expanded={expanded}>
           <span className="sidebar-brand-icon sidebar-brand-icon-default"><Mark size={26} /></span>
           <span className="sidebar-brand-icon sidebar-brand-icon-hover"><HamburgerIcon size={26} /></span>
         </button>
+        <span className="sidebar-mobile-brand"><Brand /></span>
+        <button type="button" className="sidebar-close" onClick={() => setMobileOpen(false)} aria-label="Close menu">
+          <X size={22} />
+        </button>
         <nav className="sidebar-nav">
-          <Link to="/dashboard" className={`sidebar-icon${!onSettings && !onSchedule ? ' active' : ''}`}
-            aria-label="Enrollment Applications" title="Enrollment Applications">
-            <ApplicationsIcon />
-            {expanded && <span className="sidebar-label">Enrollment Applications</span>}
-          </Link>
-          <Link to="/settings" className={`sidebar-icon${onSettings ? ' active' : ''}`}
-            aria-label="Account Settings" title="Account Settings">
-            <GearIcon />
-            {expanded && <span className="sidebar-label">Account Settings</span>}
-          </Link>
-          <Link to="/schedule" className={`sidebar-icon${onSchedule ? ' active' : ''}`}
-            aria-label="Student's Schedule" title="Student's Schedule">
-            <CalendarIcon />
-            {expanded && <span className="sidebar-label">Student&rsquo;s Schedule</span>}
-          </Link>
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const active = isActive(item, location.pathname);
+            return (
+              <Link key={item.to} to={item.to} className={`sidebar-icon${active ? ' active' : ''}`}
+                aria-label={item.label} aria-current={active ? 'page' : undefined} title={item.label}
+                onClick={() => setMobileOpen(false)}>
+                <Icon size={22} strokeWidth={2} />
+                <span className="sidebar-label">{item.label}</span>
+              </Link>
+            );
+          })}
         </nav>
       </aside>
+      {mobileOpen && <div className="sidebar-backdrop" onClick={() => setMobileOpen(false)} aria-hidden="true" />}
 
       <header className="topbar">
         <div className="topbar-left">
-          <span className={`role-badge role-${user?.role}`}>
-            Logged in as: {ROLE_LABELS[user?.role] || user?.role}
+          <button type="button" className="nav-toggle" onClick={() => setMobileOpen(true)}
+            aria-label="Open menu" aria-expanded={mobileOpen}>
+            <Menu size={22} />
+          </button>
+          <span className={`role-badge role-${role}`}>
+            <span className="role-badge-prefix">Logged in as: </span>{ROLE_LABELS[role] || role}
           </span>
           {items && (
             <div className="crumbs">
@@ -182,20 +201,20 @@ export default function AppNav({ crumb, crumbs }) {
           )}
         </div>
         <div className="topbar-right">
-          <span className="welcome">Welcome, {user?.firstName || 'there'}!</span>
+          <span className="welcome">Welcome, {displayName}!</span>
           <span className="avatar" aria-hidden="true">{initial}</span>
           <button className="btn-ghost" onClick={logout}>Log out</button>
         </div>
       </header>
 
-      {user && user.emailVerified === false && (
+      {role === 'parent' && user.emailVerified === false && (
         <div className="verify-banner">
           <span>Please verify your email address to submit enrollment applications.</span>
           {resendState === 'sent' ? (
             <span className="verify-banner-sent">Verification email sent &mdash; check your inbox.</span>
           ) : (
             <button className="btn-ghost btn-sm" onClick={resendVerification} disabled={resendState === 'sending'}>
-              {resendState === 'sending' ? 'Sending\u2026' : 'Resend email'}
+              {resendState === 'sending' ? 'Sending…' : 'Resend email'}
             </button>
           )}
         </div>

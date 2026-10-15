@@ -1,25 +1,52 @@
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const pool = require('../db/pool');
 const { notifyLrnRecorded } = require('../mailer');
+const { UPLOAD_DIR } = require('../middleware/upload');
 
 const AY = `(SELECT id FROM school_years WHERE is_active LIMIT 1)`;
-const REQUIRED = [
+
+// The three documents every application is reviewed against. Anything
+// else on file (for example a valid ID handed over at a walk-in) is
+// listed after these.
+const CORE_DOCS = [
   { type: 'birth_certificate', name: 'Birth Certificate' },
   { type: 'form_138', name: 'Form 138 / Report Card' },
   { type: 'good_moral', name: 'Certificate of Good Moral' },
 ];
-const DOC_OUT = { pending: 'pending', verified: 'verified', rejected: 'flagged' };
-const DOC_IN = { verified: 'verified', flagged: 'rejected' };
+const DOC_STATUSES = ['pending', 'verified', 'flagged', 'rejected'];
 
-function audit(db, req, action, entityId, details) {
+// Primary guardian of a student, whoever submitted the application
+// (a parent online, or staff at a walk-in).
+const GUARDIAN_JOIN = `
+  LEFT JOIN LATERAL (
+    SELECT g.first_name, g.last_name
+    FROM student_guardians sg
+    JOIN guardians g ON g.user_id = sg.guardian_id
+    WHERE sg.student_id = s.id
+    ORDER BY sg.is_primary DESC, sg.guardian_id
+    LIMIT 1
+  ) gd ON TRUE`;
+
+function audit(db, req, action, entityId, details, entityType = 'enrollment_application') {
   return db.query(
     `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, ip_address, user_agent, details)
-     VALUES ($1,$2,'enrollment_application',$3,$4,$5,$6)`,
-    [req.user.id, action, entityId, req.ip, req.headers['user-agent'], JSON.stringify(details || {})]
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [req.user.id, action, entityType, entityId, req.ip, req.headers['user-agent'], JSON.stringify(details || {})]
   );
 }
+
+// Newest document row per type. A parent who re-uploads after a
+// rejection adds a row; the registrar always reviews the latest one.
+const LATEST_DOCS = `
+  SELECT DISTINCT ON (doc_type)
+         id, doc_type, file_path, mime_type, status, uploaded_at, review_note,
+         (received_in_person OR is_physical) AS physical
+  FROM documents
+  WHERE application_id = $1
+  ORDER BY doc_type, uploaded_at DESC, id DESC`;
 
 // ---------- Dashboard ----------
 exports.list = async (req, res) => {
@@ -35,12 +62,12 @@ exports.list = async (req, res) => {
     `SELECT a.id, s.last_name || ', ' || s.first_name AS student,
             s.lrn_hash IS NULL AS "missingLrn",
             g.name AS grade,
-            gd.first_name || ' ' || gd.last_name AS guardian,
+            COALESCE(gd.first_name || ' ' || gd.last_name, '—') AS guardian,
             a.submitted_at AS submitted, a.status
      FROM enrollment_applications a
      JOIN students s ON s.id = a.student_id
      JOIN grade_levels g ON g.id = a.grade_level_id
-     LEFT JOIN guardians gd ON gd.user_id = a.submitted_by
+     ${GUARDIAN_JOIN}
      WHERE a.school_year_id = ${AY}
      ORDER BY a.submitted_at DESC`
   );
@@ -49,64 +76,149 @@ exports.list = async (req, res) => {
 
 // ---------- Application view ----------
 exports.get = async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
   const { rows: [a] } = await pool.query(
     `SELECT a.id, a.status, a.remarks, a.grade_qualification AS "gradeQualification",
             a.submitted_at AS submitted,
             s.id AS "studentId",
             s.lrn_hash IS NULL AS "missingLrn",
             s.last_name || ', ' || s.first_name AS student, g.name AS grade,
-            gd.first_name || ' ' || gd.last_name AS guardian
+            COALESCE(gd.first_name || ' ' || gd.last_name, '—') AS guardian
      FROM enrollment_applications a
      JOIN students s ON s.id = a.student_id
      JOIN grade_levels g ON g.id = a.grade_level_id
-     LEFT JOIN guardians gd ON gd.user_id = a.submitted_by
+     ${GUARDIAN_JOIN}
      WHERE a.id = $1`,
     [req.params.id]
   );
   if (!a) return res.status(404).json({ message: 'Application not found.' });
 
-  const { rows: docs } = await pool.query(
-    `SELECT doc_type, file_path, status, uploaded_at, received_in_person
-     FROM documents WHERE application_id = $1`,
-    [a.id]
-  );
-  a.documents = REQUIRED.map((r) => {
-    const d = docs.find((x) => x.doc_type === r.type);
-    if (!d) return { id: r.type, name: r.name, file: null, uploaded: null, status: 'awaiting' };
+  const { rows: docs } = await pool.query(LATEST_DOCS, [a.id]);
+  const { rows: types } = await pool.query('SELECT code, label FROM required_document_types');
+  const labelOf = Object.fromEntries(types.map((t) => [t.code, t.label]));
+
+  const shape = (type, name) => {
+    const d = docs.find((x) => x.doc_type === type);
+    if (!d) return { type, name, status: 'awaiting', hasFile: false, receivedInPerson: false };
     return {
-      id: r.type,
-      name: r.name,
-      file: d.file_path ? path.basename(d.file_path) : null,
-      receivedInPerson: d.received_in_person,
+      type,
+      name,
+      docId: d.id,
+      hasFile: Boolean(d.file_path),
+      mimeType: d.mime_type,
+      receivedInPerson: d.physical,
       uploaded: d.uploaded_at,
-      status: DOC_OUT[d.status],
+      status: d.status,
+      note: d.review_note,
     };
-  });
+  };
+
+  const coreTypes = CORE_DOCS.map((c) => c.type);
+  a.documents = [
+    ...CORE_DOCS.map((c) => shape(c.type, c.name)),
+    ...docs
+      .filter((d) => !coreTypes.includes(d.doc_type))
+      .map((d) => shape(d.doc_type, labelOf[d.doc_type] || d.doc_type)),
+  ];
   res.json(a);
 };
 
+// Verify, flag (needs attention) or reject (must be replaced) one document.
 exports.setDocumentStatus = async (req, res) => {
-  const status = DOC_IN[req.body.status];
-  if (!status) return res.status(400).json({ message: 'Status must be verified or flagged.' });
-  const { rowCount } = await pool.query(
-    `UPDATE documents SET status = $1, verified_by = $2, verified_at = NOW()
-     WHERE application_id = $3 AND doc_type = $4`,
-    [status, req.user.id, req.params.id, req.params.docType]
+  const { status } = req.body;
+  const note = String(req.body.note || '').trim().slice(0, 500);
+  if (!DOC_STATUSES.includes(status)) {
+    return res.status(400).json({ message: 'Status must be verified, flagged, rejected or pending.' });
+  }
+  if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
+
+  const { rows: [app] } = await pool.query(
+    'SELECT status FROM enrollment_applications WHERE id = $1', [req.params.id]
   );
-  if (!rowCount) return res.status(404).json({ message: 'Document not found.' });
-  await audit(pool, req, 'DOCUMENT_' + status.toUpperCase(), req.params.id, { docType: req.params.docType });
-  res.json({ ok: true });
+  if (!app) return res.status(404).json({ message: 'Application not found.' });
+  if (['approved', 'rejected'].includes(app.status)) {
+    return res.status(409).json({ message: 'This application is already finalized.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rowCount } = await client.query(
+      `UPDATE documents
+       SET status = $1::text, review_note = $2,
+           verified_by = CASE WHEN $1::text = 'pending' THEN NULL ELSE $3::bigint END,
+           verified_at = CASE WHEN $1::text = 'pending' THEN NULL ELSE NOW() END
+       WHERE id = (SELECT id FROM documents
+                   WHERE application_id = $4 AND doc_type = $5
+                   ORDER BY uploaded_at DESC, id DESC LIMIT 1)`,
+      [status, status === 'verified' || status === 'pending' ? null : (note || null),
+       req.user.id, req.params.id, req.params.docType]
+    );
+    if (!rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Document not found.' });
+    }
+    // The first review action moves a freshly submitted application into review.
+    await client.query(
+      `UPDATE enrollment_applications
+       SET status = 'under_review', reviewed_by = $2
+       WHERE id = $1 AND status = 'submitted'`,
+      [req.params.id, req.user.id]
+    );
+    await audit(client, req, 'DOCUMENT_' + status.toUpperCase(), req.params.id,
+      { docType: req.params.docType, note: note || undefined });
+    await client.query('COMMIT');
+    res.json({ ok: true, status, note: status === 'verified' || status === 'pending' ? null : (note || null) });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+// Streams the file a parent uploaded, to an authenticated reviewer only.
+exports.documentFile = async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ message: 'Document not found.' });
+  const { rows: [d] } = await pool.query(
+    `SELECT id, file_path, mime_type FROM documents
+     WHERE application_id = $1 AND doc_type = $2 AND file_path IS NOT NULL
+     ORDER BY uploaded_at DESC, id DESC LIMIT 1`,
+    [req.params.id, req.params.docType]
+  );
+  if (!d) return res.status(404).json({ message: 'No file has been uploaded for this document.' });
+
+  // Only ever serve from the uploads folder, by file name alone, so a
+  // bad path in the database cannot be used to read other files. The
+  // stored path may be a Windows path, so split on both separators.
+  const name = String(d.file_path).split(/[\\/]/).pop();
+  const full = path.join(UPLOAD_DIR, name);
+  if (!name || path.dirname(full) !== UPLOAD_DIR || !fs.existsSync(full)) {
+    return res.status(404).json({
+      message: 'The uploaded file could not be found on this server. It may have been uploaded to a different computer.',
+    });
+  }
+
+  await audit(pool, req, 'DOCUMENT_VIEWED', req.params.id, { docType: req.params.docType }).catch(() => {});
+  res.setHeader('Content-Type', d.mime_type || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${req.params.docType}${path.extname(name)}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  fs.createReadStream(full).on('error', () => res.destroy()).pipe(res);
 };
 
 exports.setQualification = async (req, res) => {
   if (!['met', 'not_met'].includes(req.body.value)) {
     return res.status(400).json({ message: 'Value must be met or not_met.' });
   }
+  if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
   const { rowCount } = await pool.query(
-    'UPDATE enrollment_applications SET grade_qualification = $1 WHERE id = $2',
+    `UPDATE enrollment_applications
+     SET grade_qualification = $1,
+         status = CASE WHEN status = 'submitted' THEN 'under_review' ELSE status END
+     WHERE id = $2 AND status NOT IN ('approved', 'rejected')`,
     [req.body.value, req.params.id]
   );
-  if (!rowCount) return res.status(404).json({ message: 'Application not found.' });
+  if (!rowCount) return res.status(404).json({ message: 'Application not found or already finalized.' });
   res.json({ ok: true });
 };
 
@@ -125,15 +237,19 @@ exports.decide = async (req, res) => {
   }
 
   if (action === 'approve') {
-    const { rows: [c] } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM documents
-       WHERE application_id = $1 AND status = 'verified' AND doc_type = ANY($2)`,
-      [req.params.id, REQUIRED.map((r) => r.type)]
-    );
-    if (c.n < REQUIRED.length || a.grade_qualification !== 'met') {
-      return res.status(400).json({
-        message: 'Verify all documents and mark the grade qualification as Met before approving.',
-      });
+    const { rows: latest } = await pool.query(LATEST_DOCS, [req.params.id]);
+    const statusOf = Object.fromEntries(latest.map((d) => [d.doc_type, d.status]));
+    const open = [
+      ...CORE_DOCS.filter((c) => statusOf[c.type] !== 'verified').map((c) => c.name),
+      ...latest
+        .filter((d) => !CORE_DOCS.some((c) => c.type === d.doc_type) && d.status !== 'verified')
+        .map((d) => d.doc_type),
+    ];
+    if (open.length || a.grade_qualification !== 'met') {
+      const parts = [];
+      if (open.length) parts.push(`verify every document (still open: ${open.join(', ')})`);
+      if (a.grade_qualification !== 'met') parts.push('mark the grade qualification as Met');
+      return res.status(400).json({ message: `Before approving, ${parts.join(' and ')}.` });
     }
   } else if (!remarks.trim()) {
     return res.status(400).json({ message: 'A remark is required.' });
@@ -149,169 +265,27 @@ exports.decide = async (req, res) => {
   res.json({ ok: true, status });
 };
 
-// ---------- Walk-in: new student ----------
-exports.walkIn = async (req, res) => {
-  const b = req.body;
-  const required = ['firstName', 'lastName', 'birthDate', 'guardianFirst', 'guardianLast', 'contact'];
-  if (required.some((k) => !String(b[k] || '').trim())) {
-    return res.status(400).json({ message: 'Missing required fields.' });
-  }
-  const key = process.env.ENCRYPTION_KEY;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { rows: [role] } = await client.query(`SELECT id FROM roles WHERE name = 'parent'`);
-    const { rows: [grade] } = await client.query('SELECT id FROM grade_levels WHERE name = $1', [b.grade]);
-    if (!grade) throw Object.assign(new Error('Invalid grade level.'), { status: 400 });
-
-    // The parent account is created inactive. Credentials are issued later.
-    const email = (b.email || `walkin-${crypto.randomUUID()}@walkin.invalid`).toLowerCase();
-    const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
-    const { rows: [user] } = await client.query(
-      `INSERT INTO users (email, password_hash, role_id, is_active)
-       VALUES ($1,$2,$3,FALSE) RETURNING id`,
-      [email, hash, role.id]
-    );
-    await client.query(
-      `INSERT INTO guardians (user_id, first_name, last_name, contact_number, address)
-       VALUES ($1,$2,$3, pgp_sym_encrypt($4,$6), pgp_sym_encrypt($5,$6))`,
-      [user.id, b.guardianFirst.trim(), b.guardianLast.trim(), b.contact, b.address || '', key]
-    );
-    const { rows: [student] } = await client.query(
-      `INSERT INTO students (first_name, middle_name, last_name, birth_date, sex)
-       VALUES ($1,$2,$3, pgp_sym_encrypt($4,$6), $5) RETURNING id`,
-      [b.firstName.trim(), b.middleName?.trim() || null, b.lastName.trim(), b.birthDate,
-       b.sex === 'Male' ? 'M' : 'F', key]
-    );
-    await client.query(
-      `INSERT INTO student_guardians (student_id, guardian_id, relationship, is_primary)
-       VALUES ($1,$2,$3,TRUE)`,
-      [student.id, user.id, b.relationship || 'Guardian']
-    );
-    const { rows: [app] } = await client.query(
-      `INSERT INTO enrollment_applications (student_id, school_year_id, grade_level_id, submitted_by)
-       VALUES ($1, ${AY}, $2, $3) RETURNING id`,
-      [student.id, grade.id, user.id]
-    );
-
-    const received = { birth_certificate: b.docs?.birth, form_138: b.docs?.form138, good_moral: b.docs?.moral };
-    for (const [type, ok] of Object.entries(received)) {
-      if (ok) {
-        await client.query(
-          `INSERT INTO documents (application_id, doc_type, received_in_person) VALUES ($1,$2,TRUE)`,
-          [app.id, type]
-        );
-      }
-    }
-    await audit(client, req, 'WALK_IN_CREATED', app.id, {});
-    await client.query('COMMIT');
-    res.status(201).json({ applicationId: app.id });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    if (err.status) return res.status(err.status).json({ message: err.message });
-    if (err.code === '23505') return res.status(409).json({ message: 'That record already exists.' });
-    throw err;
-  } finally {
-    client.release();
-  }
-};
-
-// ---------- Walk-in: returning student ----------
-exports.lookupLearner = async (req, res) => {
-  const hash = crypto.createHash('sha256').update(req.params.lrn.trim()).digest('hex');
-  const { rows: [l] } = await pool.query(
-    `SELECT s.id AS "studentId", s.first_name || ' ' || s.last_name AS name,
-            g.name AS grade, g.sort_order AS "gradeOrder",
-            sec.name AS section, sy.label AS "schoolYear"
-     FROM students s
-     JOIN enrollment_applications a ON a.student_id = s.id
-     JOIN grade_levels g ON g.id = a.grade_level_id
-     JOIN school_years sy ON sy.id = a.school_year_id
-     LEFT JOIN sections sec ON sec.id = a.section_id
-     WHERE s.lrn_hash = $1
-     ORDER BY sy.opens_at DESC LIMIT 1`,
-    [hash]
-  );
-  if (!l) return res.status(404).json({ message: 'No record found for that LRN.' });
-  res.json(l);
-};
-
-exports.promote = async (req, res) => {
-  if (!req.body.form138) {
-    return res.status(400).json({ message: 'Form 138 must be received first.' });
-  }
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows: [prev] } = await client.query(
-      `SELECT a.id, g.sort_order FROM enrollment_applications a
-       JOIN grade_levels g ON g.id = a.grade_level_id
-       JOIN school_years sy ON sy.id = a.school_year_id
-       WHERE a.student_id = $1 ORDER BY sy.opens_at DESC LIMIT 1`,
-      [req.params.studentId]
-    );
-    const { rows: [next] } = await client.query(
-      'SELECT id FROM grade_levels WHERE sort_order = $1',
-      [prev ? prev.sort_order + 1 : -1]
-    );
-    const { rows: [guardian] } = await client.query(
-      `SELECT guardian_id FROM student_guardians
-       WHERE student_id = $1 ORDER BY is_primary DESC LIMIT 1`,
-      [req.params.studentId]
-    );
-    if (!prev || !next || !guardian) {
-      throw Object.assign(new Error('This learner cannot be promoted.'), { status: 400 });
-    }
-
-    const { rows: [app] } = await client.query(
-      `INSERT INTO enrollment_applications (student_id, school_year_id, grade_level_id, submitted_by)
-       VALUES ($1, ${AY}, $2, $3) RETURNING id`,
-      [req.params.studentId, next.id, guardian.guardian_id]
-    );
-    // Carry over documents that are already verified and on file
-    await client.query(
-      `INSERT INTO documents (application_id, doc_type, file_path, mime_type, file_size, checksum,
-                              status, verified_by, verified_at, received_in_person)
-       SELECT $1, doc_type, file_path, mime_type, file_size, checksum,
-              status, verified_by, verified_at, received_in_person
-       FROM documents
-       WHERE application_id = $2 AND status = 'verified'
-         AND doc_type IN ('birth_certificate','good_moral')`,
-      [app.id, prev.id]
-    );
-    await client.query(
-      `INSERT INTO documents (application_id, doc_type, received_in_person) VALUES ($1,'form_138',TRUE)`,
-      [app.id]
-    );
-    await audit(client, req, 'WALK_IN_PROMOTION', app.id, {});
-    await client.query('COMMIT');
-    res.status(201).json({ applicationId: app.id });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    if (err.status) return res.status(err.status).json({ message: err.message });
-    if (err.code === '23505') {
-      return res.status(409).json({ message: 'This learner is already enrolled this school year.' });
-    }
-    throw err;
-  } finally {
-    client.release();
-  }
-};
-
 // ---------- Account settings ----------
 exports.updateProfile = async (req, res) => {
   const { firstName, lastName, middleInitial = '' } = req.body;
   if (!firstName?.trim() || !lastName?.trim()) {
     return res.status(400).json({ message: 'First and last name are required.' });
   }
+  const first = firstName.trim().slice(0, 60);
+  const last = lastName.trim().slice(0, 60);
+  const mi = middleInitial.trim().slice(0, 2);
   const { rows: [u] } = await pool.query(
-    `UPDATE users SET first_name = $1, last_name = $2, middle_initial = NULLIF($3,''), updated_at = NOW()
-     WHERE id = $4
+    `UPDATE users
+     SET first_name = $1, last_name = $2, middle_initial = NULLIF($3, ''),
+         full_name = $4, updated_at = NOW()
+     WHERE id = $5
      RETURNING id, email, first_name, last_name, middle_initial`,
-    [firstName.trim(), lastName.trim(), middleInitial.trim(), req.user.id]
+    [first, last, mi, `${first} ${last}`, req.user.id]
   );
-  res.json(u);
+  res.json({
+    id: u.id, email: u.email,
+    firstName: u.first_name, lastName: u.last_name, middleName: u.middle_initial,
+  });
 };
 
 exports.changePassword = async (req, res) => {

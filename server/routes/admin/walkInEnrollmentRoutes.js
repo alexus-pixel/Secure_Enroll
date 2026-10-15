@@ -8,6 +8,8 @@ const { lrnLookupQuery, createWalkInEnrollment } = require('../../validators/wal
 const canCreate = [authenticate, requirePermission('application.create')];
 
 router.get('/required-documents', ...canCreate, controller.requiredDocuments);
+router.get('/grade-levels', ...canCreate, controller.gradeLevels);
+router.get('/sections', ...canCreate, controller.sections);
 router.get('/lookup-by-lrn', ...canCreate, validate(lrnLookupQuery, 'query'), controller.lookupByLrn);
 router.post('/', ...canCreate, validate(createWalkInEnrollment), controller.create);
 

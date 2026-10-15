@@ -3,6 +3,7 @@ const LABELS = {
   under_review: 'Under Review',
   needs_revision: 'Needs Revision',
   approved: 'Approved',
+  rejected: 'Rejected',
 };
 
 export default function StatusBadge({ status }) {

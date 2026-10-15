@@ -4,6 +4,14 @@ import api from '../api/client';
 import AppNav from '../components/AppNav';
 import { useScrollToError } from '../hooks/useScrollToError';
 
+// What the parent sees for each registrar decision on a document.
+const DOC_STATUS_TEXT = {
+  pending: 'Under review',
+  verified: 'Verified',
+  flagged: 'Needs attention',
+  rejected: 'Rejected',
+};
+
 const DOC_TYPES = {
   birth_certificate: 'Birth Certificate',
   form_138: 'Form 138 / Report Card',
@@ -14,29 +22,32 @@ export default function ApplicationDetail() {
   const { id } = useParams();
   const [app, setApp] = useState(null);
   const [error, setError] = useState('');
-  useScrollToError(error);
+  const [uploadError, setUploadError] = useState('');
+  useScrollToError(error || uploadError);
 
-  async function load() {
-    try {
-      const { data } = await api.get(`/applications/${id}`);
-      setApp(data);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Could not load application.');
-    }
-  }
+  const [reloadKey, setReloadKey] = useState(0);
+  const load = () => setReloadKey((k) => k + 1);
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    let alive = true;
+    api.get(`/applications/${id}`)
+      .then(({ data }) => alive && setApp(data))
+      .catch((err) => alive && setError(err.response?.data?.message || 'Could not load application.'));
+    return () => { alive = false; };
+  }, [id, reloadKey]);
 
   async function upload(docType, file) {
     if (!file) return;
     const fd = new FormData();
     fd.append('file', file);
     fd.append('docType', docType);
+    setUploadError('');
     try {
       await api.post(`/applications/${id}/documents`, fd);
       load();
     } catch (err) {
-      setError(err.response?.data?.message || 'Upload failed.');
+      // A failed upload must not replace the whole page, so it has its own message.
+      setUploadError(err.response?.data?.message || 'Upload failed.');
     }
   }
 
@@ -84,7 +95,7 @@ export default function ApplicationDetail() {
           <span className={`pill pill-${app.status}`}>{app.status.replace('_', ' ')}</span>
         </div>
 
-        {error && <div className="alert alert-error">{error}</div>}
+        {uploadError && <div className="alert alert-error" role="alert">{uploadError}</div>}
 
         <div className="card">
           <div className="timeline">
@@ -102,23 +113,28 @@ export default function ApplicationDetail() {
           {Object.entries(DOC_TYPES).map(([key, label]) => {
             const doc = uploaded[key];
             // Gated per document, not per application: a registrar can flag
-            // one specific file as rejected while the rest of the
-            // application sits fine, so only a missing or rejected
-            // document should ever show an upload control.
-            const needsUpload = !doc || doc.status === 'rejected';
+            // or reject one specific file while the rest of the application
+            // sits fine, so only a missing, flagged or rejected document
+            // shows an upload control (a replacement for it).
+            const needsUpload = !doc || ['rejected', 'flagged'].includes(doc.status);
             const rowClass = !doc ? 'doc-row-neutral'
               : doc.status === 'verified' ? 'doc-row-done'
-              : doc.status === 'rejected' ? 'doc-row-rejected' : 'doc-row-pending';
+              : doc.status === 'rejected' ? 'doc-row-rejected'
+              : 'doc-row-pending';
             return (
               <div className={`doc-row ${rowClass}`} key={key}>
                 <div>
                   <div className="doc-name">{label}</div>
                   <div className="doc-sub">{doc ? `Uploaded ${new Date(doc.uploaded_at).toLocaleDateString()}` : 'Not yet uploaded'}</div>
                 </div>
-                {needsUpload
-                  ? <input className="input" style={{ maxWidth: 260 }} type="file"
-                      accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => upload(key, e.target.files[0])} />
-                  : <span className={`pill pill-${doc.status}`}>{doc.status}</span>}
+                {doc && <span className={`pill pill-${doc.status}`}>{DOC_STATUS_TEXT[doc.status] || doc.status}</span>}
+                {doc?.review_note && (
+                  <div className="doc-note"><b>Registrar note:</b> {doc.review_note}</div>
+                )}
+                {needsUpload && (
+                  <input className="input doc-upload" type="file" aria-label={`Upload ${label}`}
+                    accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => upload(key, e.target.files[0])} />
+                )}
               </div>
             );
           })}

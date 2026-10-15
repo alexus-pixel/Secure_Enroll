@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import LrnEntry from '../../components/registrar/LrnEntry';
@@ -13,21 +13,21 @@ export default function MissingLrn() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await api.get('/registrar/students/missing-lrn');
-      setStudents(data.students);
-      setError('');
-    } catch (err) {
-      setError(err.response?.data?.message || 'Could not load the list.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [reloadKey, setReloadKey] = useState(0);
+  const load = () => setReloadKey((k) => k + 1);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let alive = true;
+    api.get('/registrar/students/missing-lrn')
+      .then(({ data }) => {
+        if (!alive) return;
+        setStudents(data.students);
+        setError('');
+      })
+      .catch((err) => alive && setError(err.response?.data?.message || 'Could not load the list.'))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+  }, [reloadKey]);
 
   return (
     <div className="reg-page">
@@ -46,7 +46,7 @@ export default function MissingLrn() {
       </p>
 
       {loading && <p>Loading...</p>}
-      {error && <p style={{ color: '#b91c1c' }}>{error}</p>}
+      {error && <p className="reg-notice reg-notice-error">{error}</p>}
       {!loading && !error && students.length === 0 && (
         <p>Every student in this school year has an LRN.</p>
       )}
@@ -72,7 +72,7 @@ export default function MissingLrn() {
                   <td><LrnEntry studentId={s.studentId} onSaved={load} /></td>
                   <td>
                     <Link className="reg-link" to={`/registrar/applications/${s.applicationId}`}>
-                      VIEW
+                      REVIEW
                     </Link>
                   </td>
                 </tr>

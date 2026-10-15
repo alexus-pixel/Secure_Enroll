@@ -1,55 +1,104 @@
-import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { mockApplications } from '../../data/mockApplications';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import api from '../../api/client';
+import StatusBadge from '../../components/registrar/StatusBadge';
+// Loaded only when a registrar opens a document, so the PDF engine is never
+// downloaded for parents or for pages that don't need it.
+const DocumentViewer = lazy(() => import('../../components/registrar/DocumentViewer'));
+import { DocStatusBadge, ReasonDialog, ViewerActions } from '../../components/registrar/DocActions';
 
-const INITIAL_DOCS = [
-  { id: 'birth', name: 'Birth Certificate', file: 'birth_cert2989.jpg', uploaded: '9/4/2026', status: 'pending' },
-  { id: 'form138', name: 'Form 138 / Report Card', file: 'report.jpg', uploaded: '9/4/2026', status: 'pending' },
-  { id: 'moral', name: 'Certificate of Good Moral', file: null, uploaded: null, status: 'awaiting' },
-];
+const fmt = (d) =>
+  new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+
+const FINAL = ['approved', 'rejected'];
 
 export default function ApplicationView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const app = mockApplications.find((a) => String(a.id) === id);
+  const outlet = useOutletContext();
+  const setCrumb = outlet?.setCrumb;
 
-  const [docs, setDocs] = useState(INITIAL_DOCS);
-  const [grade, setGrade] = useState(null); // 'met' | 'not_met' | null
+  const [app, setApp] = useState(null);
+  const [loadError, setLoadError] = useState('');
   const [remarks, setRemarks] = useState('');
   const [notice, setNotice] = useState(null); // { type: 'ok' | 'error', text }
+  const [viewing, setViewing] = useState(null); // document type being viewed
+  const [reasonFor, setReasonFor] = useState(null); // { type, status } awaiting a reason
+  const [deciding, setDeciding] = useState(false);
 
-  if (!app) return <p>Application not found.</p>;
+  const [reloadKey, setReloadKey] = useState(0);
+  const load = () => setReloadKey((k) => k + 1);
 
-  function setDocStatus(docId, status) {
-    setDocs((list) => list.map((d) => (d.id === docId ? { ...d, status } : d)));
+  useEffect(() => {
+    let alive = true;
+    api.get(`/registrar/applications/${id}`)
+      .then(({ data }) => {
+        if (!alive) return;
+        setApp(data);
+        setRemarks((r) => r || data.remarks || '');
+        setLoadError('');
+      })
+      .catch((err) => {
+        if (alive) setLoadError(err.response?.data?.message || 'Could not load this application.');
+      });
+    return () => { alive = false; };
+  }, [id, reloadKey]);
+
+  useEffect(() => { if (app && setCrumb) setCrumb(app.student); }, [app, setCrumb]);
+
+  if (loadError) {
+    return (
+      <div className="reg-page reg-narrow">
+        <button className="reg-back" onClick={() => navigate(-1)}>&lsaquo; Go Back</button>
+        <div className="reg-notice reg-notice-error">{loadError}</div>
+      </div>
+    );
+  }
+  if (!app) return <div className="reg-page"><p>Loading&hellip;</p></div>;
+
+  const finalized = FINAL.includes(app.status);
+  const docs = app.documents;
+  const viewingDoc = docs.find((d) => d.type === viewing);
+
+  // Verify, flag or reject one document. Throws on failure so the
+  // dialog or viewer that called it can show the error.
+  async function setDocStatus(type, status, note) {
+    await api.patch(`/registrar/applications/${id}/documents/${type}`, { status, note });
+    setNotice(null);
+    load();
   }
 
-  function handleApprove() {
-    const allVerified = docs.every((d) => d.status === 'verified');
-    if (!allVerified || grade !== 'met') {
-      setNotice({ type: 'error', text: 'Verify all documents and mark the grade qualification as Met before approving.' });
-      return;
+  async function setQualification(value) {
+    try {
+      await api.patch(`/registrar/applications/${id}/qualification`, { value });
+      setNotice(null);
+      load();
+    } catch (err) {
+      setNotice({ type: 'error', text: err.response?.data?.message || 'Could not save that.' });
     }
-    // TODO: call API
-    setNotice({ type: 'ok', text: 'Application approved.' });
   }
 
-  function handleRevision() {
-    if (!remarks.trim()) {
-      setNotice({ type: 'error', text: 'Add a remark explaining what needs to be revised.' });
+  async function decide(action, okText) {
+    if (action !== 'approve' && !remarks.trim()) {
+      setNotice({
+        type: 'error',
+        text: action === 'revision'
+          ? 'Add a remark explaining what needs to be revised.'
+          : 'Add a remark explaining the reason for rejection.',
+      });
       return;
     }
-    // TODO: call API
-    setNotice({ type: 'ok', text: 'Revision requested. The parent will be notified.' });
-  }
-
-  function handleReject() {
-    if (!remarks.trim()) {
-      setNotice({ type: 'error', text: 'Add a remark explaining the reason for rejection.' });
-      return;
+    setDeciding(true);
+    try {
+      await api.post(`/registrar/applications/${id}/decision`, { action, remarks });
+      setNotice({ type: 'ok', text: okText });
+      load();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      setNotice({ type: 'error', text: err.response?.data?.message || 'Could not save the decision.' });
+    } finally {
+      setDeciding(false);
     }
-    // TODO: call API
-    setNotice({ type: 'ok', text: 'Application rejected.' });
   }
 
   return (
@@ -63,63 +112,82 @@ export default function ApplicationView() {
 
       <h1 className="reg-title">{app.student}</h1>
       <p className="reg-subtitle">
-        {app.grade} - Guardian: {app.guardian} - Submitted {app.submitted}
+        {app.grade} &middot; Guardian: {app.guardian} &middot; Submitted {fmt(app.submitted)}{' '}
+        <StatusBadge status={app.status} />
       </p>
 
-      {notice && <div className={`reg-notice reg-notice-${notice.type}`}>{notice.text}</div>}
+      {app.missingLrn && (
+        <div className="reg-banner">This student has no LRN on file yet. You can enter it under Missing LRN.</div>
+      )}
+      {notice && <div className={`reg-notice reg-notice-${notice.type}`} role="status">{notice.text}</div>}
+      {finalized && (
+        <div className="reg-notice reg-notice-ok">
+          This application is {app.status}. Documents can no longer be changed.
+        </div>
+      )}
 
       <div className="reg-card">
         <p className="reg-card-label">Documents</p>
-        {docs.map((d) => (
-          <div className="reg-item" key={d.id}>
-            <div>
-              <div className="reg-item-name">{d.name}</div>
-              <div className="reg-item-meta">
-                {d.file ? `Uploaded ${d.uploaded} - ${d.file}` : 'Not yet uploaded'}
-                {d.status === 'verified' && ' · ✓ Verified'}
-                {d.status === 'flagged' && ' · ⚑ Flagged'}
+        {docs.map((d) => {
+          const hasFile = d.hasFile;
+          return (
+            <div className={`reg-item is-${d.status}`} key={d.type}>
+              <div className="reg-item-main">
+                <div className="reg-item-name">
+                  {d.name}
+                  <DocStatusBadge doc={d} />
+                  {d.receivedInPerson && <span className="reg-badge reg-badge-paper">Paper copy received</span>}
+                </div>
+                <div className="reg-item-meta">
+                  {d.status === 'awaiting' && 'Not yet uploaded by the parent.'}
+                  {d.status !== 'awaiting' && hasFile && `Uploaded ${fmt(d.uploaded)}`}
+                  {d.status !== 'awaiting' && !hasFile && d.receivedInPerson && 'Handed in at the front desk. There is no digital file to view.'}
+                </div>
+                {d.note && <div className="reg-item-note"><b>Reason:</b> {d.note}</div>}
               </div>
+
+              {d.status !== 'awaiting' && (
+                <div className="reg-item-actions">
+                  {hasFile && (
+                    <button className="reg-btn reg-btn-sm reg-btn-view" onClick={() => setViewing(d.type)}>
+                      View
+                    </button>
+                  )}
+                  <button className={`reg-btn reg-btn-sm reg-btn-green${d.status === 'verified' ? ' on' : ''}`}
+                    disabled={finalized || d.status === 'verified'}
+                    onClick={() => setDocStatus(d.type, 'verified').catch((err) =>
+                      setNotice({ type: 'error', text: err.response?.data?.message || 'Could not verify.' }))}>
+                    Verify
+                  </button>
+                  <button className={`reg-btn reg-btn-sm reg-btn-amber${d.status === 'flagged' ? ' on' : ''}`}
+                    disabled={finalized} onClick={() => setReasonFor({ type: d.type, status: 'flagged' })}>
+                    Flag
+                  </button>
+                  <button className={`reg-btn reg-btn-sm reg-btn-red${d.status === 'rejected' ? ' on' : ''}`}
+                    disabled={finalized} onClick={() => setReasonFor({ type: d.type, status: 'rejected' })}>
+                    Reject
+                  </button>
+                </div>
+              )}
             </div>
-            {d.status === 'awaiting' ? (
-              <span className="reg-badge reg-badge-under_review">Awaiting Parent</span>
-            ) : (
-              <div className="reg-item-actions">
-                <button
-                  className={`reg-btn reg-btn-green ${d.status === 'flagged' ? 'dim' : ''}`}
-                  onClick={() => setDocStatus(d.id, 'verified')}
-                >
-                  Verify
-                </button>
-                <button
-                  className={`reg-btn reg-btn-red ${d.status === 'flagged' ? 'on' : ''}`}
-                  onClick={() => setDocStatus(d.id, 'flagged')}
-                >
-                  Flag
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="reg-card">
         <p className="reg-card-label">Requirements</p>
         <div className="reg-item">
-          <div>
+          <div className="reg-item-main">
             <div className="reg-item-name">Grade Qualification</div>
             <div className="reg-item-meta">Minimum average required for {app.grade} admission</div>
           </div>
           <div className="reg-item-actions">
-            <button
-              className={`reg-btn reg-btn-green ${grade === 'not_met' ? 'dim' : ''}`}
-              onClick={() => setGrade('met')}
-            >
+            <button className={`reg-btn reg-btn-sm reg-btn-green${app.gradeQualification === 'met' ? ' on' : ''}`}
+              disabled={finalized} onClick={() => setQualification('met')}>
               Met
             </button>
-            <button
-              className={`reg-btn reg-btn-red ${grade === 'not_met' ? 'on' : ''}`}
-              onClick={() => setGrade('not_met')}
-            >
+            <button className={`reg-btn reg-btn-sm reg-btn-red${app.gradeQualification === 'not_met' ? ' on' : ''}`}
+              disabled={finalized} onClick={() => setQualification('not_met')}>
               Not Met
             </button>
           </div>
@@ -128,19 +196,60 @@ export default function ApplicationView() {
 
       <div className="reg-card">
         <p className="reg-card-title">Registrar Remarks</p>
-        <textarea
-          className="reg-textarea"
-          value={remarks}
+        <textarea className="reg-textarea" value={remarks} disabled={finalized}
           onChange={(e) => setRemarks(e.target.value)}
-          placeholder="Add remarks for the parent or for your records..."
-        />
+          placeholder="Add remarks for the parent or for your records..." />
       </div>
 
       <div className="reg-actions">
-        <button className="reg-btn reg-btn-blue" onClick={handleApprove}>Approve Application</button>
-        <button className="reg-btn reg-btn-orange" onClick={handleRevision}>Request Revision</button>
-        <button className="reg-btn reg-btn-red" onClick={handleReject}>Reject</button>
+        <button className="reg-btn reg-btn-blue" disabled={finalized || deciding}
+          onClick={() => decide('approve', 'Application approved.')}>
+          Approve Application
+        </button>
+        <button className="reg-btn reg-btn-orange" disabled={finalized || deciding}
+          onClick={() => decide('revision', 'Revision requested. The parent will see your remarks and any flagged documents.')}>
+          Request Revision
+        </button>
+        <button className="reg-btn reg-btn-red" disabled={finalized || deciding}
+          onClick={() => decide('reject', 'Application rejected.')}>
+          Reject Application
+        </button>
       </div>
+
+      {viewingDoc && (
+        <Suspense fallback={<div className="dv-overlay"><div className="dv-state">Opening viewer&hellip;</div></div>}>
+        <DocumentViewer
+          key={viewingDoc.type + (viewingDoc.docId || '')}
+          title={viewingDoc.name}
+          subtitle={`${app.student} · ${app.grade}`}
+          badge={<DocStatusBadge doc={viewingDoc} />}
+          fileUrl={`/registrar/applications/${id}/documents/${viewingDoc.type}/file`}
+          onClose={() => setViewing(null)}
+          footer={(
+            <ViewerActions
+              doc={viewingDoc}
+              disabled={finalized}
+              onAction={async (status, note) => {
+                await setDocStatus(viewingDoc.type, status, note);
+                setViewing(null);
+              }}
+            />
+          )}
+        />
+        </Suspense>
+      )}
+
+      {reasonFor && (
+        <ReasonDialog
+          status={reasonFor.status}
+          docName={docs.find((d) => d.type === reasonFor.type)?.name}
+          onCancel={() => setReasonFor(null)}
+          onConfirm={async (status, note) => {
+            await setDocStatus(reasonFor.type, status, note);
+            setReasonFor(null);
+          }}
+        />
+      )}
     </div>
   );
 }

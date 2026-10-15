@@ -28,17 +28,37 @@ async function createUser({ email, passwordHash, roleId }) {
   return result.rows[0];
 }
 
+// Staff (registrar/admin) have no guardians row, so their display name
+// comes from the users table; parents keep using their guardian name.
+const USER_WITH_NAME = `
+  SELECT u.id, u.email, u.password_hash, u.email_verified_at, r.name AS role_name,
+         COALESCE(g.first_name, u.first_name, NULLIF(split_part(u.full_name, ' ', 1), '')) AS first_name,
+         COALESCE(g.middle_name, u.middle_initial) AS middle_name,
+         COALESCE(g.last_name, u.last_name) AS last_name
+  FROM users u
+  JOIN roles r ON r.id = u.role_id
+  LEFT JOIN guardians g ON g.user_id = u.id
+  WHERE u.id = $1`;
+
+// The same query without the staff-name columns, used only if migration
+// 007 has not been applied yet, so signing in never breaks because of it.
+const USER_WITH_NAME_LEGACY = `
+  SELECT u.id, u.email, u.password_hash, u.email_verified_at, r.name AS role_name,
+         g.first_name, g.middle_name, g.last_name
+  FROM users u
+  JOIN roles r ON r.id = u.role_id
+  LEFT JOIN guardians g ON g.user_id = u.id
+  WHERE u.id = $1`;
+
 async function findUserById(id) {
-  const result = await pool.query(
-    `SELECT u.id, u.email, u.password_hash, u.email_verified_at, r.name AS role_name,
-            g.first_name, g.middle_name, g.last_name
-     FROM users u
-     JOIN roles r ON r.id = u.role_id
-     LEFT JOIN guardians g ON g.user_id = u.id
-     WHERE u.id = $1`,
-    [id]
-  );
-  return result.rows[0];
+  try {
+    const result = await pool.query(USER_WITH_NAME, [id]);
+    return result.rows[0];
+  } catch (err) {
+    if (err.code !== '42703') throw err; // 42703 = undefined_column
+    const result = await pool.query(USER_WITH_NAME_LEGACY, [id]);
+    return result.rows[0];
+  }
 }
 
 async function updateUserPassword(userId, passwordHash) {
