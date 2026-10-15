@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import AppNav from '../components/AppNav';
 import { useScrollToError } from '../hooks/useScrollToError';
+import {
+  validateName, validateContactNumber, validateText, validateLrn, validateBirthDate, validateFile,
+  birthDateBounds, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
+} from '../utils/validators';
 
 const GRADE_LEVELS = [
   { id: 1, name: 'Kinder' }, { id: 2, name: 'Grade 1' }, { id: 3, name: 'Grade 2' },
@@ -15,9 +19,47 @@ const DOC_LABELS = {
   good_moral: 'Certificate of Good Moral Character',
 };
 
-// A student can't have been born in the future -- the date picker
-// shouldn't even offer those days as an option.
-const TODAY = new Date().toISOString().slice(0, 10);
+// The date picker only offers real school-age birth dates (3 to 18 years
+// old, never in the future); the server checks the same rule.
+const BIRTH_BOUNDS = birthDateBounds();
+
+const FRESH_FIELDS = [
+  'firstName', 'middleName', 'lastName', 'birthDate', 'lrn',
+  'guardianFirstName', 'guardianLastName', 'contactNumber', 'address',
+];
+
+function validateField(name, form) {
+  switch (name) {
+    case 'firstName': return validateName(form.firstName, { label: 'First name' });
+    case 'middleName': return validateName(form.middleName, { required: false, label: 'Middle name' });
+    case 'lastName': return validateName(form.lastName, { label: 'Last name' });
+    case 'birthDate': return validateBirthDate(form.birthDate);
+    case 'lrn': return validateLrn(form.lrn, { required: form.gradeLevelId !== '1' });
+    case 'guardianFirstName': return validateName(form.guardianFirstName, { label: 'First name' });
+    case 'guardianLastName': return validateName(form.guardianLastName, { label: 'Last name' });
+    case 'contactNumber': return validateContactNumber(form.contactNumber);
+    case 'address': return validateText(form.address, { label: 'Address', max: ADDRESS_MAX });
+    default: return '';
+  }
+}
+
+// Uploads the chosen files one by one. A file that fails does not stop the
+// others; the names of the failures come back so the parent can retry them.
+async function uploadDocuments(applicationId, files) {
+  const failed = [];
+  for (const [docType, file] of Object.entries(files)) {
+    if (!file) continue;
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('docType', docType);
+    try {
+      await api.post(`/applications/${applicationId}/documents`, fd);
+    } catch (err) {
+      failed.push(`${DOC_LABELS[docType]} (${err.response?.data?.message || 'upload failed'})`);
+    }
+  }
+  return failed;
+}
 
 export default function NewApplication() {
   // Three steps: choose (New vs. Old student, the entry point), then
@@ -33,14 +75,18 @@ export default function NewApplication() {
   useScrollToError(searchError);
   const [result, setResult] = useState(null);
   const [promoFiles, setPromoFiles] = useState({});
+  const [promoFileErrors, setPromoFileErrors] = useState({});
   const [promoting, setPromoting] = useState(false);
+  // Set when the application was saved but some documents failed to upload.
+  const [partial, setPartial] = useState(null);
 
   async function handleSearch(e) {
     e.preventDefault();
     setSearchError('');
     setResult(null);
-    if (!lrn.trim()) {
-      setSearchError('Enter an LRN to search.');
+    const lrnProblem = validateLrn(lrn, { required: true });
+    if (lrnProblem) {
+      setSearchError(lrn.trim() ? lrnProblem : 'Enter an LRN to search.');
       return;
     }
     setSearching(true);
@@ -48,6 +94,8 @@ export default function NewApplication() {
       const { data } = await api.get('/students/lookup', { params: { lrn: lrn.trim() } });
       setResult(data);
       setPromoFiles({});
+      setPromoFileErrors({});
+      setPartial(null);
     } catch (err) {
       setSearchError(err.response?.data?.message || 'Search failed.');
     } finally {
@@ -55,21 +103,28 @@ export default function NewApplication() {
     }
   }
 
-  const pickPromoFile = (docType) => (e) => setPromoFiles({ ...promoFiles, [docType]: e.target.files[0] });
+  // A wrong file type or size is reported straight away, next to the field.
+  const pickPromoFile = (docType) => (e) => {
+    const file = e.target.files[0] || null;
+    const problem = validateFile(file, { label: DOC_LABELS[docType] });
+    setPromoFileErrors({ ...promoFileErrors, [docType]: problem });
+    setPromoFiles({ ...promoFiles, [docType]: problem ? null : file });
+    if (problem) e.target.value = '';
+  };
 
   async function handlePromote() {
+    if (promoting) return; // ignore a double click
     setSearchError('');
+    setPartial(null);
     setPromoting(true);
     try {
       const { data } = await api.post('/applications/promote', {
         studentId: result.student.id, gradeLevelId: result.nextGradeLevelId,
       });
-      for (const [docType, file] of Object.entries(promoFiles)) {
-        if (!file) continue;
-        const fd = new FormData();
-        fd.append('file', file);
-        fd.append('docType', docType);
-        await api.post(`/applications/${data.id}/documents`, fd);
+      const failed = await uploadDocuments(data.id, promoFiles);
+      if (failed.length) {
+        setPartial({ id: data.id, failed });
+        return;
       }
       navigate('/dashboard');
     } catch (err) {
@@ -88,47 +143,93 @@ export default function NewApplication() {
   });
   const [error, setError] = useState('');
   useScrollToError(error);
-  const [lrnError, setLrnError] = useState('');
-  useScrollToError(lrnError);
-  const update = (field) => (e) => setForm({ ...form, [field]: e.target.value });
+  const [errors, setErrors] = useState({});
+  const [touched, setTouched] = useState({});
+  const [submitting, setSubmitting] = useState(false);
   const [files, setFiles] = useState({ birth_certificate: null, form_138: null, good_moral: null });
-  const pickFile = (docType) => (e) => setFiles({ ...files, [docType]: e.target.files[0] });
+  const [fileErrors, setFileErrors] = useState({});
+
+  const update = (field) => (e) => {
+    const next = { ...form, [field]: e.target.value };
+    setForm(next);
+    // Once a field has been flagged, re-check it as the parent retypes it so
+    // the message clears right away.
+    if (touched[field]) setErrors((prev) => ({ ...prev, [field]: validateField(field, next) }));
+    // The LRN rule depends on the grade level (optional only for Kinder).
+    if (field === 'gradeLevelId' && touched.lrn) {
+      setErrors((prev) => ({ ...prev, lrn: validateField('lrn', next) }));
+    }
+  };
+  // The LRN box accepts digits only, never more than 12.
+  const updateLrn = (e) => update('lrn')({ target: { value: e.target.value.replace(/\D/g, '').slice(0, 12) } });
+  const handleBlur = (field) => () => {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    setErrors((prev) => ({ ...prev, [field]: validateField(field, form) }));
+  };
+  const inputProps = (field) => ({
+    id: field,
+    className: `input${errors[field] ? ' input-error' : ''}`,
+    value: form[field],
+    onChange: update(field),
+    onBlur: handleBlur(field),
+    'aria-invalid': errors[field] ? 'true' : undefined,
+  });
+  const fieldError = (field) => (errors[field] ? <p className="field-error">{errors[field]}</p> : null);
+
+  const pickFile = (docType) => (e) => {
+    const file = e.target.files[0] || null;
+    const problem = validateFile(file, { label: DOC_LABELS[docType] });
+    setFileErrors({ ...fileErrors, [docType]: problem });
+    setFiles({ ...files, [docType]: problem ? null : file });
+    if (problem) e.target.value = '';
+  };
+  // Set when the application was saved but some documents failed to upload.
+  const [freshPartial, setFreshPartial] = useState(null);
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (submitting) return; // ignore a double click
     setError('');
-    setLrnError('');
 
-    // LRN is only genuinely optional for Kinder -- reaching Grade 1 or
-    // above under the mandatory K-12 system means the student has
-    // necessarily been enrolled somewhere in DepEd's system before, so
-    // they should already have one (this is a transferee, not a
-    // first-timer). Per DepEd policy, new LRNs are issued immediately
-    // only at Kinder entry (or Grade 1 via the KCEP catch-up track,
-    // which this simple form doesn't distinguish from a transferee).
-    const isKinder = form.gradeLevelId === '1';
-    const trimmedLrn = form.lrn.trim();
-    if (!trimmedLrn && !isKinder) {
-      setLrnError('LRN is required when enrolling into Grade 1 through Grade 6 \u2014 only Kinder entrants may not have one yet.');
+    // Check every field at once so the parent sees all the problems together.
+    // LRN is only genuinely optional for Kinder -- reaching Grade 1 or above
+    // means the student has been enrolled somewhere in DepEd's system before,
+    // so they should already have one.
+    const found = {};
+    FRESH_FIELDS.forEach((f) => { found[f] = validateField(f, form); });
+    setErrors(found);
+    setTouched(Object.fromEntries(FRESH_FIELDS.map((f) => [f, true])));
+    const firstBad = FRESH_FIELDS.find((f) => found[f]);
+    if (firstBad) {
+      setError('Please correct the highlighted fields and try again.');
+      document.getElementById(firstBad)?.focus({ preventScroll: true });
       return;
     }
-    if (trimmedLrn && !/^\d{12}$/.test(trimmedLrn)) {
-      setLrnError('LRN should be exactly 12 digits.');
+    if (Object.values(fileErrors).some(Boolean)) {
+      setError('Please replace the file that cannot be uploaded.');
       return;
     }
 
+    setSubmitting(true);
     try {
-      const { data } = await api.post('/applications', { ...form, lrn: form.lrn.trim() || undefined });
-      for (const [docType, file] of Object.entries(files)) {
-        if (!file) continue;
-        const fd = new FormData();
-        fd.append('file', file);
-        fd.append('docType', docType);
-        await api.post(`/applications/${data.id}/documents`, fd);
+      const trim = (v) => v.trim();
+      const { data } = await api.post('/applications', {
+        ...form,
+        firstName: trim(form.firstName), middleName: trim(form.middleName), lastName: trim(form.lastName),
+        guardianFirstName: trim(form.guardianFirstName), guardianLastName: trim(form.guardianLastName),
+        contactNumber: trim(form.contactNumber), address: trim(form.address),
+        lrn: trim(form.lrn) || undefined,
+      });
+      const failed = await uploadDocuments(data.id, files);
+      if (failed.length) {
+        setFreshPartial({ id: data.id, failed });
+        return;
       }
       navigate('/dashboard');
     } catch (err) {
       setError(err.response?.data?.message || 'Submission failed.');
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -149,8 +250,9 @@ export default function NewApplication() {
             <h3>Search by Learner Reference Number (LRN)</h3>
             <p className="hint">Check the student ID or the Form 137 of the student.</p>
             <div className="field" style={{ maxWidth: 360 }}>
-              <label className="label">LRN</label>
-              <input className="input" value={lrn} onChange={(e) => setLrn(e.target.value)}
+              <label className="label" htmlFor="searchLrn">LRN</label>
+              <input id="searchLrn" className="input" value={lrn} inputMode="numeric" maxLength={12}
+                onChange={(e) => setLrn(e.target.value.replace(/\D/g, '').slice(0, 12))}
                 placeholder="e.g. 136482910573" />
             </div>
             {searchError && <div className="alert alert-error">{searchError}</div>}
@@ -197,7 +299,9 @@ export default function NewApplication() {
                 {result.documentsNeeded.map((docType) => (
                   <div className="field" key={docType}>
                     <label className="label">{DOC_LABELS[docType]}</label>
-                    <input className="input" type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={pickPromoFile(docType)} />
+                    <input className={`input${promoFileErrors[docType] ? ' input-error' : ''}`} type="file"
+                      accept=".pdf,.jpg,.jpeg,.png" onChange={pickPromoFile(docType)} />
+                    {promoFileErrors[docType] && <p className="field-error">{promoFileErrors[docType]}</p>}
                   </div>
                 ))}
                 {result.documentsOnFile.map((docType) => (
@@ -210,7 +314,17 @@ export default function NewApplication() {
                 ))}
               </div>
 
-              <button className="btn btn-primary" style={{ width: '100%' }} onClick={handlePromote} disabled={promoting}>
+              {partial && (
+                <div className="alert alert-error" role="alert">
+                  Your application was submitted, but these documents could not be uploaded: {partial.failed.join('; ')}.
+                  {' '}You can upload them again from the application page.
+                  {' '}<button type="button" className="btn btn-secondary" onClick={() => navigate(`/applications/${partial.id}`)}>
+                    Open application
+                  </button>
+                </div>
+              )}
+              <button className="btn btn-primary" style={{ width: '100%' }} onClick={handlePromote}
+                disabled={promoting || Boolean(partial) || Object.values(promoFileErrors).some(Boolean)}>
                 {promoting ? 'Submitting\u2026' : 'Submit Application'}
               </button>
             </>
@@ -232,35 +346,48 @@ export default function NewApplication() {
               <p>School Year 2026&ndash;2027</p>
             </div>
           </div>
-          {error && <div className="alert alert-error">{error}</div>}
+          {error && <div className="alert alert-error" role="alert">{error}</div>}
+          {freshPartial && (
+            <div className="alert alert-error" role="alert">
+              Your application was submitted, but these documents could not be uploaded: {freshPartial.failed.join('; ')}.
+              {' '}You can upload them again from the application page.
+              {' '}<button type="button" className="btn btn-secondary" onClick={() => navigate(`/applications/${freshPartial.id}`)}>
+                Open application
+              </button>
+            </div>
+          )}
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <div className="card">
             <h3>Student Information</h3>
             <div className="field-grid cols-3">
-              <div><label className="label">First name</label>
-                <input className="input" value={form.firstName} onChange={update('firstName')} required /></div>
-              <div><label className="label">Middle name</label>
-                <input className="input" value={form.middleName} onChange={update('middleName')} /></div>
-              <div><label className="label">Last name</label>
-                <input className="input" value={form.lastName} onChange={update('lastName')} required /></div>
+              <div><label className="label" htmlFor="firstName">First name</label>
+                <input {...inputProps('firstName')} maxLength={NAME_MAX} autoComplete="off" />
+                {fieldError('firstName')}</div>
+              <div><label className="label" htmlFor="middleName">Middle name</label>
+                <input {...inputProps('middleName')} maxLength={NAME_MAX} autoComplete="off" />
+                {fieldError('middleName')}</div>
+              <div><label className="label" htmlFor="lastName">Last name</label>
+                <input {...inputProps('lastName')} maxLength={NAME_MAX} autoComplete="off" />
+                {fieldError('lastName')}</div>
             </div>
             <div className="field-grid cols-2">
-              <div><label className="label">Birth date</label>
-                <input className="input" type="date" value={form.birthDate} onChange={update('birthDate')} max={TODAY} required /></div>
-              <div><label className="label">Sex</label>
-                <select className="input" value={form.sex} onChange={update('sex')}>
+              <div><label className="label" htmlFor="birthDate">Birth date</label>
+                <input {...inputProps('birthDate')} type="date" min={BIRTH_BOUNDS.min} max={BIRTH_BOUNDS.max} />
+                {fieldError('birthDate')}</div>
+              <div><label className="label" htmlFor="sex">Sex</label>
+                <select id="sex" className="input" value={form.sex} onChange={update('sex')}>
                   <option value="F">Female</option><option value="M">Male</option>
                 </select></div>
             </div>
             <div className="field">
-              <label className="label">
+              <label className="label" htmlFor="lrn">
                 Learner Reference Number (LRN){form.gradeLevelId === '1' ? ' \u2014 if already assigned' : ''}
               </label>
-              <input className={`input${lrnError ? ' input-error' : ''}`} value={form.lrn} onChange={update('lrn')}
-                placeholder="12-digit LRN" maxLength={12} required={form.gradeLevelId !== '1'} />
-              {lrnError
-                ? <p className="field-error">{lrnError}</p>
+              <input {...inputProps('lrn')} onChange={updateLrn} inputMode="numeric" autoComplete="off"
+                placeholder="12-digit LRN" maxLength={12} />
+              {errors.lrn
+                ? <p className="field-error">{errors.lrn}</p>
                 : <p className="hint hint-spaced">
                     {form.gradeLevelId === '1'
                       ? 'Leave this blank for a first-time Kinder entrant \u2014 the school assigns one.'
@@ -272,30 +399,35 @@ export default function NewApplication() {
           <div className="card">
             <h3>Guardian Information</h3>
             <div className="field-grid cols-2">
-              <div><label className="label">Your first name</label>
-                <input className="input" value={form.guardianFirstName} onChange={update('guardianFirstName')} required /></div>
-              <div><label className="label">Your last name</label>
-                <input className="input" value={form.guardianLastName} onChange={update('guardianLastName')} required /></div>
+              <div><label className="label" htmlFor="guardianFirstName">Your first name</label>
+                <input {...inputProps('guardianFirstName')} maxLength={NAME_MAX} autoComplete="given-name" />
+                {fieldError('guardianFirstName')}</div>
+              <div><label className="label" htmlFor="guardianLastName">Your last name</label>
+                <input {...inputProps('guardianLastName')} maxLength={NAME_MAX} autoComplete="family-name" />
+                {fieldError('guardianLastName')}</div>
             </div>
             <div className="field-grid cols-2">
-              <div><label className="label">Relationship to student</label>
-                <select className="input" value={form.relationship} onChange={update('relationship')}>
-                  <option>Mother</option><option>Father</option><option>Guardian</option>
+              <div><label className="label" htmlFor="relationship">Relationship to student</label>
+                <select id="relationship" className="input" value={form.relationship} onChange={update('relationship')}>
+                  {RELATIONSHIPS.map((r) => <option key={r}>{r}</option>)}
                 </select></div>
-              <div><label className="label">Contact number</label>
-                <input className="input" value={form.contactNumber} onChange={update('contactNumber')} required /></div>
+              <div><label className="label" htmlFor="contactNumber">Contact number</label>
+                <input {...inputProps('contactNumber')} inputMode="numeric" maxLength={11} autoComplete="tel"
+                  placeholder="09171234567" />
+                {fieldError('contactNumber')}</div>
             </div>
             <div className="field">
-              <label className="label">Address</label>
-              <input className="input" value={form.address} onChange={update('address')} required />
+              <label className="label" htmlFor="address">Address</label>
+              <input {...inputProps('address')} maxLength={ADDRESS_MAX} autoComplete="street-address" />
+              {fieldError('address')}
             </div>
           </div>
 
           <div className="card">
             <h3>Grade Level</h3>
             <div className="field">
-              <label className="label">Applying for</label>
-              <select className="input" value={form.gradeLevelId} onChange={update('gradeLevelId')}>
+              <label className="label" htmlFor="gradeLevelId">Applying for</label>
+              <select id="gradeLevelId" className="input" value={form.gradeLevelId} onChange={update('gradeLevelId')}>
                 {GRADE_LEVELS.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
             </div>
@@ -304,22 +436,21 @@ export default function NewApplication() {
           <div className="card">
             <h3>Required Documents</h3>
             <p className="hint">PDF, JPG or PNG. Maximum 5MB each.</p>
-            <div className="field">
-              <label className="label">Birth Certificate</label>
-              <input className="input" type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={pickFile('birth_certificate')} />
-            </div>
-            <div className="field">
-              <label className="label">Form 138 / Report Card</label>
-              <input className="input" type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={pickFile('form_138')} />
-            </div>
-            <div className="field">
-              <label className="label">Certificate of Good Moral Character</label>
-              <input className="input" type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={pickFile('good_moral')} />
-            </div>
+            {[['birth_certificate', 'Birth Certificate'], ['form_138', 'Form 138 / Report Card'],
+              ['good_moral', 'Certificate of Good Moral Character']].map(([docType, label]) => (
+              <div className="field" key={docType}>
+                <label className="label" htmlFor={`file_${docType}`}>{label}</label>
+                <input id={`file_${docType}`} className={`input${fileErrors[docType] ? ' input-error' : ''}`} type="file"
+                  accept=".pdf,.jpg,.jpeg,.png" onChange={pickFile(docType)} />
+                {fileErrors[docType] && <p className="field-error">{fileErrors[docType]}</p>}
+              </div>
+            ))}
           </div>
 
           <div className="btn-row">
-            <button className="btn btn-primary" type="submit">Submit Application</button>
+            <button className="btn btn-primary" type="submit" disabled={submitting || Boolean(freshPartial)}>
+              {submitting ? 'Submitting\u2026' : 'Submit Application'}
+            </button>
             <button type="button" className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Cancel</button>
           </div>
         </form>

@@ -174,6 +174,24 @@ async function createWalkInEnrollment({
       throw err;
     }
 
+    // The grade, section and (for a returning student) the student must
+    // really exist -- otherwise the insert would fail halfway with a
+    // confusing database error.
+    const fail = (status, message) => Object.assign(new Error(message), { status });
+    const { rows: [grade] } = await client.query('SELECT id FROM grade_levels WHERE id = $1', [gradeLevelId]);
+    if (!grade) throw fail(400, 'Unrecognized grade level.');
+    if (sectionId) {
+      const { rows: [section] } = await client.query(
+        'SELECT id FROM sections WHERE id = $1 AND grade_level_id = $2 AND school_year_id = $3',
+        [sectionId, gradeLevelId, schoolYearId]
+      );
+      if (!section) throw fail(400, 'That section does not belong to the selected grade level this school year.');
+    }
+    if (!isNewStudent) {
+      const { rows: [student] } = await client.query('SELECT id FROM students WHERE id = $1', [existingStudentId]);
+      if (!student) throw fail(404, 'That student was not found.');
+    }
+
     const {
       userId: guardianUserId, tempPassword, isNew: accountCreated, email: accountEmail,
     } = await findOrCreateGuardianAccount(client, {

@@ -1,10 +1,11 @@
 const { z } = require('zod');
+const c = require('./common');
 
 const timeString = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM.');
 
 const createSubject = z.object({
-  name: z.string().trim().min(1).max(80),
-  gradeLevelId: z.coerce.number().int().positive(),
+  name: c.safeText('Subject name', 80),
+  gradeLevelId: c.id('Grade level'),
   isDomain: z.boolean().default(false),
 });
 
@@ -14,23 +15,25 @@ const createSubject = z.object({
 // period — the schema reflects that by making session/time
 // required only when roleType is 'subject'.
 const scheduleEntryBase = z.object({
-  sectionId: z.coerce.number().int().positive(),
+  sectionId: c.id('Section'),
   // Optional: a "+ Add Period" blank placeholder has neither yet —
   // subject/teacher only become required once something real is
   // actually being assigned into it (enforced below, in superRefine,
   // rather than here, since whether they're required depends on
   // whether this is a blank slot or a real assignment).
-  subjectId: z.coerce.number().int().positive().nullish(),
-  teacherId: z.coerce.number().int().positive().nullish(),
+  subjectId: c.id('Subject').nullish(),
+  teacherId: c.id('Teacher').nullish(),
   roleType: z.enum(['subject', 'adviser']).default('subject'),
   session: z.enum(['morning', 'afternoon']).optional(),
   // A blank placeholder starts with no days at all — "at least one
   // day" is only required once a subject/teacher is actually being
   // assigned, checked in superRefine instead of here.
-  days: z.array(z.coerce.number().int().min(1).max(5)).default([]),
+  days: z.array(z.coerce.number().int().min(1).max(5)).max(5)
+    .refine((list) => new Set(list).size === list.length, 'Each day can be picked only once.')
+    .default([]),
   startTime: timeString.optional(),
   endTime: timeString.optional(),
-  room: z.string().trim().max(40).nullish(),
+  room: z.preprocess((v) => (v === '' ? null : v), c.safeText('Room', 40).nullish()),
 });
 
 const createScheduleEntry = scheduleEntryBase.superRefine((val, ctx) => {
@@ -48,14 +51,21 @@ const createScheduleEntry = scheduleEntryBase.superRefine((val, ctx) => {
   }
 });
 
-const updateScheduleEntry = scheduleEntryBase.partial();
+// On an update only the fields that are sent are checked, but the two times
+// must still make sense together when both are present.
+const updateScheduleEntry = scheduleEntryBase.partial().refine(
+  (v) => !(v.startTime && v.endTime) || v.startTime < v.endTime,
+  { message: 'End time must be after start time.', path: ['endTime'] },
+);
 
 const conflictCheckQuery = z.object({
-  teacherId: z.coerce.number().int().positive(),
-  days: z.string().min(1), // comma-separated, parsed in controller
+  teacherId: c.id('Teacher'),
+  days: z.string().regex(/^[1-5](,[1-5]){0,4}$/, 'Days must be numbers 1-5 separated by commas.'), // parsed in controller
   startTime: timeString,
   endTime: timeString,
-  excludeEntryId: z.coerce.number().int().positive().optional(),
+  excludeEntryId: c.id('Entry').optional(),
+}).refine((v) => v.startTime < v.endTime, {
+  message: 'End time must be after start time.', path: ['endTime'],
 });
 
 module.exports = { createSubject, createScheduleEntry, updateScheduleEntry, conflictCheckQuery };

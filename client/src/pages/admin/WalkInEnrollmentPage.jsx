@@ -1,8 +1,46 @@
 import { useEffect, useState } from 'react';
+import { adminWalkIn } from '../../api/walkIn';
 import {
-  getGradeScheduleSummary, getSectionsForGrade, getRequiredDocumentTypes,
-  lookupStudentByLrn, createWalkInEnrollment,
-} from '../../api/admin';
+  validateName, validateContactNumber, validateText, validateLrn, validateBirthDate, validateEmail,
+  birthDateBounds, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
+} from '../../utils/validators';
+
+const BIRTH_BOUNDS = birthDateBounds();
+const digitsOnly = (v, max) => v.replace(/\D/g, '').slice(0, max);
+
+// One rule per field, shared by the blur checks and the submit check. The
+// server repeats every rule, so this is only here to give clear, early messages.
+function validateField(name, form) {
+  switch (name) {
+    case 'guardianEmail': {
+      const problem = validateEmail(form.guardianEmail);
+      if (problem) return problem;
+      return /@gmail\.com$/i.test(form.guardianEmail.trim()) ? '' : 'Enter a Gmail address ending in @gmail.com.';
+    }
+    case 'confirmEmail':
+      return form.confirmEmail.trim().toLowerCase() === form.guardianEmail.trim().toLowerCase()
+        ? '' : 'The two Gmail addresses do not match.';
+    case 'guardianFirstName': return validateName(form.guardianFirstName, { label: 'First name' });
+    case 'guardianMiddleName': return validateName(form.guardianMiddleName, { required: false, label: 'Middle name' });
+    case 'guardianLastName': return validateName(form.guardianLastName, { label: 'Last name' });
+    case 'guardianContactNumber': return validateContactNumber(form.guardianContactNumber);
+    case 'guardianAddress': return validateText(form.guardianAddress, { label: 'Address', max: ADDRESS_MAX });
+    case 'firstName': return form.isNewStudent ? validateName(form.firstName, { label: 'First name' }) : '';
+    case 'middleName': return form.isNewStudent ? validateName(form.middleName, { required: false, label: 'Middle name' }) : '';
+    case 'lastName': return form.isNewStudent ? validateName(form.lastName, { label: 'Last name' }) : '';
+    case 'birthDate': return form.isNewStudent ? validateBirthDate(form.birthDate) : '';
+    case 'sex': return form.isNewStudent && !form.sex ? 'Choose Male or Female.' : '';
+    case 'lrn': return form.isNewStudent ? validateLrn(form.lrn) : '';
+    case 'gradeLevelId': return form.gradeLevelId ? '' : 'Choose a grade level.';
+    default: return '';
+  }
+}
+
+const ALL_FIELDS = [
+  'guardianEmail', 'confirmEmail', 'guardianFirstName', 'guardianMiddleName', 'guardianLastName',
+  'guardianContactNumber', 'guardianAddress', 'firstName', 'middleName', 'lastName', 'birthDate',
+  'sex', 'lrn', 'gradeLevelId',
+];
 
 const emptyForm = {
   isNewStudent: true,
@@ -13,7 +51,9 @@ const emptyForm = {
   gradeLevelId: '', sectionId: '',
 };
 
-export default function WalkInEnrollmentPage() {
+// Shared by the admin and registrar portals: `client` picks which API prefix
+// is used, `staffLabel` only changes the wording of the intro line.
+export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel = 'Admin-assisted' }) {
   const [form, setForm] = useState(emptyForm);
   const [gradeLevels, setGradeLevels] = useState([]);
   const [sections, setSections] = useState([]);
@@ -25,16 +65,26 @@ export default function WalkInEnrollmentPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(null); // { accountEmail, accountCreated, tempPassword, stillNeeded }
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [touched, setTouched] = useState({});
+  // Tells the person when the lists could not be loaded, instead of showing
+  // an empty drop-down with no explanation.
+  const [gradesLoaded, setGradesLoaded] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    getGradeScheduleSummary().then(setGradeLevels).catch(() => {});
-    getRequiredDocumentTypes().then(setDocTypes).catch(() => {});
-  }, []);
+    client.gradeLevels()
+      .then((rows) => { setGradeLevels(rows); setGradesLoaded(true); })
+      .catch(() => setLoadError('We could not load the grade levels. Please refresh the page or sign in again.'));
+    client.documentTypes()
+      .then(setDocTypes)
+      .catch(() => setLoadError('We could not load the lists for this form. Please refresh the page or sign in again.'));
+  }, [client]);
 
   useEffect(() => {
     if (!form.gradeLevelId) return;
-    getSectionsForGrade(form.gradeLevelId).then(setSections).catch(() => setSections([]));
-  }, [form.gradeLevelId]);
+    client.sections(form.gradeLevelId).then(setSections).catch(() => setSections([]));
+  }, [client, form.gradeLevelId]);
 
   function toggleDoc(code) {
     setCheckedDocs((d) => d.includes(code) ? d.filter((x) => x !== code) : [...d, code]);
@@ -47,13 +97,41 @@ export default function WalkInEnrollmentPage() {
     setCheckedDocs([]);
   }
 
+  // Standard wiring for one text field: value, change (re-checks once the field
+  // has been flagged), blur (checks it) and the red outline when it has a problem.
+  const bind = (field) => ({
+    id: `walkin_${field}`,
+    className: `input${errors[field] ? ' input-error' : ''}`,
+    value: form[field],
+    onChange: (e) => {
+      const next = { ...form, [field]: e.target.value };
+      setForm(next);
+      if (touched[field]) setErrors((prev) => ({ ...prev, [field]: validateField(field, next) }));
+      if (field === 'guardianEmail' && touched.confirmEmail) {
+        setErrors((prev) => ({ ...prev, confirmEmail: validateField('confirmEmail', next) }));
+      }
+    },
+    onBlur: () => {
+      setTouched((prev) => ({ ...prev, [field]: true }));
+      setErrors((prev) => ({ ...prev, [field]: validateField(field, form) }));
+    },
+    'aria-invalid': errors[field] ? 'true' : undefined,
+  });
+  const fieldError = (field) => (errors[field] ? <p className="field-error">{errors[field]}</p> : null);
+
   async function handleLrnSearch(e) {
     e.preventDefault();
-    if (!lrnQuery.trim()) return;
+    setError('');
+    const lrnProblem = validateLrn(lrnQuery, { required: true });
+    if (lrnProblem) {
+      setLrnResult(null);
+      setError(lrnQuery.trim() ? lrnProblem : 'Enter an LRN to search.');
+      return;
+    }
     setLrnSearching(true);
     setLrnResult(null);
     try {
-      const student = await lookupStudentByLrn(lrnQuery.trim());
+      const student = await client.lookupByLrn(lrnQuery.trim());
       setLrnResult(student);
       setForm((f) => ({ ...f, existingStudentId: student.id }));
     } catch (err) {
@@ -66,22 +144,42 @@ export default function WalkInEnrollmentPage() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (saving) return; // ignore a double click
     setError('');
     setSuccess(null);
+
+    // Check every field at once so the staff member sees all the problems together.
+    const found = {};
+    ALL_FIELDS.forEach((f) => { found[f] = validateField(f, form); });
+    setErrors(found);
+    setTouched(Object.fromEntries(ALL_FIELDS.map((f) => [f, true])));
+    const firstBad = ALL_FIELDS.find((f) => found[f]);
+    if (firstBad) {
+      setError('Please correct the highlighted fields and try again.');
+      document.getElementById(`walkin_${firstBad}`)?.focus();
+      return;
+    }
     setSaving(true);
     try {
       // Empty strings must become undefined: the server treats a
       // blank sectionId as 0 and rejects it, and a blank LRN as invalid.
       const payload = form.isNewStudent
-        ? { ...form, lrn: form.lrn || undefined }
+        ? { ...form, lrn: form.lrn.trim() || undefined }
         : { ...form, isNewStudent: false, existingStudentId: form.existingStudentId };
-      const result = await createWalkInEnrollment({
+      const result = await client.create({
         ...payload,
+        guardianEmail: form.guardianEmail.trim().toLowerCase(),
+        guardianMiddleName: form.guardianMiddleName.trim() || undefined,
+        middleName: form.middleName.trim() || undefined,
+        guardianValidIdType: form.guardianValidIdType.trim() || undefined,
+        relationship: form.relationship || undefined,
         sectionId: form.sectionId || undefined,
         physicalDocTypes: checkedDocs,
       });
       setSuccess(result);
       setForm(emptyForm);
+      setErrors({});
+      setTouched({});
       setCheckedDocs([]);
       setLrnQuery('');
       setLrnResult(null);
@@ -92,21 +190,16 @@ export default function WalkInEnrollmentPage() {
     }
   }
 
-  const emailTrimmed = form.guardianEmail.trim().toLowerCase();
-  const isGmail = /^[^\s@]+@gmail\.com$/.test(emailTrimmed);
-  const emailsMatch = emailTrimmed !== '' && emailTrimmed === form.confirmEmail.trim().toLowerCase();
-
-  const studentReady = form.isNewStudent
-    ? form.firstName && form.lastName && form.birthDate && form.sex
-    : !!form.existingStudentId;
-  const canSubmit = !!studentReady && isGmail && emailsMatch;
+  // A returning student must be found by LRN first; everything else is checked
+  // field by field when the form is submitted.
+  const canSubmit = form.isNewStudent || !!form.existingStudentId;
 
   return (
     <div>
       <div className="page-head">
         <div>
           <h1>Walk-in Enrollment</h1>
-          <p>Admin-assisted enrollment for a parent completing this in person at the front desk.</p>
+          <p>{staffLabel} enrollment for a parent completing this in person at the front desk.</p>
         </div>
       </div>
 
@@ -146,7 +239,7 @@ export default function WalkInEnrollmentPage() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} noValidate>
         <div className="card">
           <strong>Parent Account</strong>
           <p className="hint">Required. The Gmail entered here is the parent&rsquo;s login for the parent portal.</p>
@@ -154,24 +247,16 @@ export default function WalkInEnrollmentPage() {
             <div>
               <label className="label">Parent&rsquo;s Gmail</label>
               <input
-                className="input" type="email" placeholder="name@gmail.com" autoComplete="off"
-                value={form.guardianEmail}
-                onChange={(e) => setForm({ ...form, guardianEmail: e.target.value })} required
+                {...bind('guardianEmail')} type="email" placeholder="name@gmail.com" autoComplete="off" maxLength={254}
               />
-              {form.guardianEmail && !isGmail && (
-                <p className="hint" style={{ color: 'var(--danger)' }}>Enter a Gmail address ending in @gmail.com.</p>
-              )}
+              {fieldError('guardianEmail')}
             </div>
             <div>
               <label className="label">Confirm Gmail</label>
               <input
-                className="input" type="email" placeholder="Re-type the Gmail" autoComplete="off"
-                value={form.confirmEmail}
-                onChange={(e) => setForm({ ...form, confirmEmail: e.target.value })} required
+                {...bind('confirmEmail')} type="email" placeholder="Re-type the Gmail" autoComplete="off" maxLength={254}
               />
-              {form.confirmEmail && !emailsMatch && (
-                <p className="hint" style={{ color: 'var(--danger)' }}>The two Gmail addresses do not match.</p>
-              )}
+              {fieldError('confirmEmail')}
             </div>
           </div>
           <p className="hint">
@@ -180,19 +265,23 @@ export default function WalkInEnrollmentPage() {
           </p>
           <div className="field-grid cols-3">
             <div><label className="label">First name</label>
-              <input className="input" value={form.guardianFirstName} onChange={(e) => setForm({ ...form, guardianFirstName: e.target.value })} required /></div>
+              <input {...bind('guardianFirstName')} maxLength={NAME_MAX} />{fieldError('guardianFirstName')}</div>
             <div><label className="label">Middle name</label>
-              <input className="input" value={form.guardianMiddleName} onChange={(e) => setForm({ ...form, guardianMiddleName: e.target.value })} /></div>
+              <input {...bind('guardianMiddleName')} maxLength={NAME_MAX} />{fieldError('guardianMiddleName')}</div>
             <div><label className="label">Last name</label>
-              <input className="input" value={form.guardianLastName} onChange={(e) => setForm({ ...form, guardianLastName: e.target.value })} required /></div>
+              <input {...bind('guardianLastName')} maxLength={NAME_MAX} />{fieldError('guardianLastName')}</div>
           </div>
           <div className="field-grid cols-3">
             <div><label className="label">Contact number</label>
-              <input className="input" placeholder="09171234567" value={form.guardianContactNumber} onChange={(e) => setForm({ ...form, guardianContactNumber: e.target.value })} required /></div>
+              <input {...bind('guardianContactNumber')} placeholder="09171234567" inputMode="numeric" maxLength={11} />
+              {fieldError('guardianContactNumber')}</div>
             <div><label className="label">Relationship to student</label>
-              <input className="input" placeholder="Mother, Father, Guardian..." value={form.relationship} onChange={(e) => setForm({ ...form, relationship: e.target.value })} /></div>
+              <select className="input" value={form.relationship} onChange={(e) => setForm({ ...form, relationship: e.target.value })}>
+                <option value="">Select (recorded as Guardian if blank)</option>
+                {RELATIONSHIPS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select></div>
             <div><label className="label">Address</label>
-              <input className="input" value={form.guardianAddress} onChange={(e) => setForm({ ...form, guardianAddress: e.target.value })} required /></div>
+              <input {...bind('guardianAddress')} maxLength={ADDRESS_MAX} />{fieldError('guardianAddress')}</div>
           </div>
         </div>
 
@@ -213,25 +302,29 @@ export default function WalkInEnrollmentPage() {
             <strong>Student Information</strong>
             <div className="field-grid cols-3" style={{ marginTop: 10 }}>
               <div><label className="label">First name</label>
-                <input className="input" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} required /></div>
+                <input {...bind('firstName')} maxLength={NAME_MAX} />{fieldError('firstName')}</div>
               <div><label className="label">Middle name</label>
-                <input className="input" value={form.middleName} onChange={(e) => setForm({ ...form, middleName: e.target.value })} /></div>
+                <input {...bind('middleName')} maxLength={NAME_MAX} />{fieldError('middleName')}</div>
               <div><label className="label">Last name</label>
-                <input className="input" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} required /></div>
+                <input {...bind('lastName')} maxLength={NAME_MAX} />{fieldError('lastName')}</div>
             </div>
             <div className="field-grid cols-3">
               <div><label className="label">Birth date</label>
-                <input className="input" type="date" value={form.birthDate} onChange={(e) => setForm({ ...form, birthDate: e.target.value })} required /></div>
+                <input {...bind('birthDate')} type="date" min={BIRTH_BOUNDS.min} max={BIRTH_BOUNDS.max} />
+                {fieldError('birthDate')}</div>
               <div>
                 <label className="label">Sex</label>
-                <select className="input" value={form.sex} onChange={(e) => setForm({ ...form, sex: e.target.value })} required>
+                <select {...bind('sex')}>
                   <option value="">Select</option>
                   <option value="M">Male</option>
                   <option value="F">Female</option>
                 </select>
+                {fieldError('sex')}
               </div>
               <div><label className="label">LRN (if already assigned)</label>
-                <input className="input" value={form.lrn} onChange={(e) => setForm({ ...form, lrn: e.target.value })} /></div>
+                <input {...bind('lrn')} inputMode="numeric" maxLength={12} placeholder="12 digits"
+                  onChange={(e) => bind('lrn').onChange({ target: { value: digitsOnly(e.target.value, 12) } })} />
+                {fieldError('lrn')}</div>
             </div>
           </div>
         ) : (
@@ -239,7 +332,8 @@ export default function WalkInEnrollmentPage() {
             <strong>Search by Learner Reference Number (LRN)</strong>
             <p className="hint">Check the student ID or the Form 137 the parent brought in.</p>
             <div className="btn-row" style={{ marginBottom: 10 }}>
-              <input className="input" style={{ maxWidth: 220 }} placeholder="LRN" value={lrnQuery} onChange={(e) => setLrnQuery(e.target.value)} />
+              <input className="input" style={{ maxWidth: 220 }} placeholder="LRN" value={lrnQuery} inputMode="numeric" maxLength={12}
+                onChange={(e) => setLrnQuery(digitsOnly(e.target.value, 12))} />
               <button className="btn btn-secondary" type="button" onClick={handleLrnSearch} disabled={lrnSearching}>
                 {lrnSearching ? 'Searching...' : 'Search'}
               </button>
@@ -267,13 +361,21 @@ export default function WalkInEnrollmentPage() {
             <div>
               <label className="label">Applying for</label>
               <select
-                className="input" value={form.gradeLevelId}
-                onChange={(e) => { setForm({ ...form, gradeLevelId: e.target.value, sectionId: '' }); setSections([]); }}
-                required
+                {...bind('gradeLevelId')}
+                onChange={(e) => {
+                  setForm({ ...form, gradeLevelId: e.target.value, sectionId: '' });
+                  setSections([]);
+                  setErrors((prev) => ({ ...prev, gradeLevelId: e.target.value ? '' : prev.gradeLevelId }));
+                }}
               >
                 <option value="">Select grade level</option>
                 {gradeLevels.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
+              {fieldError('gradeLevelId')}
+              {loadError && <p className="field-error">{loadError}</p>}
+              {!loadError && gradesLoaded && gradeLevels.length === 0 && (
+                <p className="field-error">No grade levels have been set up yet. Please ask the administrator to add them.</p>
+              )}
             </div>
             <div>
               <label className="label">Section (optional — can be assigned later)</label>
@@ -304,4 +406,4 @@ export default function WalkInEnrollmentPage() {
       </form>
     </div>
   );
-}
+}

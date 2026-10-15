@@ -46,6 +46,7 @@ export default function PasswordInput({
           onBlur={onBlur}
           placeholder={placeholder}
           autoComplete={autoComplete}
+          maxLength={72}
           required
         />
         <button

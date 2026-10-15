@@ -10,6 +10,9 @@ async function lookup(req, res) {
     if (!lrn) {
       return res.status(400).json({ message: 'Enter an LRN to search.' });
     }
+    if (!/^\d{12}$/.test(lrn)) {
+      return res.status(400).json({ message: 'LRN should be exactly 12 digits.' });
+    }
 
     const student = await findReturningStudentForGuardian(lrn, req.user.id);
     if (!student) {
@@ -50,7 +53,7 @@ async function lookup(req, res) {
 async function addLrn(req, res) {
   try {
     const studentId = req.params.id;
-    const lrn = (req.body.lrn || '').toString().trim();
+    const lrn = typeof (req.body || {}).lrn === 'string' ? req.body.lrn.trim() : '';
 
     if (!/^\d{12}$/.test(lrn)) {
       return res.status(400).json({ message: 'LRN should be exactly 12 digits.' });

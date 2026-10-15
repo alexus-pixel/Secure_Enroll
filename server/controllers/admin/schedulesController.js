@@ -1,4 +1,5 @@
 const schedulesDb = require('../../db/admin/schedules');
+const { sendDbError } = require('../../utils/dbErrors');
 const settingsDb = require('../../db/admin/settings');
 const pool = require('../../db/pool');
 const { logAudit } = require('../../lib/audit');
@@ -67,6 +68,7 @@ async function createSubject(req, res) {
     await logAudit(req.user.id, 'SUBJECT_CREATED', 'subject', subject.id, req, { name: subject.name });
     res.status(201).json(subject);
   } catch (err) {
+    if (sendDbError(err, res)) return;
     if (err.code === '23505') return res.status(409).json({ message: 'That subject already exists for this grade level.' });
     console.error(err);
     res.status(500).json({ message: 'Could not create subject.' });
@@ -181,6 +183,7 @@ async function createEntry(req, res) {
     await logAudit(req.user.id, 'SCHEDULE_ENTRY_CREATED', 'schedule_entry', result.entry.id, req, req.body);
     res.status(201).json(result.entry);
   } catch (err) {
+    if (sendDbError(err, res)) return;
     if (err.status) return res.status(err.status).json({ message: err.message });
     console.error(err);
     res.status(500).json({ message: 'Could not save the schedule entry.' });
@@ -208,6 +211,7 @@ async function updateEntry(req, res) {
     await logAudit(req.user.id, 'SCHEDULE_ENTRY_UPDATED', 'schedule_entry', Number(req.params.id), req, req.body);
     res.json(result.entry);
   } catch (err) {
+    if (sendDbError(err, res)) return;
     if (err.status) return res.status(err.status).json({ message: err.message });
     console.error(err);
     res.status(500).json({ message: 'Could not update the schedule entry.' });

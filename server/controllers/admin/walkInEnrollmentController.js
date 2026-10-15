@@ -1,6 +1,7 @@
 const walkInDb = require('../../db/admin/walkInEnrollment');
 const settingsDb = require('../../db/admin/settings');
 const { logAudit } = require('../../lib/audit');
+const { sendDbError } = require('../../utils/dbErrors');
 
 async function requiredDocuments(req, res) {
   try {
@@ -22,8 +23,12 @@ async function gradeLevels(req, res) {
 
 async function sections(req, res) {
   try {
-    const gradeLevelId = Number(req.query.gradeLevelId);
-    if (!Number.isInteger(gradeLevelId) || gradeLevelId <= 0) return res.json([]);
+    const raw = req.query.gradeLevelId;
+    if (raw === undefined || raw === '') return res.json([]); // no grade picked yet
+    if (typeof raw !== 'string' || !/^\d{1,9}$/.test(raw) || Number(raw) <= 0) {
+      return res.status(400).json({ message: 'Unrecognized grade level.' });
+    }
+    const gradeLevelId = Number(raw);
     res.json(await walkInDb.getSectionsForGrade(gradeLevelId));
   } catch (err) {
     console.error(err);
@@ -64,6 +69,7 @@ async function create(req, res) {
     if (err.status && err.status < 500) {
       return res.status(err.status).json({ message: err.message });
     }
+    if (sendDbError(err, res)) return;
     // Unique violations: the database's duplicate-record defences.
     if (err.code === '23505') {
       const isLrn = /lrn/i.test(err.constraint || err.detail || '');

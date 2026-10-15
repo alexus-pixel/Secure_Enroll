@@ -37,7 +37,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="table-wrap">
-              <table className="data">
+              <table className="data stack">
                 <thead>
                   <tr>
                     <th>Student</th><th>Grade Level</th><th>Section</th>
@@ -47,11 +47,11 @@ export default function Dashboard() {
                 <tbody>
                   {applications.map((a) => (
                     <tr key={a.id}>
-                      <td><b>{a.last_name}, {a.first_name}</b></td>
-                      <td>{a.grade_level}</td>
-                      <td>{a.section || '\u2014'}</td>
-                      <td>{new Date(a.submitted_at).toLocaleDateString()}</td>
-                      <td><span className={`pill pill-${a.status}`}>{STATUS_LABELS[a.status] || a.status}</span></td>
+                      <td data-label="Student"><b>{a.last_name}, {a.first_name}</b></td>
+                      <td data-label="Grade">{a.grade_level}</td>
+                      <td data-label="Section">{a.section || '\u2014'}</td>
+                      <td data-label="Submitted">{new Date(a.submitted_at).toLocaleDateString()}</td>
+                      <td data-label="Status"><span className={`pill pill-${a.status}`}>{STATUS_LABELS[a.status] || a.status}</span></td>
                       <td><Link to={`/applications/${a.id}`}>View</Link></td>
                     </tr>
                   ))}
@@ -63,4 +63,4 @@ export default function Dashboard() {
       </div>
     </>
   );
-}
+}

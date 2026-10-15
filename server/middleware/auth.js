@@ -9,12 +9,34 @@ async function authenticate(req, res, next) {
     return res.status(401).json({ message: 'No token provided.' });
   }
   const token = header.split(' ')[1];
+  let payload;
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = { id: payload.sub, role: payload.role };
-    next();
+    payload = jwt.verify(token, process.env.JWT_SECRET);
   } catch (err) {
     return res.status(401).json({ message: 'Invalid or expired token.' });
+  }
+
+  // A signed token alone is not enough. A login token lasts 8 hours, so the
+  // account is checked in the database on every request: if an administrator
+  // disables the account or changes its role, the change takes effect at once
+  // instead of waiting for the token to expire. The role also comes from the
+  // database, never from the role written inside the token.
+  try {
+    const result = await pool.query(
+      `SELECT u.is_active, r.name AS role
+       FROM users u JOIN roles r ON r.id = u.role_id
+       WHERE u.id = $1`,
+      [payload.sub]
+    );
+    const row = result.rows[0];
+    if (!row || !row.is_active) {
+      return res.status(401).json({ message: 'Your session is no longer valid. Please sign in again.' });
+    }
+    req.user = { id: payload.sub, role: row.role };
+    next();
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Could not confirm your account status.' });
   }
 }
 

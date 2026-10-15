@@ -1,6 +1,10 @@
 const bcrypt = require('bcryptjs');
 const usersDb = require('../../db/admin/users');
 const { logAudit } = require('../../lib/audit');
+const { sendDbError } = require('../../utils/dbErrors');
+
+// req.user.id comes from the token as a string; ids from the URL are numbers.
+const sameUser = (targetId, req) => String(targetId) === String(req.user.id);
 
 async function list(req, res) {
   try {
@@ -49,6 +53,8 @@ async function create(req, res) {
     await logAudit(req.user.id, 'USER_CREATED', 'user', user.id, req, { email, role: role.name });
     res.status(201).json(user);
   } catch (err) {
+    if (sendDbError(err, res)) return;
+    if (err.code === '23505') return res.status(409).json({ message: 'An account with that email already exists.' });
     console.error(err);
     res.status(500).json({ message: 'Could not create user.' });
   }
@@ -57,11 +63,14 @@ async function create(req, res) {
 async function updateRole(req, res) {
   try {
     const targetId = Number(req.params.id);
-    if (targetId === req.user.id) {
+    if (sameUser(targetId, req)) {
       return res.status(400).json({ message: "You can't change your own role." });
     }
     const before = await usersDb.findUserById(targetId);
     if (!before) return res.status(404).json({ message: 'User not found.' });
+
+    const role = (await usersDb.getRoles()).find((r) => r.id === req.body.roleId);
+    if (!role) return res.status(400).json({ message: 'Unknown role.' });
 
     const updated = await usersDb.updateUserRole(targetId, req.body.roleId);
     await logAudit(req.user.id, 'USER_ROLE_CHANGED', 'user', targetId, req, {
@@ -69,6 +78,7 @@ async function updateRole(req, res) {
     });
     res.json(updated);
   } catch (err) {
+    if (sendDbError(err, res)) return;
     console.error(err);
     res.status(500).json({ message: 'Could not update role.' });
   }
@@ -77,7 +87,7 @@ async function updateRole(req, res) {
 async function setActive(req, res) {
   try {
     const targetId = Number(req.params.id);
-    if (targetId === req.user.id && req.body.isActive === false) {
+    if (sameUser(targetId, req) && req.body.isActive === false) {
       return res.status(400).json({ message: "You can't disable your own account." });
     }
     const updated = await usersDb.setUserActive(targetId, req.body.isActive);

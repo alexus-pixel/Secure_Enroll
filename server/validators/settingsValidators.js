@@ -1,9 +1,10 @@
 const { z } = require('zod');
+const c = require('./common');
 
 const updateEnrollmentPeriod = z.object({
-  enrollmentOpen: z.boolean(),
-  opensAt: z.string().date(),
-  closesAt: z.string().date(),
+  enrollmentOpen: z.boolean({ invalid_type_error: 'enrollmentOpen must be true or false.' }),
+  opensAt: c.isoDate('Opening date'),
+  closesAt: c.isoDate('Closing date'),
 }).refine((v) => v.closesAt > v.opensAt, {
   message: 'Closing date must be after the opening date.',
   path: ['closesAt'],
@@ -11,11 +12,11 @@ const updateEnrollmentPeriod = z.object({
 
 const createSchoolYear = z.object({
   label: z.string().trim().regex(/^\d{4}-\d{4}$/, 'Use the form 2026-2027.'),
-  opensAt: z.string().date(),
+  opensAt: c.isoDate('Opening date'),
   // Optional: when omitted, the school year automatically ends 10
   // months after opensAt rather than requiring an admin to type an
   // end date up front.
-  closesAt: z.string().date().optional(),
+  closesAt: c.isoDate('Closing date').optional(),
 }).refine((v) => !v.closesAt || v.closesAt > v.opensAt, {
   message: 'Closing date must be after the opening date.',
   path: ['closesAt'],
@@ -28,26 +29,26 @@ const createSchoolYear = z.object({
 });
 
 const createSection = z.object({
-  name: z.string().trim().min(1).max(40),
-  gradeLevelId: z.coerce.number().int().positive(),
-  capacity: z.coerce.number().int().positive().max(500),
+  name: c.safeText('Section name', 40),
+  gradeLevelId: c.id('Grade level'),
+  capacity: z.coerce.number().int('Capacity must be a whole number.').positive('Capacity must be at least 1.').max(500, 'Capacity can be at most 500.'),
 });
 
 const updateSectionCapacity = z.object({
-  capacity: z.coerce.number().int().positive().max(500),
+  capacity: z.coerce.number().int('Capacity must be a whole number.').positive('Capacity must be at least 1.').max(500, 'Capacity can be at most 500.'),
 });
 
 const updateSchoolYearEndDate = z.object({
-  closesAt: z.string().date(),
+  closesAt: c.isoDate('Closing date'),
 });
 
 const updateRequiredDocuments = z.object({
   documents: z.array(
     z.object({
-      id: z.coerce.number().int().positive(),
+      id: c.id('Document'),
       isRequired: z.boolean(),
     })
-  ).min(1),
+  ).min(1).max(30),
 });
 
 module.exports = {

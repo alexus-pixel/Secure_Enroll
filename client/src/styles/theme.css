@@ -221,9 +221,18 @@ a:hover { text-decoration: underline; }
 .role-admin { background: var(--purple-soft); color: var(--purple); }
 
 /* ---------- page shell ---------- */
-.container { max-width: 1120px; margin-left: var(--sidebar-w); padding: 26px 28px 60px; transition: margin-left .15s ease; }
-.container-narrow { max-width: 720px; }
-.container-wide { max-width: none; }
+/* Page content is centered in the space to the right of the sidebar. The
+   sidebar's width is added to the left padding (and to max-width), so the
+   centered block stays centered whether the sidebar is collapsed or open. */
+.container {
+  max-width: calc(1120px + var(--sidebar-w));
+  margin: 0 auto;
+  padding: 26px 28px 60px calc(var(--sidebar-w) + 28px);
+  transition: padding-left .15s ease;
+}
+.container-narrow { max-width: calc(720px + var(--sidebar-w)); }
+/* Registrar and admin pages use the full width next to the sidebar. */
+.container-wide { max-width: none; margin: 0; }
 
 .page-head {
   display: flex;
@@ -319,6 +328,12 @@ input[type="file"].input { padding: 7px 9px; font-size: 12.5px; }
 .hint { font-size: 11.5px; color: var(--faint); margin: -8px 0 14px; }
 .hint.hint-spaced { margin-top: 6px; }
 .check-row { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 18px; font-size: 12.5px; color: var(--muted); }
+.check-row input[type="checkbox"] { margin-top: 2px; flex: none; }
+.privacy-notice { margin-bottom: 12px; font-size: 12.5px; color: var(--muted); }
+.privacy-notice summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.privacy-notice ul { margin: 8px 0 0; padding-left: 18px; }
+.privacy-notice li { margin-bottom: 5px; line-height: 1.45; }
+.privacy-notice p { margin: 8px 0 0; }
 
 .input-icon-wrap { position: relative; }
 .input-icon-wrap .input { padding-right: 40px; }

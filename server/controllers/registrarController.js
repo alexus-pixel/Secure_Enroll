@@ -5,6 +5,9 @@ const bcrypt = require('bcryptjs');
 const pool = require('../db/pool');
 const { notifyLrnRecorded } = require('../mailer');
 const { UPLOAD_DIR } = require('../middleware/upload');
+const {
+  isValidName, passwordIssues, PASSWORD_MAX_BYTES, NOTE_MAX, REMARK_MAX,
+} = require('../utils/validators');
 
 const AY = `(SELECT id FROM school_years WHERE is_active LIMIT 1)`;
 
@@ -16,6 +19,8 @@ const CORE_DOCS = [
   { type: 'form_138', name: 'Form 138 / Report Card' },
   { type: 'good_moral', name: 'Certificate of Good Moral' },
 ];
+// users.middle_initial is VARCHAR(2)
+const MI_MAX = 2;
 const DOC_STATUSES = ['pending', 'verified', 'flagged', 'rejected'];
 
 // Primary guardian of a student, whoever submitted the application
@@ -125,8 +130,15 @@ exports.get = async (req, res) => {
 
 // Verify, flag (needs attention) or reject (must be replaced) one document.
 exports.setDocumentStatus = async (req, res) => {
-  const { status } = req.body;
-  const note = String(req.body.note || '').trim().slice(0, 500);
+  const { status } = req.body || {};
+  const rawNote = req.body && req.body.note;
+  if (rawNote !== undefined && rawNote !== null && typeof rawNote !== 'string') {
+    return res.status(400).json({ message: 'The note must be text.' });
+  }
+  const note = (rawNote || '').trim();
+  if (note.length > NOTE_MAX) {
+    return res.status(400).json({ message: `The note is too long (up to ${NOTE_MAX} characters).` });
+  }
   if (!DOC_STATUSES.includes(status)) {
     return res.status(400).json({ message: 'Status must be verified, flagged, rejected or pending.' });
   }
@@ -207,7 +219,7 @@ exports.documentFile = async (req, res) => {
 };
 
 exports.setQualification = async (req, res) => {
-  if (!['met', 'not_met'].includes(req.body.value)) {
+  if (!['met', 'not_met'].includes((req.body || {}).value)) {
     return res.status(400).json({ message: 'Value must be met or not_met.' });
   }
   if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
@@ -223,9 +235,17 @@ exports.setQualification = async (req, res) => {
 };
 
 exports.decide = async (req, res) => {
-  const { action, remarks = '' } = req.body;
-  const status = { approve: 'approved', revision: 'needs_revision', reject: 'rejected' }[action];
+  const { action } = req.body || {};
+  const remarks = (req.body && req.body.remarks) ?? '';
+  const status = typeof action === 'string'
+    ? { approve: 'approved', revision: 'needs_revision', reject: 'rejected' }[action]
+    : undefined;
   if (!status) return res.status(400).json({ message: 'Unknown action.' });
+  if (typeof remarks !== 'string') return res.status(400).json({ message: 'Remarks must be text.' });
+  if (remarks.trim().length > REMARK_MAX) {
+    return res.status(400).json({ message: `Remarks are too long (up to ${REMARK_MAX} characters).` });
+  }
+  if (!/^\d{1,9}$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
 
   const { rows: [a] } = await pool.query(
     'SELECT status, grade_qualification FROM enrollment_applications WHERE id = $1',
@@ -267,13 +287,19 @@ exports.decide = async (req, res) => {
 
 // ---------- Account settings ----------
 exports.updateProfile = async (req, res) => {
-  const { firstName, lastName, middleInitial = '' } = req.body;
-  if (!firstName?.trim() || !lastName?.trim()) {
-    return res.status(400).json({ message: 'First and last name are required.' });
+  const { firstName, lastName, middleInitial } = req.body || {};
+  if (!isValidName(firstName)) {
+    return res.status(400).json({ message: 'First name is required and should contain letters only (up to 60 characters).' });
   }
-  const first = firstName.trim().slice(0, 60);
-  const last = lastName.trim().slice(0, 60);
-  const mi = middleInitial.trim().slice(0, 2);
+  if (!isValidName(lastName)) {
+    return res.status(400).json({ message: 'Last name is required and should contain letters only (up to 60 characters).' });
+  }
+  if (!isValidName(middleInitial, { required: false, max: MI_MAX })) {
+    return res.status(400).json({ message: `M.I. should contain letters only (up to ${MI_MAX} characters).` });
+  }
+  const first = firstName.trim();
+  const last = lastName.trim();
+  const mi = typeof middleInitial === 'string' ? middleInitial.trim() : '';
   const { rows: [u] } = await pool.query(
     `UPDATE users
      SET first_name = $1, last_name = $2, middle_initial = NULLIF($3, ''),
@@ -289,13 +315,20 @@ exports.updateProfile = async (req, res) => {
 };
 
 exports.changePassword = async (req, res) => {
-  const { current, next } = req.body;
-  if (!next || next.length < 8) {
-    return res.status(400).json({ message: 'New password must be at least 8 characters.' });
+  const { current, next } = req.body || {};
+  if (typeof current !== 'string' || !current) {
+    return res.status(400).json({ message: 'Enter your current password.' });
+  }
+  const issues = passwordIssues(next);
+  if (issues.length) {
+    return res.status(400).json({ message: `New password needs ${issues.join(', ')}.` });
   }
   const { rows: [u] } = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
-  if (!(await bcrypt.compare(current || '', u.password_hash))) {
+  if (Buffer.byteLength(current) > PASSWORD_MAX_BYTES || !(await bcrypt.compare(current, u.password_hash))) {
     return res.status(400).json({ message: 'Current password is incorrect.' });
+  }
+  if (await bcrypt.compare(next, u.password_hash)) {
+    return res.status(400).json({ message: 'New password must be different from your current password.' });
   }
   await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [
     await bcrypt.hash(next, 12),
@@ -333,7 +366,7 @@ exports.setLrn = async (req, res) => {
   if (!/^\d+$/.test(req.params.studentId)) {
     return res.status(404).json({ message: 'Student not found.' });
   }
-  const lrn = String(req.body.lrn || '').trim();
+  const lrn = typeof (req.body || {}).lrn === 'string' ? req.body.lrn.trim() : '';
   if (!LRN_FORMAT.test(lrn)) {
     return res.status(400).json({ message: 'LRN must be exactly 12 digits.' });
   }

@@ -1,4 +1,5 @@
 const pool = require('../../db/pool');
+const { sendDbError } = require('../../utils/dbErrors');
 const teachersDb = require('../../db/admin/teachers');
 const settingsDb = require('../../db/admin/settings');
 const { logAudit } = require('../../lib/audit');
@@ -73,6 +74,7 @@ async function create(req, res) {
     res.status(201).json(teacher);
   } catch (err) {
     await client.query('ROLLBACK');
+    if (sendDbError(err, res)) return;
     console.error(err);
     res.status(500).json({ message: 'Could not create teacher.' });
   } finally {
@@ -125,6 +127,7 @@ async function update(req, res) {
       client.release();
     }
   } catch (err) {
+    if (sendDbError(err, res)) return;
     if (err.status) return res.status(err.status).json({ message: err.message });
     console.error(err);
     res.status(500).json({ message: 'Could not update teacher.' });

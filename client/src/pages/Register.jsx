@@ -29,6 +29,9 @@ export default function Register() {
     lastName: '', firstName: '', middleName: '', email: '', contactNumber: '',
     password: '', confirmPassword: '',
   });
+  // Data Privacy Act (RA 10173): the parent must agree before an account is made.
+  const [consent, setConsent] = useState(false);
+  const [consentError, setConsentError] = useState('');
   const [touched, setTouched] = useState({});
   const [errors, setErrors] = useState({});
   const [emailChecking, setEmailChecking] = useState(false);
@@ -89,7 +92,8 @@ export default function Register() {
     FIELDS.forEach((f) => { nextErrors[f] = validateField(f, form); });
     setErrors(nextErrors);
     setTouched(Object.fromEntries(FIELDS.map((f) => [f, true])));
-    if (Object.values(nextErrors).some(Boolean)) return;
+    if (!consent) setConsentError('Please accept the Data Privacy Notice to continue.');
+    if (Object.values(nextErrors).some(Boolean) || !consent) return;
 
     setSubmitting(true);
     try {
@@ -100,6 +104,7 @@ export default function Register() {
         middleName: form.middleName.trim(),
         lastName: form.lastName.trim(),
         contactNumber: form.contactNumber.trim(),
+        privacyConsent: true,
       });
       if (data.verificationTicket) {
         setPending({
@@ -145,21 +150,21 @@ export default function Register() {
                 <label className="label" htmlFor="lastName">Last Name</label>
                 <input id="lastName" className={`input${errors.lastName ? ' input-error' : ''}`}
                   value={form.lastName} onChange={update('lastName')} onBlur={handleBlur('lastName')}
-                  autoComplete="family-name" required />
+                  autoComplete="family-name" maxLength={60} required />
                 {errors.lastName && <p className="field-error">{errors.lastName}</p>}
               </div>
               <div>
                 <label className="label" htmlFor="firstName">First Name</label>
                 <input id="firstName" className={`input${errors.firstName ? ' input-error' : ''}`}
                   value={form.firstName} onChange={update('firstName')} onBlur={handleBlur('firstName')}
-                  autoComplete="given-name" required />
+                  autoComplete="given-name" maxLength={60} required />
                 {errors.firstName && <p className="field-error">{errors.firstName}</p>}
               </div>
               <div>
                 <label className="label" htmlFor="middleName">M.I</label>
                 <input id="middleName" className={`input${errors.middleName ? ' input-error' : ''}`}
                   value={form.middleName} onChange={update('middleName')} onBlur={handleBlur('middleName')}
-                  autoComplete="additional-name" maxLength={4} />
+                  autoComplete="additional-name" maxLength={5} />
                 {errors.middleName && <p className="field-error">{errors.middleName}</p>}
               </div>
             </div>
@@ -169,7 +174,7 @@ export default function Register() {
             <label className="label" htmlFor="email">Email Address</label>
             <input id="email" className={`input${errors.email ? ' input-error' : ''}`} type="email"
               value={form.email} onChange={update('email')} onBlur={handleEmailBlur}
-              autoComplete="email" required />
+              autoComplete="email" maxLength={254} required />
             {emailChecking && <p className="hint">Checking email&hellip;</p>}
             {!emailChecking && errors.email && <p className="field-error">{errors.email}</p>}
           </div>
@@ -178,7 +183,7 @@ export default function Register() {
             <label className="label" htmlFor="contactNumber">Contact/Phone Number</label>
             <input id="contactNumber" className={`input${errors.contactNumber ? ' input-error' : ''}`}
               value={form.contactNumber} onChange={update('contactNumber')} onBlur={handleBlur('contactNumber')}
-              placeholder="09171234567" autoComplete="tel" required />
+              placeholder="09171234567" autoComplete="tel" inputMode="numeric" maxLength={11} required />
             {errors.contactNumber && <p className="field-error">{errors.contactNumber}</p>}
           </div>
 
@@ -194,6 +199,27 @@ export default function Register() {
               error={errors.confirmPassword} hint={!errors.confirmPassword ? 'At least 8 characters.' : ''}
             />
           </div>
+
+          <details className="privacy-notice">
+            <summary>Read the Data Privacy Notice</summary>
+            <p><b>Data Privacy Act of 2012 (RA 10173)</b></p>
+            <ul>
+              <li><b>What we collect:</b> your name, email and mobile number; your child&apos;s name, birth date, sex, LRN and address; and the documents you upload.</li>
+              <li><b>Why:</b> only to process your child&apos;s enrollment at Caloocan City Elementary School.</li>
+              <li><b>Who can see it:</b> school registrar staff and administrators. You can only see your own child&apos;s records.</li>
+              <li><b>How it is protected:</b> sensitive details are encrypted, access depends on the user&apos;s role, and important actions are logged.</li>
+              <li><b>How long we keep it:</b> only as long as needed for enrollment and school record rules. We do not share it with other parties unless the law requires it.</li>
+              <li><b>Your rights:</b> you may ask to see or correct your data, or file a complaint with the National Privacy Commission.</li>
+            </ul>
+          </details>
+          <label className="check-row" htmlFor="privacyConsent">
+            <input
+              id="privacyConsent" type="checkbox" checked={consent}
+              onChange={(e) => { setConsent(e.target.checked); if (e.target.checked) setConsentError(''); }}
+            />
+            <span>I have read the Data Privacy Notice and I agree that the school may collect and use my information and my child&apos;s information for enrollment.</span>
+          </label>
+          {consentError && <p className="field-error" style={{ marginTop: -10, marginBottom: 14 }}>{consentError}</p>}
 
           <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>
             {submitting ? 'Creating account\u2026' : 'Create Account'}

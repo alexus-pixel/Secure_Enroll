@@ -38,7 +38,7 @@ export default function AccountSettings() {
     const nextErrors = {
       firstName: validateName(profile.firstName, { label: 'First name' }),
       lastName: validateName(profile.lastName, { label: 'Last name' }),
-      middleName: validateName(profile.middleName, { required: false, label: 'M.I.' }),
+      middleName: validateName(profile.middleName, { required: false, label: 'M.I.', max: 5 }),
     };
     setProfileErrors(nextErrors);
     if (Object.values(nextErrors).some(Boolean)) return;
@@ -116,19 +116,19 @@ export default function AccountSettings() {
                 <div>
                   <label className="label" htmlFor="firstName">First name</label>
                   <input id="firstName" className={`input${profileErrors.firstName ? ' input-error' : ''}`}
-                    value={profile.firstName} onChange={updateProfileField('firstName')} required />
+                    value={profile.firstName} onChange={updateProfileField('firstName')} maxLength={60} required />
                   {profileErrors.firstName && <p className="field-error">{profileErrors.firstName}</p>}
                 </div>
                 <div>
                   <label className="label" htmlFor="lastName">Last name</label>
                   <input id="lastName" className={`input${profileErrors.lastName ? ' input-error' : ''}`}
-                    value={profile.lastName} onChange={updateProfileField('lastName')} required />
+                    value={profile.lastName} onChange={updateProfileField('lastName')} maxLength={60} required />
                   {profileErrors.lastName && <p className="field-error">{profileErrors.lastName}</p>}
                 </div>
                 <div>
                   <label className="label" htmlFor="middleName">M.I</label>
                   <input id="middleName" className={`input${profileErrors.middleName ? ' input-error' : ''}`}
-                    value={profile.middleName} onChange={updateProfileField('middleName')} maxLength={4} />
+                    value={profile.middleName} onChange={updateProfileField('middleName')} maxLength={5} />
                   {profileErrors.middleName && <p className="field-error">{profileErrors.middleName}</p>}
                 </div>
               </div>

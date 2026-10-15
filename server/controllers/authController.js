@@ -4,19 +4,29 @@ const {
   findRoleIdByName, findUserByEmail, findUserById, createUser, updateUserPassword,
 } = require('../db/users');
 const { createGuardianProfile, getGuardianProfile, updateGuardianProfile } = require('../db/guardians');
-const { isValidEmail, isValidName, isValidContactNumber, passwordIssues } = require('../utils/validators');
+const {
+  isValidEmail, isValidName, isValidContactNumber, passwordIssues, PASSWORD_MAX_BYTES, INITIAL_MAX,
+} = require('../utils/validators');
+const { sendDbError } = require('../utils/dbErrors');
+
+const isText = (v) => typeof v === 'string';
 const { checkEmailDomain } = require('../utils/emailDomain');
 const { issueToken, findValidToken, findTokenRecord, consumeToken } = require('../db/authTokens');
 const { sendMail, verificationEmail, passwordResetEmail } = require('../utils/mailer');
 const pool = require('../db/pool');
 
-async function logAudit(userId, action, req) {
+async function logAudit(userId, action, req, details = null) {
   await pool.query(
-    `INSERT INTO audit_logs (user_id, action, ip_address, user_agent)
-     VALUES ($1, $2, $3, $4)`,
-    [userId, action, req.ip, req.get('user-agent')]
+    `INSERT INTO audit_logs (user_id, action, ip_address, user_agent, details)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [userId, action, req.ip, req.get('user-agent'), details ? JSON.stringify(details) : null]
   );
 }
+
+// Version of the Data Privacy Notice shown on the sign-up page. Change it
+// whenever the wording of the notice changes, so the audit log shows which
+// text each parent agreed to.
+const PRIVACY_NOTICE_VERSION = '2026-10';
 
 function publicUser(row) {
   return {
@@ -136,14 +146,16 @@ async function register(req, res) {
   const client = await pool.connect();
   try {
     const {
-      email, password, firstName, middleName, lastName, contactNumber,
+      email, password, firstName, middleName, lastName, contactNumber, privacyConsent,
     } = req.body;
 
     const problems = [];
+    // Data Privacy Act (RA 10173): the parent must agree before we collect data.
+    if (privacyConsent !== true) problems.push('Please read and accept the Data Privacy Notice to create an account.');
     if (!isValidEmail(email)) problems.push('A valid email address is required.');
     if (!isValidName(firstName)) problems.push('First name is required and should contain letters only.');
     if (!isValidName(lastName)) problems.push('Last name is required and should contain letters only.');
-    if (!isValidName(middleName, { required: false })) problems.push('M.I. should contain letters only.');
+    if (!isValidName(middleName, { required: false, max: INITIAL_MAX })) problems.push(`M.I. should contain letters only (up to ${INITIAL_MAX} characters).`);
     if (!isValidContactNumber(contactNumber)) problems.push('Contact number must be an 11-digit mobile number (e.g. 09171234567).');
     const pwIssues = passwordIssues(password);
     if (pwIssues.length) problems.push(`Password needs ${pwIssues.join(', ')}.`);
@@ -178,6 +190,7 @@ async function register(req, res) {
     await client.query('COMMIT');
 
     await logAudit(user.id, 'REGISTER', req);
+    await logAudit(user.id, 'PRIVACY_CONSENT_GIVEN', req, { noticeVersion: PRIVACY_NOTICE_VERSION });
     const mail = await ensureVerificationEmail(user);
     res.status(201).json({
       id: user.id,
@@ -188,6 +201,10 @@ async function register(req, res) {
     });
   } catch (err) {
     await client.query('ROLLBACK');
+    if (sendDbError(err, res)) return;
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'An account with that email address already exists.' });
+    }
     console.error(err);
     res.status(500).json({ message: 'Registration failed. Please try again.' });
   } finally {
@@ -197,8 +214,14 @@ async function register(req, res) {
 
 async function login(req, res) {
   try {
-    const { email, password } = req.body;
-    const user = await findUserByEmail((email || '').toLowerCase().trim());
+    const { email, password } = req.body || {};
+    // Wrong types (objects, arrays, numbers) or absurdly long values never reach
+    // the database or bcrypt.
+    if (!isText(email) || !isText(password) || !email.trim() || !password
+        || email.length > 254 || Buffer.byteLength(password) > PASSWORD_MAX_BYTES) {
+      return res.status(400).json({ message: 'Enter your email address and password.' });
+    }
+    const user = await findUserByEmail(email.toLowerCase().trim());
 
     // Same error whether the email doesn't exist or the password is wrong —
     // don't tell an attacker which one they got right.
@@ -289,7 +312,7 @@ async function updateProfile(req, res) {
     const problems = [];
     if (!isValidName(firstName)) problems.push('First name is required and should contain letters only.');
     if (!isValidName(lastName)) problems.push('Last name is required and should contain letters only.');
-    if (!isValidName(middleName, { required: false })) problems.push('M.I. should contain letters only.');
+    if (!isValidName(middleName, { required: false, max: INITIAL_MAX })) problems.push(`M.I. should contain letters only (up to ${INITIAL_MAX} characters).`);
     if (problems.length) return res.status(400).json({ message: problems[0], errors: problems });
 
     const updated = await updateGuardianProfile(pool, req.user.id, {
@@ -311,9 +334,12 @@ async function updateProfile(req, res) {
 
 async function changePassword(req, res) {
   try {
-    const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!isText(currentPassword) || !isText(newPassword) || !currentPassword || !newPassword) {
       return res.status(400).json({ message: 'Your current password and a new password are required.' });
+    }
+    if (Buffer.byteLength(currentPassword) > PASSWORD_MAX_BYTES) {
+      return res.status(401).json({ message: 'Current password is incorrect.' });
     }
 
     const user = await findUserById(req.user.id);
@@ -375,6 +401,9 @@ async function checkEmail(req, res) {
 async function verifyEmail(req, res) {
   try {
     const token = (req.query.token || '').toString();
+    if (!token || token.length > 200) {
+      return res.status(400).json({ message: 'This verification link is invalid or has expired.' });
+    }
     const row = await findValidToken(token, 'email_verify');
 
     if (row) {
@@ -459,7 +488,7 @@ async function forgotPassword(req, res) {
   const generic = () => res.json({ message: 'If an account exists for that email address, we have sent a reset link.' });
 
   try {
-    const { email } = req.body;
+    const { email } = req.body || {};
     if (!isValidEmail(email)) return generic();
 
     const user = await findUserByEmail(email.toLowerCase().trim());
@@ -478,7 +507,10 @@ async function forgotPassword(req, res) {
 
 async function resetPassword(req, res) {
   try {
-    const { token, newPassword } = req.body;
+    const { token, newPassword } = req.body || {};
+    if (!isText(token) || !token || token.length > 200) {
+      return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
+    }
     const row = await findValidToken(token, 'password_reset');
     if (!row) {
       return res.status(400).json({ message: 'This reset link is invalid or has expired.' });

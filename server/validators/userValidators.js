@@ -1,34 +1,28 @@
 const { z } = require('zod');
 
-// Matches authController.register's own rule (>= 8 chars) and adds
-// the complexity check the concept paper's "strong authentication"
-// objective calls for: at least one letter and one number, so
-// "12345678" and "password" both still fail.
-const strongPassword = z
-  .string()
-  .min(8, 'Password must be at least 8 characters.')
-  .regex(/[A-Za-z]/, 'Password must include at least one letter.')
-  .regex(/[0-9]/, 'Password must include at least one number.');
+// Same password policy as parent sign-up (8-72 bytes, upper, lower, number, special).
+const { strongPassword, email, id } = require('./common');
 
-const email = z.string().trim().toLowerCase().email('Enter a valid email address.').max(255);
+// Staff names may contain letters, spaces and . ' - only.
+const fullName = z.string().trim().min(2, 'Full name is required.').max(120, 'Full name is too long.')
+  .regex(/^[\p{L}\p{M}][\p{L}\p{M} .'\u2019-]*$/u, 'Full name: use letters only (spaces, . \' - are fine).');
 
 // Admin can create registrar or admin accounts here (parents
-// self-register through the public flow). Rejecting role: 'parent'
-// at the schema level closes off one way this endpoint could be
-// misused to mint parent accounts that skip normal registration.
+// self-register through the public flow). Whether the chosen role is
+// a staff role is checked against the roles table in the controller.
 const createStaffUser = z.object({
-  fullName: z.string().trim().min(2).max(120),
+  fullName,
   email,
   password: strongPassword,
-  roleId: z.coerce.number().int().positive(),
+  roleId: id('Role'),
 });
 
 const updateUserRole = z.object({
-  roleId: z.coerce.number().int().positive(),
+  roleId: id('Role'),
 });
 
 const setUserActive = z.object({
-  isActive: z.boolean(),
+  isActive: z.boolean({ invalid_type_error: 'isActive must be true or false.' }),
 });
 
 const resetPassword = z.object({
@@ -44,12 +38,12 @@ const emptyStringToUndefined = (schema) =>
   z.preprocess((val) => (val === '' ? undefined : val), schema.optional());
 
 const listUsersQuery = z.object({
-  search: z.string().trim().max(255).optional(),
+  search: z.string().trim().max(100).optional(),
   role: emptyStringToUndefined(z.enum(['parent', 'registrar', 'admin'])),
   status: emptyStringToUndefined(z.enum(['active', 'locked', 'disabled'])),
   lastLoginFrom: z.string().datetime().optional().or(z.literal('')),
   lastLoginTo: z.string().datetime().optional().or(z.literal('')),
-  page: z.coerce.number().int().positive().default(1),
+  page: z.coerce.number().int().positive().max(100000).default(1),
   limit: z.coerce.number().int().positive().max(100).default(25),
 });
 

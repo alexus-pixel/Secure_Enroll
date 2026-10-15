@@ -29,4 +29,23 @@ const upload = multer({
   },
 });
 
-module.exports = { upload, UPLOAD_DIR };
+// Runs the upload and turns upload problems into clear 4xx replies. Without
+// this, a wrong file type or a file over 5 MB reached the generic error
+// handler and came back as "500 Something went wrong".
+function uploadSingle(field) {
+  const run = upload.single(field);
+  return (req, res, next) => {
+    run(req, res, (err) => {
+      if (!err) return next();
+      if (err instanceof multer.MulterError) {
+        const tooBig = err.code === 'LIMIT_FILE_SIZE';
+        return res.status(tooBig ? 413 : 400).json({
+          message: tooBig ? 'That file is too large. The limit is 5 MB.' : 'The file could not be uploaded.',
+        });
+      }
+      return res.status(400).json({ message: err.message || 'The file could not be uploaded.' });
+    });
+  };
+}
+
+module.exports = { upload, uploadSingle, UPLOAD_DIR };

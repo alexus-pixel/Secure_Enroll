@@ -1,4 +1,5 @@
 const schoolDb = require('../../db/admin/schoolSettings');
+const { sendDbError } = require('../../utils/dbErrors');
 const settingsDb = require('../../db/admin/settings');
 const { logAudit } = require('../../lib/audit');
 
@@ -23,6 +24,7 @@ async function createSchoolYear(req, res) {
     await logAudit(req.user.id, 'SCHOOL_YEAR_CREATED', 'school_year', year.id, req, { label: year.label });
     res.status(201).json(year);
   } catch (err) {
+    if (sendDbError(err, res)) return;
     if (err.code === '23505') return res.status(409).json({ message: 'That school year already exists.' });
     console.error(err);
     res.status(500).json({ message: 'Could not create school year.' });
@@ -49,6 +51,7 @@ async function createSection(req, res) {
     await logAudit(req.user.id, 'SECTION_CREATED', 'section', section.id, req, req.body);
     res.status(201).json(section);
   } catch (err) {
+    if (sendDbError(err, res)) return;
     if (err.code === '23505') return res.status(409).json({ message: 'That section already exists for this grade level.' });
     console.error(err);
     res.status(500).json({ message: 'Could not create section.' });
@@ -62,6 +65,7 @@ async function updateSectionCapacity(req, res) {
     await logAudit(req.user.id, 'SECTION_CAPACITY_UPDATED', 'section', updated.id, req, { capacity: req.body.capacity });
     res.json(updated);
   } catch (err) {
+    if (sendDbError(err, res)) return;
     if (err.status) return res.status(err.status).json({ message: err.message });
     console.error(err);
     res.status(500).json({ message: 'Could not update section capacity.' });
@@ -88,6 +92,7 @@ async function updateSchoolYearEndDate(req, res) {
     await logAudit(req.user.id, 'SCHOOL_YEAR_END_DATE_UPDATED', 'school_year', year.id, req, { closesAt: req.body.closesAt });
     res.json(year);
   } catch (err) {
+    if (sendDbError(err, res)) return;
     if (err.status) return res.status(err.status).json({ message: err.message });
     console.error(err);
     res.status(500).json({ message: 'Could not update the end date.' });

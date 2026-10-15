@@ -1,58 +1,55 @@
 const { z } = require('zod');
-
-const phPhone = z
-  .string()
-  .trim()
-  .regex(/^(0|\+63)9\d{9}$/, 'Enter a valid Philippine mobile number (e.g. 09171234567).');
+const c = require('./common');
 
 const lrnLookupQuery = z.object({
-  lrn: z.string().trim().min(6).max(20),
+  lrn: c.lrn,
 });
 
 // A walk-in parent must have an account, and the Gmail the admin
 // types here IS that account's login. The parent dashboard finds
 // applications through the logged-in user's id, so whatever address
 // is entered at the desk is exactly what the parent signs in with.
-const gmailAddress = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .email('Enter a valid email address.')
-  .max(255)
-  .refine((v) => /@gmail\.com$/.test(v), 'The parent’s Gmail address (@gmail.com) is required.');
+const gmailAddress = c.email
+  .refine((v) => /@gmail\.com$/.test(v), 'The parent\u2019s Gmail address (@gmail.com) is required.');
 
 const guardianFields = {
   guardianEmail: gmailAddress,
-  guardianFirstName: z.string().trim().min(1).max(60),
-  guardianMiddleName: z.string().trim().max(60).optional(),
-  guardianLastName: z.string().trim().min(1).max(60),
-  guardianContactNumber: phPhone,
-  guardianAddress: z.string().trim().min(1).max(255),
-  guardianValidIdType: z.string().trim().max(40).optional(),
-  relationship: z.string().trim().max(30).optional(),
+  guardianFirstName: c.personName('Guardian first name'),
+  guardianMiddleName: c.optionalPersonName('Guardian middle name'),
+  guardianLastName: c.personName('Guardian last name'),
+  guardianContactNumber: c.phPhone,
+  guardianAddress: c.safeText('Home address', 255),
+  guardianValidIdType: c.optionalSafeText('Valid ID type', 40),
+  relationship: c.relationship.optional(),
 };
 
+// Document codes are 1-40 lowercase letters, digits or underscores; the
+// controller checks them against the real list of document types.
+const docCode = z.string().regex(/^[a-z0-9_]{1,40}$/, 'Unknown document type.');
+
 const sharedFields = {
-  gradeLevelId: z.coerce.number().int().positive(),
-  sectionId: z.coerce.number().int().positive().optional(),
-  physicalDocTypes: z.array(z.string()).default([]),
+  gradeLevelId: c.id('Grade level'),
+  sectionId: c.id('Section').optional(),
+  physicalDocTypes: z.array(docCode).max(12)
+    .refine((list) => new Set(list).size === list.length, 'Each document can be listed only once.')
+    .default([]),
 };
 
 const createWalkInNewStudent = z.object({
   isNewStudent: z.literal(true),
-  firstName: z.string().trim().min(1).max(60),
-  middleName: z.string().trim().max(60).optional(),
-  lastName: z.string().trim().min(1).max(60),
-  birthDate: z.string().date(),
-  sex: z.enum(['M', 'F']),
-  lrn: z.string().trim().min(6).max(20).optional(),
+  firstName: c.personName('First name'),
+  middleName: c.optionalPersonName('Middle name'),
+  lastName: c.personName('Last name'),
+  birthDate: c.birthDate,
+  sex: z.enum(['M', 'F'], { errorMap: () => ({ message: 'Choose Male or Female.' }) }),
+  lrn: z.preprocess((v) => (v === '' ? undefined : v), c.lrn.optional()),
   ...guardianFields,
   ...sharedFields,
 });
 
 const createWalkInExistingStudent = z.object({
   isNewStudent: z.literal(false),
-  existingStudentId: z.coerce.number().int().positive(),
+  existingStudentId: c.id('Student'),
   ...guardianFields,
   ...sharedFields,
 });

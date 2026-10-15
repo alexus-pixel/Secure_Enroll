@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+require('../../middleware/params').protectParams(router); // reject bad IDs with 400
 const { authenticate, requirePermission } = require('../../middleware/auth');
 const { validate } = require('../../middleware/validate');
 const teachersController = require('../../controllers/admin/teachersController');
