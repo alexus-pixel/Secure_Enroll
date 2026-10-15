@@ -11,23 +11,21 @@ for (const name of ['JWT_SECRET', 'ENCRYPTION_KEY']) {
 }
 
 const express = require('express');
-const helmet = require('helmet');
-const cors = require('cors');
 const authRoutes = require('./routes/authRoutes');
 const applicationRoutes = require('./routes/applicationRoutes');
 const registrarRoutes = require('./routes/registrar');
 const studentRoutes = require('./routes/studentRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 const pool = require('./db/pool');
+const { securityHeaders, corsConfig } = require('./middleware/security');
+const { adminApiLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 
-app.use(helmet());
-
-// Only the app's own frontend may call this API cross-origin -- an open
-// `cors()` (the previous setting) lets any website's JavaScript call it
-// on a visitor's behalf using their bearer token, if one leaked.
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
-app.use(cors({ origin: CLIENT_URL }));
+// Security headers (helmet + CSP) and a CORS allow-list that only lets the
+// app's own frontend call this API. See middleware/security.js.
+app.use(securityHeaders());
+app.use(corsConfig());
 
 // A bound on request body size, so a huge JSON payload can't be used to
 // exhaust memory before any of our own validation gets a chance to run.
@@ -49,6 +47,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/registrar', registrarRoutes);
 app.use('/api/students', studentRoutes);
+app.use('/api/admin', adminApiLimiter, adminRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);

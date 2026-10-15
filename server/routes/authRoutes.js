@@ -5,14 +5,19 @@ const {
   verifyEmail, resendVerification, forgotPassword, resetPassword,
 } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
-const { rateLimit } = require('../middleware/rateLimit');
+const { rateLimit, loginLimiter } = require('../middleware/rateLimit');
 
 // Public, unauthenticated endpoints. Each gets its own rate limit sized to
 // what a real user would ever legitimately need in that window -- tight
 // enough to blunt automated abuse, loose enough that nobody locks
 // themselves out by mistyping a password a few times.
 router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: 8 }), register);
-router.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 15 }), login);
+// The DB-backed lockout in authController.login (5 failed attempts
+// -> 15 min) protects one account against a brute force targeted
+// at it. This IP-based limiter is a second, independent layer: it
+// slows down a script trying many different email addresses from
+// one place, which the per-account lockout alone would not catch.
+router.post('/login', loginLimiter, login);
 router.get('/check-email', rateLimit({ windowMs: 60 * 1000, max: 20 }), checkEmail);
 router.get('/verify-email', rateLimit({ windowMs: 60 * 1000, max: 10 }), verifyEmail);
 router.post('/forgot-password', rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }), forgotPassword);

@@ -23,7 +23,9 @@ export default function Login() {
     setSubmitting(true);
     try {
       const user = await login(email, password);
-      navigate(user.role === 'registrar' ? '/registrar' : '/dashboard');
+      // Send each role to its own home screen.
+      const home = { admin: '/admin/dashboard', registrar: '/registrar' };
+      navigate(home[user.role] || '/dashboard');
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed.');
     } finally {
