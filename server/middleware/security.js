@@ -42,7 +42,10 @@ function securityHeaders() {
  * working with no extra setup.
  */
 function corsConfig() {
-  const allowed = (process.env.ALLOWED_ORIGIN || process.env.CLIENT_URL || 'http://localhost:5173').split(',');
+  const allowed = (process.env.ALLOWED_ORIGIN || process.env.CLIENT_URL || 'http://localhost:5173')
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
   return cors({
     origin: allowed,
     credentials: false, // the client sends the JWT in an Authorization header, not a cookie

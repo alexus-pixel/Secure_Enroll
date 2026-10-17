@@ -22,6 +22,16 @@ const { adminApiLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 
+// Behind Render's (or any) reverse proxy, every request arrives from the
+// proxy's own address unless Express is told to read the real client IP from
+// X-Forwarded-For. Without this, every rate limiter and the audit log would
+// treat ALL visitors as one person. Render sets RENDER=true; TRUST_PROXY
+// overrides (0 = off).
+const proxyHops = process.env.TRUST_PROXY !== undefined
+  ? Number(process.env.TRUST_PROXY)
+  : (process.env.RENDER ? 1 : 0);
+if (proxyHops) app.set('trust proxy', proxyHops);
+
 // Security headers (helmet + CSP) and a CORS allow-list that only lets the
 // app's own frontend call this API. See middleware/security.js.
 app.use(securityHeaders());

@@ -1,15 +1,10 @@
-const nodemailer = require('nodemailer');
 const pool = require('./db/pool');
+const { sendMail: deliver } = require('./utils/mailer');
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: false, // port 587 upgrades with STARTTLS
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-});
-
+// Goes through the shared sender, so it uses Brevo/SMTP/console like every
+// other email in the app.
 function sendMail(to, subject, text) {
-  return transporter.sendMail({ from: process.env.SMTP_FROM, to, subject, text });
+  return deliver({ to, subject, text });
 }
 
 // Emails every guardian of the student that an LRN is now on file.

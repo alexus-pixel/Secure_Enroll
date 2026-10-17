@@ -1,12 +1,20 @@
 const nodemailer = require('nodemailer');
 
 const FROM = process.env.SMTP_FROM || 'SecureEnroll <no-reply@secureenroll.local>';
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+// No trailing slash, and only the first entry if several origins are listed.
+// This MUST be the public address of the deployed frontend: it is what a
+// parent's phone is told to open when they tap the link in their email.
+const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')[0].trim().replace(/\/+$/, '');
 
-// Built once, on first use. If SMTP_HOST isn't set, sendMail falls back to
-// printing the message instead of sending it -- so registration and
-// password reset work out of the box for local development and grading,
-// without anyone first having to go set up a real mail account.
+// Three ways to deliver, picked from the environment in this order:
+//   1. BREVO_API_KEY -> Brevo's HTTP API (port 443). Use this on Render and
+//                       most cloud hosts, which block outbound SMTP ports.
+//   2. SMTP_HOST     -> any SMTP server through nodemailer.
+//   3. neither       -> print the message to the server console, so
+//                       registration and password reset still work locally.
+// Every email in the app (verification, reset, LRN notice, teacher PDFs)
+// goes through sendMail below, so this is the only place that needs to know.
 let transporter = null;
 function getTransporter() {
   if (transporter) return transporter;
@@ -22,9 +30,40 @@ function getTransporter() {
   return transporter;
 }
 
-// Brevo transactional email API. Used when BREVO_API_KEY is set; otherwise
-// sendMail falls back to SMTP, or to printing the email in dev.
-async function sendViaBrevo({ to, subject, text, html }) {
+// True when a real delivery route exists (as opposed to console printing).
+function isMailConfigured() {
+  return Boolean(process.env.BREVO_API_KEY || process.env.SMTP_HOST);
+}
+
+// "SecureEnroll <no-reply@school.edu>" -> { name, email }. Brevo wants the
+// sender split apart. BREVO_SENDER_EMAIL / BREVO_SENDER_NAME win if set.
+function brevoSender() {
+  if (process.env.BREVO_SENDER_EMAIL) {
+    return {
+      name: process.env.BREVO_SENDER_NAME || 'SecureEnroll',
+      email: process.env.BREVO_SENDER_EMAIL,
+    };
+  }
+  const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(FROM);
+  if (m) return { name: m[1].trim() || 'SecureEnroll', email: m[2].trim() };
+  return { name: 'SecureEnroll', email: FROM.trim() };
+}
+
+// attachments: [{ filename, content: Buffer }]
+async function sendViaBrevo({ to, subject, text, html, attachments }) {
+  const body = {
+    sender: brevoSender(),
+    to: [{ email: to }],
+    subject,
+    htmlContent: html || `<p>${String(text).replace(/\n/g, '<br>')}</p>`,
+    textContent: text,
+  };
+  if (attachments && attachments.length) {
+    body.attachment = attachments.map((a) => ({
+      name: a.filename,
+      content: Buffer.from(a.content).toString('base64'),
+    }));
+  }
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
@@ -32,32 +71,35 @@ async function sendViaBrevo({ to, subject, text, html }) {
       'content-type': 'application/json',
       accept: 'application/json',
     },
-    body: JSON.stringify({
-      sender: {
-        name: process.env.BREVO_SENDER_NAME || 'SecureEnroll',
-        email: process.env.BREVO_SENDER_EMAIL,
-      },
-      to: [{ email: to }],
-      subject,
-      htmlContent: html || `<p>${text}</p>`,
-      textContent: text,
-    }),
+    body: JSON.stringify(body),
+    // Don't let a slow mail API hang a request indefinitely.
+    signal: AbortSignal.timeout(20000),
   });
-  if (!res.ok) throw new Error(`Brevo ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    // Brevo explains itself in the body (unverified sender, bad key, quota...).
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Brevo API ${res.status}: ${detail.slice(0, 300)}`);
+  }
 }
 
-async function sendMail({ to, subject, text, html }) {
-  if (process.env.BREVO_API_KEY) return sendViaBrevo({ to, subject, text, html });
+async function sendMail({ to, subject, text, html, attachments }) {
+  if (process.env.BREVO_API_KEY) {
+    await sendViaBrevo({ to, subject, text, html, attachments });
+    return;
+  }
   const t = getTransporter();
   if (!t) {
-    console.log('\n----- DEV EMAIL (SMTP not configured, printing instead of sending) -----');
+    console.log('\n----- DEV EMAIL (mail not configured, printing instead of sending) -----');
     console.log('To:', to);
     console.log('Subject:', subject);
     console.log(text);
+    if (attachments && attachments.length) {
+      console.log('Attachments:', attachments.map((a) => a.filename).join(', '));
+    }
     console.log('---------------------------------------------------------------------\n');
     return;
   }
-  await t.sendMail({ from: FROM, to, subject, text, html });
+  await t.sendMail({ from: FROM, to, subject, text, html, attachments });
 }
 
 function verificationEmail(token) {
@@ -85,4 +127,4 @@ function passwordResetEmail(token) {
   };
 }
 
-module.exports = { sendMail, verificationEmail, passwordResetEmail };
+module.exports = { sendMail, isMailConfigured, verificationEmail, passwordResetEmail };
