@@ -5,6 +5,8 @@ const settingsDb = require('../../db/admin/settings');
 const { logAudit } = require('../../lib/audit');
 const { teacherSchedulePdf, masterListPdf } = require('../../lib/pdf');
 const { sendPdfsEmail } = require('../../lib/mailer');
+const masterListMail = require('../../lib/masterListMail');
+const { renderEmail } = require('../../utils/emailTemplate');
 const { verifyEmailExists } = require('../../lib/emailVerification');
 const { degreeOptions: getDegreeOptions } = require('../../lib/degreeReference');
 
@@ -149,15 +151,10 @@ async function schedule(req, res) {
 }
 
 /**
- * "Send PDF": emails the teacher themselves a PDF of the master
- * list for each section they handle, plus their own schedule PDF.
- * The master list per section is already wired to real enrollment
- * data (enrollment_applications/students/guardians) — it'll just
- * come back with zero students listed until the registrar side is
- * actually submitting real applications, since that's where this
- * data comes from.
- * Requires SMTP_* to be set — see lib/mailer.js — and fails with a
- * clear 503 (not a silent no-op) if it isn't.
+ * "Send PDF": emails the teacher their own weekly schedule plus the master
+ * list of every section they handle, in the school's blue-header layout.
+ * Requires SMTP_* to be set (see lib/mailer.js) and fails with a clear 503,
+ * not a silent no-op, if it isn't.
  */
 async function sendPdf(req, res) {
   try {
@@ -167,7 +164,7 @@ async function sendPdf(req, res) {
     const teacher = await teachersDb.getTeacherById(req.params.id);
     if (!teacher) return res.status(404).json({ message: 'Teacher not found.' });
 
-    const entries = await teachersDb.getTeacherWeeklySchedule(req.params.id, activeYear.id);
+    const entries = await masterListMail.teacherEntries(pool, teacher.id, activeYear.id);
     const teacherName = `${teacher.first_name} ${teacher.last_name}`;
 
     const attachments = [{
@@ -175,38 +172,35 @@ async function sendPdf(req, res) {
       content: await teacherSchedulePdf({ teacherName, schoolYearLabel: activeYear.label, entries }),
     }];
 
-    const sectionIds = [...new Set(entries.map((e) => e.section_id).filter(Boolean))];
-    for (const sectionId of sectionIds) {
-      const rosterResult = await pool.query(
-        `SELECT s.first_name, s.last_name,
-                pgp_sym_decrypt(s.lrn_encrypted, $2)::text AS lrn,
-                g.first_name || ' ' || g.last_name AS guardian_name,
-                pgp_sym_decrypt(g.contact_number, $2)::text AS guardian_contact
-         FROM enrollment_applications ea
-         JOIN students s ON s.id = ea.student_id
-         LEFT JOIN student_guardians sg ON sg.student_id = s.id AND sg.is_primary = TRUE
-         LEFT JOIN guardians g ON g.user_id = sg.guardian_id
-         WHERE ea.section_id = $1 AND ea.status = 'approved'
-         ORDER BY s.last_name, s.first_name`,
-        [sectionId, process.env.ENCRYPTION_KEY]
-      );
-      const sectionRow = entries.find((e) => e.section_id === sectionId);
+    const seen = new Set();
+    for (const e of entries) {
+      if (!e.section_id || seen.has(e.section_id)) continue;
+      seen.add(e.section_id);
+      const adviserOf = entries.some((x) => x.section_id === e.section_id && x.role_type === 'adviser');
       attachments.push({
-        filename: `MasterList_Section_${sectionId}.pdf`,
+        filename: `MasterList_${e.grade_level_name}_${e.section_name}.pdf`.replace(/\s+/g, '_'),
         content: await masterListPdf({
-          sectionName: sectionRow?.section_name || `Section ${sectionId}`,
-          gradeLevelName: sectionRow?.grade_level_name || '',
+          sectionName: e.section_name, gradeLevelName: e.grade_level_name,
           schoolYearLabel: activeYear.label,
-          students: rosterResult.rows,
+          students: await masterListMail.sectionRoster(pool, e.section_id),
+          adviserName: adviserOf ? teacherName : undefined,
         }),
       });
     }
 
+    const mail = renderEmail({
+      preheader: 'Your class master lists and weekly schedule.',
+      heading: 'Your master lists and weekly schedule',
+      greeting: `Good day, ${teacherName},`,
+      paragraphs: [
+        `Attached are the master list for each section you handle and your weekly schedule for School Year ${activeYear.label}.`,
+      ],
+      notice: 'The master lists contain learner and contact details. Please keep them confidential.',
+    });
     await sendPdfsEmail({
       to: teacher.email,
-      subject: `SecureEnroll \u2014 Your master list and schedule`,
-      text: `Attached: the master list for each section you handle, and your weekly schedule.`,
-      attachments,
+      subject: 'Caloocan City Elementary School: Your class master lists and weekly schedule',
+      text: mail.text, html: mail.html, attachments,
     });
 
     await logAudit(req.user.id, 'TEACHER_PDF_SENT', 'teacher', Number(req.params.id), req);

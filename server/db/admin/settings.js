@@ -1,16 +1,22 @@
 const pool = require('../pool');
+const { gradeSeats, enrollmentIsFull } = require('../../lib/seats');
 
 async function getActiveSchoolYear() {
   const result = await pool.query(
     `SELECT id, label, opens_at, closes_at, is_active, enrollment_open
      FROM school_years WHERE is_active = TRUE LIMIT 1`
   );
-  return result.rows[0] || null;
+  const year = result.rows[0] || null;
+  // Enrollment closes by itself once every slot of every grade level is filled.
+  if (year) year.slots_full = await enrollmentIsFull(pool, year.id);
+  return year;
 }
 
 async function updateEnrollmentPeriod(schoolYearId, { enrollmentOpen, opensAt, closesAt }) {
   const result = await pool.query(
-    `UPDATE school_years SET enrollment_open = $2, opens_at = $3, closes_at = $4
+    `UPDATE school_years SET enrollment_open = $2,
+         opens_at = ($3::date)::timestamp AT TIME ZONE 'Asia/Manila',
+         closes_at = ($4::date)::timestamp AT TIME ZONE 'Asia/Manila'
      WHERE id = $1 RETURNING id, label, opens_at, closes_at, enrollment_open`,
     [schoolYearId, enrollmentOpen, opensAt, closesAt]
   );
@@ -26,18 +32,13 @@ async function updateEnrollmentPeriod(schoolYearId, { enrollmentOpen, opensAt, c
  * how many of those seats are already spoken for.
  */
 async function getGradeLevelSlotSummary(schoolYearId) {
-  const result = await pool.query(
-    `SELECT gl.id, gl.name, gl.sort_order,
-            COALESCE(SUM(sec.capacity), 0)::int AS total_slots,
-            COUNT(DISTINCT ea.id) FILTER (WHERE ea.status IN ('submitted','under_review','approved'))::int AS enrolled_count
-     FROM grade_levels gl
-     LEFT JOIN sections sec ON sec.grade_level_id = gl.id AND sec.school_year_id = $1
-     LEFT JOIN enrollment_applications ea ON ea.grade_level_id = gl.id AND ea.school_year_id = $1
-     GROUP BY gl.id, gl.name, gl.sort_order
-     ORDER BY gl.sort_order`,
-    [schoolYearId]
-  );
-  return result.rows;
+  // The same seat rule as every other page (lib/seats.js).
+  const seats = await gradeSeats(pool, schoolYearId);
+  return seats.map((g) => ({
+    id: g.id, name: g.name, sort_order: g.sortOrder,
+    total_slots: g.capacity, enrolled_count: g.taken, slots_left: g.left,
+    section_count: g.sectionCount, waiting: g.waiting,
+  }));
 }
 
 async function getRequiredDocuments() {

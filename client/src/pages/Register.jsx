@@ -4,7 +4,7 @@ import api from '../api/client';
 import { Brand } from '../components/AppNav';
 import PasswordInput from '../components/PasswordInput';
 import {
-  validateName, validateEmail, validateContactNumber, validatePassword, validateConfirmPassword,
+  validateName, validateInitial, validateEmail, validateContactNumber, validatePassword, validateConfirmPassword, sanitizePhone, INITIAL_MAX,
 } from '../utils/validators';
 import VerifyEmailOverlay from '../components/VerifyEmailOverlay';
 import { useScrollToError } from '../hooks/useScrollToError';
@@ -15,7 +15,7 @@ function validateField(name, form) {
   switch (name) {
     case 'lastName': return validateName(form.lastName, { label: 'Last name' });
     case 'firstName': return validateName(form.firstName, { label: 'First name' });
-    case 'middleName': return validateName(form.middleName, { required: false, label: 'M.I.' });
+    case 'middleName': return validateInitial(form.middleName);
     case 'email': return validateEmail(form.email);
     case 'contactNumber': return validateContactNumber(form.contactNumber);
     case 'password': return validatePassword(form.password);
@@ -43,7 +43,8 @@ export default function Register() {
   const [pending, setPending] = useState(null);
 
   const update = (field) => (e) => {
-    const next = { ...form, [field]: e.target.value };
+    const raw = field === 'contactNumber' ? sanitizePhone(e.target.value) : e.target.value;
+    const next = { ...form, [field]: raw };
     setForm(next);
     // Once a field has been flagged, re-validate live as the user retypes it
     // instead of waiting for the next blur, so the message clears promptly.
@@ -114,7 +115,7 @@ export default function Register() {
           email: form.email.trim(),
         });
       } else {
-        navigate('/', { state: { registered: true } });
+        navigate('/login', { state: { registered: true } });
       }
     } catch (err) {
       setFormError(err.response?.data?.message || 'Registration failed. Please try again.');
@@ -127,7 +128,7 @@ export default function Register() {
     <div className="auth-wrap">
       <aside className="auth-panel">
         <div>
-          <Brand />
+          <Brand to="/" />
           <h2>Create your Parent Account</h2>
           <p>One account lets you enroll each of your children and track every application.</p>
         </div>
@@ -161,10 +162,10 @@ export default function Register() {
                 {errors.firstName && <p className="field-error">{errors.firstName}</p>}
               </div>
               <div>
-                <label className="label" htmlFor="middleName">M.I</label>
+                <label className="label" htmlFor="middleName">M.I. <span className="muted">(optional)</span></label>
                 <input id="middleName" className={`input${errors.middleName ? ' input-error' : ''}`}
                   value={form.middleName} onChange={update('middleName')} onBlur={handleBlur('middleName')}
-                  autoComplete="additional-name" maxLength={5} />
+                  autoComplete="additional-name" maxLength={INITIAL_MAX} />
                 {errors.middleName && <p className="field-error">{errors.middleName}</p>}
               </div>
             </div>
@@ -183,8 +184,9 @@ export default function Register() {
             <label className="label" htmlFor="contactNumber">Contact/Phone Number</label>
             <input id="contactNumber" className={`input${errors.contactNumber ? ' input-error' : ''}`}
               value={form.contactNumber} onChange={update('contactNumber')} onBlur={handleBlur('contactNumber')}
-              placeholder="09171234567" autoComplete="tel" inputMode="numeric" maxLength={11} required />
-            {errors.contactNumber && <p className="field-error">{errors.contactNumber}</p>}
+              placeholder="09171234567" autoComplete="tel" inputMode="tel" maxLength={13} required />
+            {errors.contactNumber ? <p className="field-error">{errors.contactNumber}</p>
+              : <p className="hint">Use 09XXXXXXXXX (11 digits) or +63XXXXXXXXXX (13 characters).</p>}
           </div>
 
           <div className="field-grid cols-2">
@@ -224,7 +226,7 @@ export default function Register() {
           <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>
             {submitting ? 'Creating account\u2026' : 'Create Account'}
           </button>
-          <p className="auth-alt">Already registered? <Link to="/">Sign in</Link></p>
+          <p className="auth-alt">Already registered? <Link to="/login">Sign in</Link></p>
         </form>
       </main>
 
@@ -235,8 +237,8 @@ export default function Register() {
           emailSent={pending.emailSent}
           retryAfter={pending.retryAfter}
           variant="register"
-          onVerified={() => navigate('/', { state: { verified: true } })}
-          onClose={() => navigate('/', { state: { registered: true } })}
+          onVerified={() => navigate('/login', { state: { verified: true } })}
+          onClose={() => navigate('/login', { state: { registered: true } })}
         />
       )}
     </div>

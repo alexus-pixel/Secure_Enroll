@@ -30,6 +30,8 @@ router.get('/applications/:id/documents/:docType/file', requirePermission(CAN_RE
 router.patch('/applications/:id/documents/:docType', requirePermission(CAN_REVIEW), wrap(c.setDocumentStatus));
 router.patch('/applications/:id/qualification', requirePermission(CAN_REVIEW), wrap(c.setQualification));
 router.post('/applications/:id/decision', requirePermission(CAN_REVIEW), wrap(c.decide));
+router.get('/applications/:id/sections', requirePermission(CAN_REVIEW), wrap(c.sectionOptions));
+router.post('/applications/:id/section', requirePermission(CAN_REVIEW), wrap(c.assignSection));
 
 // ---------- Walk-in ----------
 router.get('/walk-in-enrollment/required-documents', requirePermission(CAN_WALK_IN), wrap(walkIn.requiredDocuments));

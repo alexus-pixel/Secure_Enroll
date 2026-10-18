@@ -5,11 +5,15 @@ const {
   linkStudentGuardian, createApplication, getMyApplications, getApplicationForGuardian, getActiveSchoolYear,
 } = require('../db/applications');
 const { getDocumentsForApplication } = require('../db/documents');
+const { getRequiredDocumentTypes } = require('../lib/documentTypes');
 const {
   isValidName, isValidContactNumber, isValidLrn, isValidSex, isValidRelationship, isValidText,
-  birthDateIssue, toId, ADDRESS_MAX,
+  birthDateIssue, toId, ADDRESS_MAX, CONTACT_MESSAGE,
 } = require('../utils/validators');
 const { sendDbError } = require('../utils/dbErrors');
+const { getActiveSchoolYear: getFullActiveYear } = require('../db/admin/settings');
+const { computeEnrollment, closedMessage } = require('../utils/enrollmentStatus');
+const { gradeHasRoom, fullMessage } = require('../lib/seats');
 
 // Returns the first problem with a new-application request, or '' when it is fine.
 function applicationProblem(b) {
@@ -26,7 +30,7 @@ function applicationProblem(b) {
   if (!isValidName(b.guardianMiddleName, { required: false })) return "The guardian's middle name should contain letters only (up to 60 characters).";
   if (!isValidName(b.guardianLastName)) return "Enter the guardian's last name (letters only, up to 60 characters).";
   if (!isValidRelationship(b.relationship)) return 'Choose the guardian\u2019s relationship to the student.';
-  if (!isValidContactNumber(b.contactNumber)) return 'Contact number must be an 11-digit mobile number (e.g. 09171234567).';
+  if (!isValidContactNumber(b.contactNumber)) return CONTACT_MESSAGE;
   if (!isValidText(b.address, { max: ADDRESS_MAX })) return `Enter the home address (up to ${ADDRESS_MAX} characters, no < or > symbols).`;
   if (!isValidText(b.validIdType, { required: false, max: 40 })) return 'The valid ID type is not valid.';
   return '';
@@ -64,7 +68,7 @@ async function submit(req, res) {
     // they started, so it's required rather than optional at that point.
     // Keyed off sort_order from the DB, not a hardcoded grade id, since
     // ids can drift from whatever a fresh seed happens to assign.
-    const gradeResult = await pool.query('SELECT sort_order FROM grade_levels WHERE id = $1', [gradeId]);
+    const gradeResult = await pool.query('SELECT sort_order, name FROM grade_levels WHERE id = $1', [gradeId]);
     const gradeRow = gradeResult.rows[0];
     if (!gradeRow) {
       return res.status(400).json({ message: 'Unrecognized grade level.' });
@@ -79,6 +83,10 @@ async function submit(req, res) {
     const schoolYear = await getActiveSchoolYear();
     if (!schoolYear) {
       return res.status(503).json({ message: 'Enrollment is not currently open for any school year.' });
+    }
+    const period = computeEnrollment(await getFullActiveYear());
+    if (period.state !== 'open') {
+      return res.status(403).json({ message: closedMessage(period), enrollmentState: period.state });
     }
 
     // The same parent should not send the same child twice in one school year
@@ -112,6 +120,12 @@ async function submit(req, res) {
     const application = await createApplication(client, {
       studentId, schoolYearId: schoolYear.id, gradeLevelId: gradeId, submittedBy: req.user.id,
     });
+    // A seat in the grade is held from now on (the section itself is chosen by the
+    // registrar after approval). When every slot of this grade is taken, nothing is saved.
+    if (!(await gradeHasRoom(client, schoolYear.id, gradeId, application.id))) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: fullMessage(gradeRow.name), reason: 'no_slots' });
+    }
     await client.query('COMMIT');
 
     await logAudit(req.user.id, 'APPLICATION_SUBMITTED', 'enrollment_application', application.id, req);
@@ -171,10 +185,30 @@ async function promote(req, res) {
     if (!schoolYear) {
       return res.status(503).json({ message: 'Enrollment is not currently open for any school year.' });
     }
+    const period = computeEnrollment(await getFullActiveYear());
+    if (period.state !== 'open') {
+      return res.status(403).json({ message: closedMessage(period), enrollmentState: period.state });
+    }
 
-    const application = await createApplication(pool, {
-      studentId, schoolYearId: schoolYear.id, gradeLevelId: gradeId, submittedBy: req.user.id,
-    });
+    const client = await pool.connect();
+    let application;
+    try {
+      await client.query('BEGIN');
+      application = await createApplication(client, {
+        studentId, schoolYearId: schoolYear.id, gradeLevelId: gradeId, submittedBy: req.user.id,
+      });
+      if (!(await gradeHasRoom(client, schoolYear.id, gradeId, application.id))) {
+        await client.query('ROLLBACK');
+        const { rows: [g] } = await pool.query('SELECT name FROM grade_levels WHERE id = $1', [gradeId]);
+        return res.status(409).json({ message: fullMessage(g.name), reason: 'no_slots' });
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
     await logAudit(req.user.id, 'APPLICATION_SUBMITTED', 'enrollment_application', application.id, req);
     res.status(201).json(application);
@@ -202,7 +236,9 @@ async function detail(req, res) {
     const application = await getApplicationForGuardian(req.params.id, req.user.id);
     if (!application) return res.status(404).json({ message: 'Application not found.' });
     const documents = await getDocumentsForApplication(req.params.id);
-    res.json({ ...application, documents });
+    // Only the documents the administrator checked in Settings are requested.
+    const documentTypes = (await getRequiredDocumentTypes()).map((t) => ({ code: t.code, label: t.label, required: true }));
+    res.json({ ...application, documents, documentTypes });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Could not load application.' });

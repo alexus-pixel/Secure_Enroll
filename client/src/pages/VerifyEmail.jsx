@@ -28,7 +28,7 @@ export default function VerifyEmail() {
     <div className="auth-wrap">
       <aside className="auth-panel">
         <div>
-          <Brand />
+          <Brand to="/" />
           <h2>Verify your email</h2>
           <p>Confirming your email address keeps each enrollment application linked to a real, reachable parent or guardian.</p>
         </div>
@@ -51,10 +51,10 @@ export default function VerifyEmail() {
               <h1>Email verified</h1>
               <div className="alert alert-note">{message}</div>
               <Link className="btn btn-primary" style={{ width: '100%', textAlign: 'center', display: 'block' }}
-                to="/" state={{ verified: true }}>
+                to="/login" state={{ verified: true }}>
                 Go to sign in
               </Link>
-              <VerifiedDialog onContinue={() => navigate('/', { state: { verified: true } })} />
+              <VerifiedDialog onContinue={() => navigate('/login', { state: { verified: true } })} />
             </>
           )}
           {status === 'error' && (
@@ -62,7 +62,7 @@ export default function VerifyEmail() {
               <h1>This link did not work</h1>
               <div className="alert alert-error">{message}</div>
               <p className="auth-alt">
-                Please <Link to="/">sign in</Link> to receive a new verification email.
+                Please <Link to="/login">sign in</Link> to receive a new verification email.
               </p>
             </>
           )}

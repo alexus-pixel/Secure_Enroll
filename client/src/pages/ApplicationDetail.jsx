@@ -12,11 +12,12 @@ const DOC_STATUS_TEXT = {
   rejected: 'Rejected',
 };
 
-const DOC_TYPES = {
-  birth_certificate: 'Birth Certificate',
-  form_138: 'Form 138 / Report Card',
-  good_moral: 'Certificate of Good Moral Character',
-};
+// Used only if the server does not send the checklist.
+const FALLBACK_TYPES = [
+  { code: 'birth_certificate', label: 'Birth Certificate', required: true },
+  { code: 'form_138', label: 'Form 138 / Report Card', required: true },
+  { code: 'good_moral', label: 'Certificate of Good Moral Character', required: false },
+];
 
 export default function ApplicationDetail() {
   const { id } = useParams();
@@ -79,7 +80,9 @@ export default function ApplicationDetail() {
   if (!app) return <p style={{ padding: 24 }}>Loading...</p>;
 
   const uploaded = Object.fromEntries(app.documents.map((d) => [d.doc_type, d]));
-  const reachedReview = !['draft', 'submitted'].includes(app.status);
+  // Only the documents the administrator checked in Settings are listed.
+  const rows = app.documentTypes || FALLBACK_TYPES;
+  const reachedReview = !['draft', 'submitted', 'resubmitted'].includes(app.status);
   const finished = ['approved', 'rejected'].includes(app.status);
 
     return (
@@ -110,7 +113,7 @@ export default function ApplicationDetail() {
           {app.remarks && <div className="alert alert-note"><b>Registrar remarks:</b> {app.remarks}</div>}
 
           <p className="section-label">Documents</p>
-          {Object.entries(DOC_TYPES).map(([key, label]) => {
+          {rows.map(({ code: key, label }) => {
             const doc = uploaded[key];
             // Gated per document, not per application: a registrar can flag
             // or reject one specific file while the rest of the application
@@ -133,7 +136,7 @@ export default function ApplicationDetail() {
                 )}
                 {needsUpload && (
                   <input className="input doc-upload" type="file" aria-label={`Upload ${label}`}
-                    accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => upload(key, e.target.files[0])} />
+                    onChange={(e) => upload(key, e.target.files[0])} />
                 )}
               </div>
             );

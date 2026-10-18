@@ -7,7 +7,15 @@ const fs = require('fs');
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const ALLOWED = ['application/pdf', 'image/jpeg', 'image/png'];
+// Any file type is accepted EXCEPT audio and video. (The file's real content
+// is checked again after upload, see utils/fileSignature.js.)
+const BLOCKED_EXTENSIONS = new Set([
+  '.mp3', '.wav', '.wma', '.aac', '.flac', '.ogg', '.oga', '.opus', '.m4a', '.m4b', '.mid', '.midi', '.aif', '.aiff', '.amr', '.weba',
+  '.mp4', '.m4v', '.mov', '.avi', '.mkv', '.webm', '.wmv', '.flv', '.f4v', '.mpg', '.mpeg', '.mpe', '.3gp', '.3g2', '.ogv', '.mts', '.m2ts', '.vob',
+]);
+const isAudioOrVideo = (file) =>
+  /^(audio|video)\//i.test(file.mimetype || '') || BLOCKED_EXTENSIONS.has(path.extname(file.originalname || '').toLowerCase());
+const NO_MEDIA_MESSAGE = 'Audio and video files are not accepted. Please upload a document or an image.';
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
@@ -22,9 +30,7 @@ const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (!ALLOWED.includes(file.mimetype)) {
-      return cb(new Error('Only PDF, JPG, and PNG files are allowed.'));
-    }
+    if (isAudioOrVideo(file)) return cb(new Error(NO_MEDIA_MESSAGE));
     cb(null, true);
   },
 });
@@ -48,4 +54,4 @@ function uploadSingle(field) {
   };
 }
 
-module.exports = { upload, uploadSingle, UPLOAD_DIR };
+module.exports = { upload, uploadSingle, UPLOAD_DIR, NO_MEDIA_MESSAGE };

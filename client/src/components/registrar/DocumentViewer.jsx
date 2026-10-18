@@ -76,18 +76,24 @@ export default function DocumentViewer({ title, subtitle, badge, fileUrl, onClos
   const [blob, setBlob] = useState(null);
   const [blobUrl, setBlobUrl] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(fileUrl));
   const [zoom, setZoom] = useState(1);
+  const [imgFailed, setImgFailed] = useState(false);
   const [stage, setStage] = useState({ w: 0, h: 0 });
   const [aspect, setAspect] = useState(null); // image width / height
   const [pdf, setPdf] = useState(null); // { pages }
 
   const isPdf = blob?.type === 'application/pdf';
+  // PDFs and images are shown here. Any other file type (Word, Excel, text, zip ...)
+  // is offered as a download, and a paper copy has no file at all.
+  const isImage = Boolean(blob?.type?.startsWith('image/')) && !imgFailed;
+  const isOther = Boolean(blob) && !isPdf && !isImage;
 
   // ----- load the file -----
   useEffect(() => {
     let url = '';
     let alive = true;
+    if (!fileUrl) return undefined; // paper copy: nothing to download
     api.get(fileUrl, { responseType: 'blob' })
       .then(({ data }) => {
         if (!alive) return;
@@ -239,7 +245,7 @@ export default function DocumentViewer({ title, subtitle, badge, fileUrl, onClos
   // Images: zoom 100% shows the whole picture. PDFs: 100% fits the page width.
   const imgBase = aspect && stage.w ? Math.min(stage.w, stage.h * aspect) : 0;
   const pdfBase = Math.max(0, stage.w - PAGE_PAD * 2);
-  const ready = !loading && !error && (isPdf ? Boolean(pdf) : Boolean(blobUrl));
+  const ready = !loading && !error && (isPdf ? Boolean(pdf) : isImage && Boolean(blobUrl));
 
   return (
     <div className="dv-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -290,8 +296,24 @@ export default function DocumentViewer({ title, subtitle, badge, fileUrl, onClos
         >
           {loading && <div className="dv-state">Loading document&hellip;</div>}
           {!loading && error && <div className="dv-state dv-state-error" role="alert">{error}</div>}
-          {!loading && !error && !isPdf && blobUrl && (
-            <img
+          {!fileUrl && (
+            <div className="dv-state">
+              This is a paper copy handed in at the front desk, so there is no file to open.
+              Check the paper document, then record your decision below.
+            </div>
+          )}
+          {!loading && !error && isOther && (
+            <div className="dv-state">
+              <div>
+                A preview is not available for this type of file.
+                <div style={{ marginTop: 14 }}>
+                  <a className="reg-btn reg-btn-blue" href={blobUrl} download={title}>Download to open it</a>
+                </div>
+              </div>
+            </div>
+          )}
+          {!loading && !error && isImage && blobUrl && (
+            <img onError={() => setImgFailed(true)}
               className="dv-img"
               src={blobUrl}
               alt={title}

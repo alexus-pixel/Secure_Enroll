@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import VerifyEmail from './pages/VerifyEmail';
@@ -39,7 +40,8 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Login />} />
+          <Route path="/" element={<Landing />} />
+          <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -79,6 +81,7 @@ function App() {
             <Route path="school-settings" element={<SchoolSettingsPage />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="walk-in-enrollment" element={<WalkInEnrollmentPage />} />
+            <Route path="applications/:id" element={<RegistrarApplicationView />} />
           </Route>
         </Routes>
       </BrowserRouter>

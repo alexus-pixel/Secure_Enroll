@@ -2,6 +2,7 @@ const schoolDb = require('../../db/admin/schoolSettings');
 const { sendDbError } = require('../../utils/dbErrors');
 const settingsDb = require('../../db/admin/settings');
 const { logAudit } = require('../../lib/audit');
+const pool = require('../../db/pool');
 
 async function overview(req, res) {
   try {

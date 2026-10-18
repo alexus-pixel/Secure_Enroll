@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import AppNav from '../components/AppNav';
 import api from '../api/client';
+import useEnrollment from '../hooks/useEnrollment';
 
 const STATUS_LABELS = {
-  draft: 'Draft', submitted: 'Submitted', under_review: 'Under Review',
+  draft: 'Draft', submitted: 'Submitted', under_review: 'Under Review', resubmitted: 'Resubmitted',
   needs_revision: 'Needs Revision', approved: 'Approved', rejected: 'Rejected',
 };
 
@@ -18,6 +19,7 @@ function LockIcon() {
 }
 
 export default function Schedule() {
+  const { year } = useEnrollment();
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
@@ -38,7 +40,7 @@ export default function Schedule() {
         <div className="page-head">
           <div>
             <h1>My Children&rsquo;s Schedule</h1>
-            <p>School Year 2026&ndash;2027 &middot; available once an enrollment is approved</p>
+            <p>{year ? `School Year ${year} \u00b7 ` : ''}available once an enrollment is approved</p>
           </div>
         </div>
 

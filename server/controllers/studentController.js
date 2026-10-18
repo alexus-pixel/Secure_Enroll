@@ -2,7 +2,7 @@ const {
   findReturningStudentForGuardian, getDocumentsOnFileForStudent, guardianOwnsStudent, addLrnIfMissing,
 } = require('../db/students');
 
-const DOC_TYPES = ['birth_certificate', 'form_138', 'good_moral'];
+const { getRequiredDocumentTypes } = require('../lib/documentTypes');
 
 async function lookup(req, res) {
   try {
@@ -28,6 +28,7 @@ async function lookup(req, res) {
     }
 
     const onFile = await getDocumentsOnFileForStudent(student.id);
+    const types = await getRequiredDocumentTypes();   // only what the administrator checked
     res.json({
       found: true,
       promotable: true,
@@ -42,7 +43,8 @@ async function lookup(req, res) {
       nextGradeLevelId: student.next_grade_level_id,
       nextGradeLevelName: student.next_grade_level_name,
       documentsOnFile: onFile,
-      documentsNeeded: DOC_TYPES.filter((t) => !onFile.includes(t)),
+      documentsNeeded: types.map((t) => t.code).filter((t) => !onFile.includes(t)),
+      documentTypes: types.map((t) => ({ code: t.code, label: t.label, required: true })),
     });
   } catch (err) {
     console.error(err);

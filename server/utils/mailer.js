@@ -1,12 +1,14 @@
 const nodemailer = require('nodemailer');
+const { renderEmail, SCHOOL } = require('./emailTemplate');
 
-const FROM = process.env.SMTP_FROM || 'SecureEnroll <no-reply@secureenroll.local>';
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const CLIENT_URL = () => process.env.CLIENT_URL || 'http://localhost:5173';
 
-// Built once, on first use. If SMTP_HOST isn't set, sendMail falls back to
-// printing the message instead of sending it -- so registration and
-// password reset work out of the box for local development and grading,
-// without anyone first having to go set up a real mail account.
+// Which service sends what:
+//   * Brevo (BREVO_API_KEY)  -> ONLY the account verification link.
+//   * SMTP  (SMTP_* values)  -> everything else: password reset, LRN notices
+//                               and the teacher PDFs (see lib/mailer.js).
+// If a service is not configured, the email is printed in the server console
+// instead, so local development works without any mail account.
 let transporter = null;
 function getTransporter() {
   if (transporter) return transporter;
@@ -22,11 +24,11 @@ function getTransporter() {
   return transporter;
 }
 
-// Brevo transactional email API. Used when BREVO_API_KEY is set; otherwise
-// sendMail falls back to SMTP, or to printing the email in dev.
+// Brevo transactional email API. Used ONLY by sendVerificationMail below.
 async function sendViaBrevo({ to, subject, text, html }) {
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
+    signal: AbortSignal.timeout(20000),
     headers: {
       'api-key': process.env.BREVO_API_KEY,
       'content-type': 'application/json',
@@ -34,55 +36,78 @@ async function sendViaBrevo({ to, subject, text, html }) {
     },
     body: JSON.stringify({
       sender: {
-        name: process.env.BREVO_SENDER_NAME || 'SecureEnroll',
+        name: process.env.BREVO_SENDER_NAME || SCHOOL,
         email: process.env.BREVO_SENDER_EMAIL,
       },
       to: [{ email: to }],
       subject,
-      htmlContent: html || `<p>${text}</p>`,
+      htmlContent: html,
       textContent: text,
     }),
   });
   if (!res.ok) throw new Error(`Brevo ${res.status}: ${await res.text()}`);
 }
 
-async function sendMail({ to, subject, text, html }) {
-  if (process.env.BREVO_API_KEY) return sendViaBrevo({ to, subject, text, html });
-  const t = getTransporter();
-  if (!t) {
-    console.log('\n----- DEV EMAIL (SMTP not configured, printing instead of sending) -----');
-    console.log('To:', to);
-    console.log('Subject:', subject);
-    console.log(text);
-    console.log('---------------------------------------------------------------------\n');
-    return;
-  }
-  await t.sendMail({ from: FROM, to, subject, text, html });
+function printDevEmail({ to, subject, text }, why) {
+  console.log(`\n----- DEV EMAIL (${why}, printing instead of sending) -----`);
+  console.log('To:', to);
+  console.log('Subject:', subject);
+  console.log(text);
+  console.log('---------------------------------------------------------------------\n');
 }
 
-function verificationEmail(token) {
-  const link = `${CLIENT_URL}/verify-email?token=${token}`;
-  return {
-    subject: 'Verify your SecureEnroll account',
-    text: `Welcome to SecureEnroll!\n\nPlease confirm your email address by opening the link below:\n\n${link}\n\n`
-      + `This link expires in 24 hours. If you did not create this account, you can safely ignore this email.`,
-    html: `<p>Welcome to SecureEnroll!</p>`
-      + `<p>Please confirm your email address by clicking the link below:</p>`
-      + `<p><a href="${link}">${link}</a></p>`
-      + `<p>This link expires in 24 hours. If you did not create this account, you can safely ignore this email.</p>`,
-  };
+// SMTP only. Never uses Brevo.
+async function sendMail({ to, subject, text, html, attachments }) {
+  const t = getTransporter();
+  if (!t) return printDevEmail({ to, subject, text }, 'SMTP not configured');
+  const from = process.env.SMTP_FROM || `${SCHOOL} <${process.env.SMTP_USER || 'no-reply@secureenroll.local'}>`;
+  await t.sendMail({ from, to, subject, text, html, attachments });
+}
+
+// The account verification link: Brevo when it is set up, otherwise SMTP.
+async function sendVerificationMail({ to, subject, text, html }) {
+  if (!process.env.BREVO_API_KEY) return sendMail({ to, subject, text, html });
+  if (!process.env.BREVO_SENDER_EMAIL) {
+    throw new Error('BREVO_SENDER_EMAIL is not set. Use a sender that is verified in Brevo.');
+  }
+  return sendViaBrevo({ to, subject, text, html });
+}
+
+function verificationEmail(token, firstName) {
+  const link = `${CLIENT_URL()}/verify-email?token=${encodeURIComponent(token)}`;
+  const { html, text } = renderEmail({
+    preheader: 'Confirm your email address to finish creating your parent account.',
+    heading: 'Confirm your email address',
+    greeting: firstName ? `Hello ${firstName},` : 'Hello,',
+    paragraphs: [
+      `Thank you for creating a parent account on the online enrollment system of ${SCHOOL}.`,
+      'Please confirm that this email address is yours so we can finish setting up your account.',
+    ],
+    button: { label: 'Verify my email address', url: link },
+    steps: [
+      'Open the link above to confirm your email address.',
+      'Sign in with your email address and the password you chose.',
+      "Submit your child's enrollment application and upload the required documents.",
+    ],
+    notice: 'This link expires in 24 hours. If you did not create an account, you can ignore this email and no further action is needed.',
+  });
+  return { subject: `Confirm your email - ${SCHOOL} enrollment account`, text, html };
 }
 
 function passwordResetEmail(token) {
-  const link = `${CLIENT_URL}/reset-password?token=${token}`;
-  return {
-    subject: 'Reset your SecureEnroll password',
-    text: `We received a request to reset your SecureEnroll password. Open the link below to choose a new one:\n\n${link}\n\n`
-      + `This link expires in 1 hour. If you did not request this, you can ignore this email and your password will stay the same.`,
-    html: `<p>We received a request to reset your SecureEnroll password. Click the link below to choose a new one:</p>`
-      + `<p><a href="${link}">${link}</a></p>`
-      + `<p>This link expires in 1 hour. If you did not request this, you can ignore this email and your password will stay the same.</p>`,
-  };
+  const link = `${CLIENT_URL()}/reset-password?token=${encodeURIComponent(token)}`;
+  const { html, text } = renderEmail({
+    preheader: 'Choose a new password for your enrollment account.',
+    heading: 'Reset your password',
+    greeting: 'Hello,',
+    paragraphs: [
+      `We received a request to reset the password of your ${SCHOOL} enrollment account.`,
+      'Use the button below to choose a new password.',
+    ],
+    button: { label: 'Choose a new password', url: link },
+    notice: 'This link expires in 1 hour. If you did not ask for this, ignore this email and your password will stay the same.',
+  });
+  return { subject: `Reset your password - ${SCHOOL} enrollment account`, text, html };
 }
 
-module.exports = { sendMail, verificationEmail, passwordResetEmail };
+module.exports = { sendMail, sendVerificationMail, verificationEmail, passwordResetEmail };

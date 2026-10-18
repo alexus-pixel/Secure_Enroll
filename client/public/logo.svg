@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 72" width="64" height="72" role="img" aria-label="SecureEnroll">
+  <title>SecureEnroll</title>
+  <path d="M32 2.5 58.5 11.5v22.8c0 16-11.6 28.2-26.5 36.2C17.1 62.5 5.5 50.3 5.5 34.3V11.5L32 2.5Z" fill="#FFFFFF" stroke="#163B7C" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M32 9.2 52.2 16v18.2c0 12.6-8.8 22.5-20.2 29-11.4-6.5-20.2-16.4-20.2-29V16L32 9.2Z" fill="#E4ECF9"/>
+  <g stroke="#E0A526" stroke-width="2.2" stroke-linecap="round">
+    <path d="M32 12.4v3.6M22.6 17l2.5 2.5M41.4 17l-2.5 2.5M17.4 25.4h3.4M43.2 25.4h3.4"/>
+  </g>
+  <path d="M24.2 30a7.8 7.8 0 0 1 15.6 0Z" fill="#F2B33D"/>
+  <path d="M32 55.5C27 50.6 19.5 49.4 14 50.4V36.6c5.5-1 13 .2 18 5v13.9Z" fill="#1E4FA3"/>
+  <path d="M32 55.5c5-4.9 12.5-6.1 18-5.1V36.6c-5.5-1-13 .2-18 5v13.9Z" fill="#163B7C"/>
+  <path d="M32 41.6v14" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M18 41.4c3.2-.3 7 .4 10 2.2M18 45.6c3.2-.3 7 .4 10 2.2M46 41.4c-3.2-.3-7 .4-10 2.2M46 45.6c-3.2-.3-7 .4-10 2.2" stroke="#9DB6E0" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+</svg>

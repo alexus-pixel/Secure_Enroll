@@ -1,6 +1,7 @@
 const LABELS = {
   submitted: 'Submitted',
   under_review: 'Under Review',
+  resubmitted: 'Resubmitted',
   needs_revision: 'Needs Revision',
   approved: 'Approved',
   rejected: 'Rejected',

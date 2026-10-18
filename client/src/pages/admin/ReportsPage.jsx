@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import MasterListEmailsPanel from './MasterListEmailsPanel';
 import {
   downloadMasterEnrollmentList, downloadApplicationStatusReport, downloadPendingApplications,
   downloadRegistrarActivityReport, downloadDuplicateFlagsReport, downloadGradeLevelCapacityReport,
@@ -114,6 +115,8 @@ export default function ReportsPage() {
           onExport={(dates) => downloadGradeLevelCapacityReport(dates)}
         />
       </div>
+
+      <MasterListEmailsPanel />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 const pool = require('../pool');
 const { getActiveSchoolYear } = require('./settings');
+const { canonicalPhone } = require('../../utils/validators');
 
 const SCHOOL_DAYS_PER_WEEK = 5;
 
@@ -93,7 +94,7 @@ async function findDuplicateTeacher({ firstName, lastName, contactNumber, prcLic
     if (`${norm(row.first_name)} ${norm(row.last_name)}` === targetName) {
       return { field: 'name', existing: row };
     }
-    if (contactNumber && row.contact_number === contactNumber) {
+    if (contactNumber && canonicalPhone(row.contact_number) === canonicalPhone(contactNumber)) {
       return { field: 'contactNumber', existing: row };
     }
     // prc_license_number isn't encrypted (it's not the kind of PII
@@ -215,7 +216,7 @@ async function updateTeacher(db, id, fields) {
 
 async function getTeacherWeeklySchedule(teacherId, schoolYearId) {
   const result = await pool.query(
-    `SELECT se.id, se.session, se.days, se.start_time, se.end_time, se.room, se.role_type,
+    `SELECT se.id, se.section_id, se.session, se.days, se.start_time, se.end_time, se.room, se.role_type,
             sub.name AS subject_name, sec.name AS section_name, gl.name AS grade_level_name
      FROM schedule_entries se
      JOIN sections sec ON sec.id = se.section_id

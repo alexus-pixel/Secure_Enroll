@@ -18,7 +18,8 @@ const studentRoutes = require('./routes/studentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const pool = require('./db/pool');
 const { securityHeaders, corsConfig } = require('./middleware/security');
-const { adminApiLimiter } = require('./middleware/rateLimit');
+const publicRoutes = require('./routes/publicRoutes');
+const { adminApiLimiter, publicApiLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 
@@ -43,6 +44,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+app.use('/api/public', publicApiLimiter, publicRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/registrar', registrarRoutes);
@@ -57,4 +59,11 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => console.log(`SecureEnroll API running on port ${PORT}`));
+// Bring an older database up to date (idempotent), then start listening.
+require('./db/ensureSchema').ensureSchema()
+  .catch((err) => console.error('[schema]', err.message))
+  .finally(() => {
+    app.listen(PORT, () => console.log(`SecureEnroll API running on port ${PORT}`));
+    // Emails each section's master list to its adviser once enrollment closes.
+    if (process.env.DISABLE_MAIL_SCHEDULER !== '1') require('./lib/masterListMail').startScheduler();
+  });

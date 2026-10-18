@@ -36,7 +36,7 @@ export default function ForgotPassword() {
     <div className="auth-wrap">
       <aside className="auth-panel">
         <div>
-          <Brand />
+          <Brand to="/" />
           <h2>Reset your password</h2>
           <p>We will email you a link to choose a new password.</p>
         </div>
@@ -54,7 +54,7 @@ export default function ForgotPassword() {
               <div className="alert alert-note">
                 If an account exists for that email address, we have sent a reset link. The link expires in 1 hour.
               </div>
-              <p className="auth-alt"><Link to="/">Back to sign in</Link></p>
+              <p className="auth-alt"><Link to="/login">Back to sign in</Link></p>
             </>
           ) : (
             <form onSubmit={handleSubmit} noValidate>
@@ -71,7 +71,7 @@ export default function ForgotPassword() {
               <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>
                 {submitting ? 'Sending\u2026' : 'Send reset link'}
               </button>
-              <p className="auth-alt"><Link to="/">Back to sign in</Link></p>
+              <p className="auth-alt"><Link to="/login">Back to sign in</Link></p>
             </form>
           )}
         </div>

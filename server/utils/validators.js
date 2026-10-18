@@ -8,7 +8,7 @@
 // instead of crashing the handler with a 500.
 
 const NAME_MAX = 60;           // matches VARCHAR(60) in the database
-const INITIAL_MAX = 5;         // "M." / "Q.R."
+const INITIAL_MAX = 2;         // middle initial: "M" or "M."
 const EMAIL_MAX = 254;
 const PASSWORD_MAX_BYTES = 72; // bcrypt silently ignores everything after 72 bytes
 const ADDRESS_MAX = 255;
@@ -20,7 +20,9 @@ const REMARK_MAX = 1000;
 // "-" or "'" alone are not names. Digits, < > and other symbols are refused.
 const NAME_RE = /^[\p{L}\p{M}][\p{L}\p{M} .'’-]*$/u;
 const EMAIL_RE = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
-const PH_MOBILE_RE = /^09\d{9}$/; // 11 digits, Philippine mobile format: 09XXXXXXXXX
+// Two accepted formats: 09XXXXXXXXX (11 digits) or +63XXXXXXXXXX (13 characters, "+" then digits only).
+const PH_MOBILE_RE = /^(09\d{9}|\+63\d{10})$/;
+const CONTACT_MESSAGE = 'Contact number must be 11 digits starting with 09 (e.g. 09171234567) or 13 characters starting with +63 (e.g. +639171234567).';
 const LRN_RE = /^\d{12}$/;
 // Free text such as an address: no angle brackets and no control characters.
 const SAFE_TEXT_RE = /^[^<>\u0000-\u001F\u007F]+$/u;
@@ -48,6 +50,12 @@ function isValidName(value, { required = true, max = NAME_MAX } = {}) {
 
 function isValidContactNumber(value) {
   return isString(value) && PH_MOBILE_RE.test(value.trim());
+}
+
+// +639171234567 and 09171234567 are the same phone: compare people by this form.
+function canonicalPhone(value) {
+  const v = String(value || '').trim();
+  return v.startsWith('+63') ? `0${v.slice(3)}` : v;
 }
 
 function isValidLrn(value) {
@@ -115,5 +123,5 @@ module.exports = {
   NAME_MAX, INITIAL_MAX, EMAIL_MAX, PASSWORD_MAX_BYTES, ADDRESS_MAX, NOTE_MAX, REMARK_MAX,
   NAME_RE, SAFE_TEXT_RE, SEXES, RELATIONSHIPS,
   isValidEmail, isValidName, isValidContactNumber, isValidLrn, isValidSex, isValidRelationship,
-  isValidText, passwordIssues, birthDateIssue, toId,
+  isValidText, passwordIssues, birthDateIssue, toId, canonicalPhone, CONTACT_MESSAGE,
 };

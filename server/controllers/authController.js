@@ -5,14 +5,16 @@ const {
 } = require('../db/users');
 const { createGuardianProfile, getGuardianProfile, updateGuardianProfile } = require('../db/guardians');
 const {
-  isValidEmail, isValidName, isValidContactNumber, passwordIssues, PASSWORD_MAX_BYTES, INITIAL_MAX,
+  isValidEmail, isValidName, isValidContactNumber, passwordIssues, PASSWORD_MAX_BYTES, INITIAL_MAX, CONTACT_MESSAGE,
 } = require('../utils/validators');
 const { sendDbError } = require('../utils/dbErrors');
 
 const isText = (v) => typeof v === 'string';
 const { checkEmailDomain } = require('../utils/emailDomain');
 const { issueToken, findValidToken, findTokenRecord, consumeToken } = require('../db/authTokens');
-const { sendMail, verificationEmail, passwordResetEmail } = require('../utils/mailer');
+const {
+  sendMail, sendVerificationMail, verificationEmail, passwordResetEmail,
+} = require('../utils/mailer');
 const pool = require('../db/pool');
 
 async function logAudit(userId, action, req, details = null) {
@@ -99,8 +101,10 @@ function secondsUntilResend(userId) {
 async function sendVerificationEmail(userId, email) {
   try {
     const token = await issueToken(userId, 'email_verify', EMAIL_VERIFY_TTL_MS);
-    const { subject, text, html } = verificationEmail(token);
-    await sendMail({ to: email, subject, text, html });
+    // Greet the parent by first name when we have it (best effort only).
+    const nameRow = await pool.query('SELECT first_name FROM guardians WHERE user_id = $1', [userId]).catch(() => null);
+    const { subject, text, html } = verificationEmail(token, nameRow?.rows[0]?.first_name);
+    await sendVerificationMail({ to: email, subject, text, html });
     lastVerificationSent.set(String(userId), Date.now());
     return { ok: true };
   } catch (err) {
@@ -156,7 +160,7 @@ async function register(req, res) {
     if (!isValidName(firstName)) problems.push('First name is required and should contain letters only.');
     if (!isValidName(lastName)) problems.push('Last name is required and should contain letters only.');
     if (!isValidName(middleName, { required: false, max: INITIAL_MAX })) problems.push(`M.I. should contain letters only (up to ${INITIAL_MAX} characters).`);
-    if (!isValidContactNumber(contactNumber)) problems.push('Contact number must be an 11-digit mobile number (e.g. 09171234567).');
+    if (!isValidContactNumber(contactNumber)) problems.push(CONTACT_MESSAGE);
     const pwIssues = passwordIssues(password);
     if (pwIssues.length) problems.push(`Password needs ${pwIssues.join(', ')}.`);
 
@@ -180,6 +184,10 @@ async function register(req, res) {
 
     await client.query('BEGIN');
     const user = await createUser({ email: normalizedEmail, passwordHash, roleId });
+    await client.query(
+      'UPDATE users SET first_name = $2, middle_initial = $3, last_name = $4 WHERE id = $1',
+      [user.id, firstName.trim(), middleName ? middleName.trim() : null, lastName.trim()]
+    ).catch(() => {}); // column added by ensureSchema; never block sign-up
     await createGuardianProfile(client, {
       userId: user.id,
       firstName: firstName.trim(),
@@ -315,11 +323,30 @@ async function updateProfile(req, res) {
     if (!isValidName(middleName, { required: false, max: INITIAL_MAX })) problems.push(`M.I. should contain letters only (up to ${INITIAL_MAX} characters).`);
     if (problems.length) return res.status(400).json({ message: problems[0], errors: problems });
 
-    const updated = await updateGuardianProfile(pool, req.user.id, {
+    const names = {
       firstName: firstName.trim(),
       middleName: middleName ? middleName.trim() : null,
       lastName: lastName.trim(),
-    });
+    };
+    let updated = await updateGuardianProfile(pool, req.user.id, names);
+    if (updated) {
+      // The account name (greeting) is kept on users as well.
+      await pool.query(
+        'UPDATE users SET first_name = $2, middle_initial = $3, last_name = $4, updated_at = NOW() WHERE id = $1',
+        [req.user.id, names.firstName, names.middleName, names.lastName]
+      );
+    } else {
+      // Staff accounts (admin, registrar) have no guardian row; their name
+      // lives on the users table.
+      const { rows: [u] } = await pool.query(
+        `UPDATE users SET first_name = $2, middle_initial = $3, last_name = $4,
+                full_name = $5, updated_at = NOW()
+         WHERE id = $1
+         RETURNING first_name, middle_initial AS middle_name, last_name`,
+        [req.user.id, names.firstName, names.middleName, names.lastName, `${names.firstName} ${names.lastName}`]
+      );
+      updated = u;
+    }
     if (!updated) return res.status(404).json({ message: 'Profile not found.' });
 
     await logAudit(req.user.id, 'PROFILE_UPDATED', req);

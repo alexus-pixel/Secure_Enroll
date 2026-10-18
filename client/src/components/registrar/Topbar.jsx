@@ -26,7 +26,7 @@ export default function Topbar() {
 
   function handleLogout() {
     logout();
-    navigate('/');
+    navigate('/login');
   }
 
   const crumbs = getCrumbs(pathname);

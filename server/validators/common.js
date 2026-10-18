@@ -68,7 +68,7 @@ const email = z
 const phPhone = z
   .string({ required_error: 'Contact number is required.', invalid_type_error: 'Contact number must be text.' })
   .trim()
-  .regex(/^(0|\+63)9\d{9}$/, 'Enter a valid Philippine mobile number (e.g. 09171234567).');
+  .regex(/^(09\d{9}|\+63\d{10})$/, 'Contact number must be 11 digits starting with 09 (e.g. 09171234567) or 13 characters starting with +63 (e.g. +639171234567).');
 
 const lrn = z
   .string({ invalid_type_error: 'LRN must be text.' })

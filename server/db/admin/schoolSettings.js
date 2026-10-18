@@ -1,4 +1,5 @@
 const pool = require('../pool');
+const { SEAT_LIST, sectionSeats } = require('../../lib/seats');
 
 async function listSchoolYears() {
   const result = await pool.query(
@@ -95,18 +96,11 @@ async function listGradeLevels() {
 }
 
 async function listSectionsWithEnrollment(schoolYearId) {
-  const result = await pool.query(
-    `SELECT sec.id, sec.name, sec.capacity, gl.id AS grade_level_id, gl.name AS grade_level_name,
-            COUNT(ea.id) FILTER (WHERE ea.status IN ('submitted','under_review','approved'))::int AS enrolled_count
-     FROM sections sec
-     JOIN grade_levels gl ON gl.id = sec.grade_level_id
-     LEFT JOIN enrollment_applications ea ON ea.section_id = sec.id
-     WHERE sec.school_year_id = $1
-     GROUP BY sec.id, gl.id
-     ORDER BY gl.sort_order, sec.name`,
-    [schoolYearId]
-  );
-  return result.rows;
+  const seats = await sectionSeats(pool, schoolYearId);
+  return seats.map((s) => ({
+    id: s.id, name: s.name, capacity: s.capacity, grade_level_id: s.gradeLevelId,
+    grade_level_name: s.gradeLevelName, enrolled_count: s.taken, slots_left: s.left,
+  }));
 }
 
 async function createSection({ name, gradeLevelId, schoolYearId, capacity }) {
@@ -124,7 +118,7 @@ async function updateSectionCapacity(id, capacity) {
   // without ever telling the admin why the number turned red.
   const enrolled = await pool.query(
     `SELECT COUNT(*)::int AS count FROM enrollment_applications
-     WHERE section_id = $1 AND status IN ('submitted','under_review','approved')`,
+     WHERE section_id = $1 AND status IN (${SEAT_LIST})`,
     [id]
   );
   if (capacity < enrolled.rows[0].count) {
@@ -150,7 +144,7 @@ async function deleteSection(id) {
   // a subject frees up whatever it was linked to.
   const enrolled = await pool.query(
     `SELECT COUNT(*)::int AS count FROM enrollment_applications
-     WHERE section_id = $1 AND status IN ('submitted','under_review','approved')`,
+     WHERE section_id = $1 AND status IN (${SEAT_LIST})`,
     [id]
   );
   if (enrolled.rows[0].count > 0) {

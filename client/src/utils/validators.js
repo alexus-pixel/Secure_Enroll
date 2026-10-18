@@ -11,12 +11,16 @@ export const PASSWORD_MAX_BYTES = 72; // bcrypt ignores everything after 72 byte
 export const ADDRESS_MAX = 255;
 export const NOTE_MAX = 500;
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
-export const ALLOWED_UPLOAD_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
+// Any file type is accepted except audio and video.
+const MEDIA_EXTENSIONS = /\.(mp3|wav|wma|aac|flac|ogg|oga|opus|m4a|m4b|mid|midi|aif|aiff|amr|weba|mp4|m4v|mov|avi|mkv|webm|wmv|flv|f4v|mpg|mpeg|mpe|3gp|3g2|ogv|mts|m2ts|vob)$/i;
 
 // Letters of any language (Niño, Peña, Réyes), spaces, . ' ’ and -
 export const NAME_RE = /^[\p{L}\p{M}][\p{L}\p{M} .'’-]*$/u;
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-export const PH_MOBILE_RE = /^09\d{9}$/; // 11 digits: 09XXXXXXXXX
+// 09XXXXXXXXX (11 digits) or +63XXXXXXXXXX (13 characters: "+" then digits only)
+export const PH_MOBILE_RE = /^(09\d{9}|\+63\d{10})$/;
+export const INITIAL_MAX = 2; // middle initial: "M" or "M."
+export const CONTACT_MAX = 13;
 export const LRN_RE = /^\d{12}$/;
 
 export const RELATIONSHIPS = [
@@ -41,12 +45,32 @@ export function validateEmail(value) {
   return '';
 }
 
+// Keeps only what a phone number may contain while the person types:
+// digits, plus a "+" as the very first character. Never more than 13 characters.
+export function sanitizePhone(value) {
+  const v = String(value || '');
+  const plus = v.trimStart().startsWith('+') ? '+' : '';
+  return (plus + v.replace(/\D/g, '')).slice(0, CONTACT_MAX);
+}
+
 export function validateContactNumber(value) {
   const v = (value || '').trim();
   if (!v) return 'Contact number is required.';
-  if (!/^\d+$/.test(v)) return 'Contact number should be digits only.';
-  if (!PH_MOBILE_RE.test(v)) return 'Enter an 11-digit mobile number starting with 09.';
+  if (v.startsWith('+')) {
+    if (!/^\+63/.test(v)) return 'A number starting with + must start with +63.';
+    if (!/^\+63\d*$/.test(v)) return 'After +63, use digits only.';
+    if (v.length !== 13) return 'With +63 the number must be 13 characters long (e.g. +639171234567).';
+    return '';
+  }
+  if (!/^\d+$/.test(v)) return 'Use digits only (or start with +63).';
+  if (!v.startsWith('09')) return 'Start the number with 09 (11 digits) or +63 (13 characters).';
+  if (v.length !== 11) return 'With 09 the number must be exactly 11 digits (e.g. 09171234567).';
   return '';
+}
+
+// Middle initial: optional, letters only, at most 2 characters.
+export function validateInitial(value, { label = 'M.I.' } = {}) {
+  return validateName(value, { required: false, label, max: INITIAL_MAX });
 }
 
 // Free text such as a home address: required, limited length, no < or >.
@@ -94,10 +118,12 @@ export function birthDateBounds(today = new Date()) {
   return { min: fmt(min), max: fmt(today) };
 }
 
-// One uploaded document: PDF, JPG or PNG, up to 5 MB.
+// One uploaded document: any file type except audio and video, up to 5 MB.
 export function validateFile(file, { label = 'This file' } = {}) {
   if (!file) return '';
-  if (!ALLOWED_UPLOAD_TYPES.includes(file.type)) return `${label} must be a PDF, JPG or PNG file.`;
+  if (/^(audio|video)\//i.test(file.type || '') || MEDIA_EXTENSIONS.test(file.name || '')) {
+    return `${label} cannot be an audio or video file. Please choose a document or an image.`;
+  }
   if (file.size > MAX_UPLOAD_BYTES) return `${label} is larger than 5 MB.`;
   if (file.size === 0) return `${label} is empty.`;
   return '';

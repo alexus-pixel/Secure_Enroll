@@ -1,10 +1,11 @@
 const pool = require('../pool');
+const { gradeSeats } = require('../../lib/seats');
 
 async function getSummaryCounts(schoolYearId) {
   const result = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE submitted_at >= NOW() - INTERVAL '7 days')::int AS new_this_week,
-       COUNT(*) FILTER (WHERE status = 'under_review')::int AS under_review,
+       COUNT(*) FILTER (WHERE status IN ('under_review', 'resubmitted'))::int AS under_review,
        COUNT(*) FILTER (WHERE status = 'needs_revision')::int AS needs_revision,
        COUNT(*) FILTER (WHERE status = 'approved')::int AS approved
      FROM enrollment_applications WHERE school_year_id = $1`,
@@ -61,18 +62,9 @@ async function listApplications({ schoolYearId, status, gradeLevelId, submittedD
 }
 
 async function getEnrollmentByGrade(schoolYearId) {
-  const result = await pool.query(
-    `SELECT gl.name, gl.sort_order,
-            COUNT(ea.id) FILTER (WHERE ea.status IN ('submitted','under_review','approved'))::int AS enrolled,
-            COALESCE(SUM(sec.capacity), 0)::int AS capacity
-     FROM grade_levels gl
-     LEFT JOIN enrollment_applications ea ON ea.grade_level_id = gl.id AND ea.school_year_id = $1
-     LEFT JOIN sections sec ON sec.grade_level_id = gl.id AND sec.school_year_id = $1
-     GROUP BY gl.id, gl.name, gl.sort_order
-     ORDER BY gl.sort_order`,
-    [schoolYearId]
-  );
-  return result.rows;
+  // Same seat rule as System Settings and School Settings (lib/seats.js).
+  const seats = await gradeSeats(pool, schoolYearId);
+  return seats.map((g) => ({ name: g.name, sort_order: g.sortOrder, enrolled: g.taken, capacity: g.capacity, slots_left: g.left }));
 }
 
 async function getStatusBreakdown(schoolYearId) {

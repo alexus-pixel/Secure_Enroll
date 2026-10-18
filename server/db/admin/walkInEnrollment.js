@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const pool = require('../pool');
+const { gradeHasRoom, fullMessage, sectionSeats } = require('../../lib/seats');
 
 // The schema has carried an lrn_hash column ("blind index: SHA-256
 // of the LRN") since the original schema.sql, but nothing in the
@@ -49,18 +50,16 @@ async function getGradeLevels() {
 
 // Sections of one grade level in the active school year.
 async function getSectionsForGrade(gradeLevelId) {
-  const result = await pool.query(
-    `SELECT s.id, s.name FROM sections s
-     JOIN school_years sy ON sy.id = s.school_year_id AND sy.is_active
-     WHERE s.grade_level_id = $1 ORDER BY s.name`,
-    [gradeLevelId]
-  );
-  return result.rows;
+  const { rows: [year] } = await pool.query('SELECT id FROM school_years WHERE is_active LIMIT 1');
+  if (!year) return [];
+  // Each section comes with how many slots it still has (same rule as every other page).
+  const seats = await sectionSeats(pool, year.id, Number(gradeLevelId));
+  return seats.map((s) => ({ id: s.id, name: s.name, capacity: s.capacity, taken: s.taken, slots_left: s.left }));
 }
 
 async function getRequiredDocumentTypes() {
   const result = await pool.query(
-    'SELECT code, label, is_required FROM required_document_types ORDER BY sort_order'
+    'SELECT code, label, is_required FROM required_document_types WHERE is_required ORDER BY sort_order'
   );
   return result.rows;
 }
@@ -164,12 +163,12 @@ async function createWalkInEnrollment({
     // code can't leave a half-built account behind and so only real
     // document types are ever recorded.
     const docTypes = (await client.query(
-      'SELECT code, label, is_required FROM required_document_types ORDER BY sort_order'
+      'SELECT code, label, is_required FROM required_document_types WHERE is_required ORDER BY sort_order'
     )).rows;
     const validCodes = new Set(docTypes.map((d) => d.code));
     const unknownCode = physicalDocTypes.find((c) => !validCodes.has(c));
     if (unknownCode) {
-      const err = new Error(`Unknown document type: ${unknownCode}.`);
+      const err = new Error(`${unknownCode} is not one of the documents the school requires.`);
       err.status = 400;
       throw err;
     }
@@ -180,12 +179,10 @@ async function createWalkInEnrollment({
     const fail = (status, message) => Object.assign(new Error(message), { status });
     const { rows: [grade] } = await client.query('SELECT id FROM grade_levels WHERE id = $1', [gradeLevelId]);
     if (!grade) throw fail(400, 'Unrecognized grade level.');
-    if (sectionId) {
-      const { rows: [section] } = await client.query(
-        'SELECT id FROM sections WHERE id = $1 AND grade_level_id = $2 AND school_year_id = $3',
-        [sectionId, gradeLevelId, schoolYearId]
-      );
-      if (!section) throw fail(400, 'That section does not belong to the selected grade level this school year.');
+    // The section is chosen later, when the application is approved. A seat in
+    // the grade is held from now on, so a full grade cannot take another walk-in.
+    if (!(await gradeHasRoom(client, schoolYearId, gradeLevelId))) {
+      throw fail(409, fullMessage((await client.query('SELECT name FROM grade_levels WHERE id = $1', [gradeLevelId])).rows[0].name));
     }
     if (!isNewStudent) {
       const { rows: [student] } = await client.query('SELECT id FROM students WHERE id = $1', [existingStudentId]);
@@ -220,9 +217,9 @@ async function createWalkInEnrollment({
     );
 
     const appResult = await client.query(
-      `INSERT INTO enrollment_applications (student_id, school_year_id, grade_level_id, section_id, status, submitted_by)
-       VALUES ($1, $2, $3, $4, 'submitted', $5) RETURNING id`,
-      [studentId, schoolYearId, gradeLevelId, sectionId || null, submittedBy]
+      `INSERT INTO enrollment_applications (student_id, school_year_id, grade_level_id, status, submitted_by)
+       VALUES ($1, $2, $3, 'submitted', $4) RETURNING id`,
+      [studentId, schoolYearId, gradeLevelId, submittedBy]
     );
     const applicationId = appResult.rows[0].id;
 

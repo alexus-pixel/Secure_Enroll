@@ -1,44 +1,75 @@
 import { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import api from '../../api/client';
+import {
+  validateName, validateInitial, validatePassword, validateConfirmPassword,
+} from '../../utils/validators';
+
+const INITIAL_MAX = 2;
 
 export default function AccountSettings() {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingPw, setSavingPw] = useState(false);
 
   const [profile, setProfile] = useState({
-    firstName: user?.first_name || '',
-    lastName: user?.last_name || '',
-    middleInitial: user?.middle_initial || '',
+    firstName: user?.firstName || '',
+    lastName: user?.lastName || '',
+    middleInitial: user?.middleName || '',
   });
   const [pw, setPw] = useState({ current: '', next: '', confirm: '' });
   const [profileNotice, setProfileNotice] = useState(null);
   const [pwNotice, setPwNotice] = useState(null);
 
-  function saveProfile() {
-    if (!profile.firstName.trim() || !profile.lastName.trim()) {
-      setProfileNotice({ type: 'error', text: 'First and last name are required.' });
+  async function saveProfile() {
+    const problem =
+      validateName(profile.firstName, { label: 'First name' }) ||
+      validateName(profile.lastName, { label: 'Last name' }) ||
+      validateInitial(profile.middleInitial);
+    if (problem) {
+      setProfileNotice({ type: 'error', text: problem });
       return;
     }
-    // TODO: call API
-    setProfileNotice({ type: 'ok', text: 'Profile updated.' });
+    setSavingProfile(true);
+    try {
+      const { data } = await api.patch('/registrar/profile', {
+        firstName: profile.firstName.trim(),
+        lastName: profile.lastName.trim(),
+        middleInitial: profile.middleInitial.trim(),
+      });
+      updateUser({ firstName: data.firstName, lastName: data.lastName, middleName: data.middleName });
+      setProfileNotice({ type: 'ok', text: 'Profile updated.' });
+    } catch (err) {
+      setProfileNotice({ type: 'error', text: err.response?.data?.message || 'Could not update your profile.' });
+    } finally {
+      setSavingProfile(false);
+    }
   }
 
-  function updatePassword() {
-    if (!pw.current || !pw.next || !pw.confirm) {
-      setPwNotice({ type: 'error', text: 'Please fill in all password fields.' });
-    } else if (pw.next.length < 8) {
-      setPwNotice({ type: 'error', text: 'New password must be at least 8 characters.' });
-    } else if (pw.next !== pw.confirm) {
-      setPwNotice({ type: 'error', text: 'New passwords do not match.' });
-    } else {
-      // TODO: call API
+  async function updatePassword() {
+    const problem = !pw.current
+      ? 'Enter your current password.'
+      : validatePassword(pw.next) || validateConfirmPassword(pw.next, pw.confirm) ||
+        (pw.next === pw.current ? 'New password must be different from your current password.' : '');
+    if (problem) {
+      setPwNotice({ type: 'error', text: problem });
+      return;
+    }
+    setSavingPw(true);
+    try {
+      await api.post('/registrar/password', { current: pw.current, next: pw.next });
       setPwNotice({ type: 'ok', text: 'Password updated.' });
       setPw({ current: '', next: '', confirm: '' });
+    } catch (err) {
+      setPwNotice({ type: 'error', text: err.response?.data?.message || 'Could not update your password.' });
+    } finally {
+      setSavingPw(false);
     }
   }
 
   return (
     <div className="reg-page reg-narrow">
-      <h1 className="reg-title">Account Settings</h1>
+      <h1 className="reg-title">Edit Profile</h1>
       <p className="reg-subtitle">Update your name and password</p>
 
       <div className="reg-card">
@@ -46,43 +77,43 @@ export default function AccountSettings() {
         {profileNotice && <div className={`reg-notice reg-notice-${profileNotice.type}`}>{profileNotice.text}</div>}
         <div className="reg-row reg-row-profile">
           <div className="reg-field">
-            <label>First name</label>
-            <input className="reg-input" autoComplete="off" value={profile.firstName} onChange={(e) => setProfile({ ...profile, firstName: e.target.value })} />
+            <label htmlFor="reg-first">First name</label>
+            <input id="reg-first" className="reg-input" autoComplete="off" maxLength={60} value={profile.firstName} onChange={(e) => setProfile({ ...profile, firstName: e.target.value })} />
           </div>
           <div className="reg-field">
-            <label>Last name</label>
-            <input className="reg-input" autoComplete="off" value={profile.lastName} onChange={(e) => setProfile({ ...profile, lastName: e.target.value })} />
+            <label htmlFor="reg-last">Last name</label>
+            <input id="reg-last" className="reg-input" autoComplete="off" maxLength={60} value={profile.lastName} onChange={(e) => setProfile({ ...profile, lastName: e.target.value })} />
           </div>
           <div className="reg-field">
-            <label>M.I</label>
-            <input className="reg-input" autoComplete="off" maxLength={2} value={profile.middleInitial} onChange={(e) => setProfile({ ...profile, middleInitial: e.target.value })} />
+            <label htmlFor="reg-mi">M.I. (optional)</label>
+            <input id="reg-mi" className="reg-input" autoComplete="off" maxLength={INITIAL_MAX} value={profile.middleInitial} onChange={(e) => setProfile({ ...profile, middleInitial: e.target.value })} />
           </div>
         </div>
         <div className="reg-field">
-          <label>Email address</label>
-          <input className="reg-input" value={user?.email || ''} disabled />
+          <label htmlFor="reg-email">Email address</label>
+          <input id="reg-email" className="reg-input" value={user?.email || ''} disabled />
         </div>
-        <button className="reg-btn reg-btn-blue" onClick={saveProfile}>Save Changes</button>
+        <button className="reg-btn reg-btn-blue" onClick={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving…' : 'Save Changes'}</button>
       </div>
 
       <div className="reg-card">
         <p className="reg-card-title">Change Password</p>
         {pwNotice && <div className={`reg-notice reg-notice-${pwNotice.type}`}>{pwNotice.text}</div>}
         <div className="reg-field">
-          <label>Current password</label>
-          <input className="reg-input" type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
+          <label htmlFor="reg-cur">Current password</label>
+          <input id="reg-cur" className="reg-input" type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
         </div>
         <div className="reg-row reg-row-2">
           <div className="reg-field">
-            <label>New password</label>
-            <input className="reg-input" type="password" autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
+            <label htmlFor="reg-new">New password</label>
+            <input id="reg-new" className="reg-input" type="password" autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
           </div>
           <div className="reg-field">
-            <label>Confirm new password</label>
-            <input className="reg-input" type="password" autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />
+            <label htmlFor="reg-conf">Confirm new password</label>
+            <input id="reg-conf" className="reg-input" type="password" autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />
           </div>
         </div>
-        <button className="reg-btn reg-btn-blue" onClick={updatePassword}>Update Password</button>
+        <button className="reg-btn reg-btn-blue" onClick={updatePassword} disabled={savingPw}>{savingPw ? 'Saving…' : 'Update Password'}</button>
       </div>
     </div>
   );

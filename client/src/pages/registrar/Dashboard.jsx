@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import StatusBadge from '../../components/registrar/StatusBadge';
 import api from '../../api/client';
+import useEnrollment from '../../hooks/useEnrollment';
 
 const fmt = (d) =>
   new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -9,6 +10,7 @@ const fmt = (d) =>
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const { year } = useEnrollment();
 
   useEffect(() => {
     api
@@ -25,7 +27,7 @@ export default function Dashboard() {
     { value: s.newThisWeek, label: 'New this week' },
     { value: s.underReview, label: 'Under Review' },
     { value: s.needsRevision, label: 'Needs Revision' },
-    { value: s.approved, label: 'Approved (SY 2026-2027)' },
+    { value: s.approved, label: year ? `Approved (SY ${year})` : 'Approved' },
   ];
 
   // Same rule as the Missing LRN page: ignore drafts and rejected applications.
@@ -36,7 +38,7 @@ export default function Dashboard() {
   return (
     <div className="reg-page">
       <h1 className="reg-title">My Enrollment Applications</h1>
-      <p className="reg-subtitle">School Year 2026 - 2027</p>
+      <p className="reg-subtitle">{year ? `School Year ${year}` : ""}</p>
 
       {missing > 0 && (
         <p style={{ background: '#fef3c7', padding: '10px 14px', borderRadius: 6 }}>

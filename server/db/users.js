@@ -32,9 +32,9 @@ async function createUser({ email, passwordHash, roleId }) {
 // comes from the users table; parents keep using their guardian name.
 const USER_WITH_NAME = `
   SELECT u.id, u.email, u.password_hash, u.email_verified_at, r.name AS role_name,
-         COALESCE(g.first_name, u.first_name, NULLIF(split_part(u.full_name, ' ', 1), '')) AS first_name,
-         COALESCE(g.middle_name, u.middle_initial) AS middle_name,
-         COALESCE(g.last_name, u.last_name) AS last_name
+         COALESCE(u.first_name, g.first_name, NULLIF(split_part(u.full_name, ' ', 1), '')) AS first_name,
+         COALESCE(u.middle_initial, g.middle_name) AS middle_name,
+         COALESCE(u.last_name, g.last_name) AS last_name
   FROM users u
   JOIN roles r ON r.id = u.role_id
   LEFT JOIN guardians g ON g.user_id = u.id

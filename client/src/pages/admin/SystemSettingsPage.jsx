@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { getSystemSettings, updateEnrollmentPeriod, updateRequiredDocuments } from '../../api/admin';
 
+// The API sends timestamps; the form needs the school's calendar date (Manila),
+// otherwise every save would move the window back by one day.
+const manilaDate = (iso) => (iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(iso)) : '');
+
 export default function SystemSettingsPage() {
   const [data, setData] = useState(null);
   const [period, setPeriod] = useState({ enrollmentOpen: false, opensAt: '', closesAt: '' });
@@ -14,8 +18,8 @@ export default function SystemSettingsPage() {
       setData(d);
       setPeriod({
         enrollmentOpen: d.schoolYear.enrollment_open,
-        opensAt: d.schoolYear.opens_at?.slice(0, 10),
-        closesAt: d.schoolYear.closes_at?.slice(0, 10),
+        opensAt: manilaDate(d.schoolYear.opens_at),
+        closesAt: manilaDate(d.schoolYear.closes_at),
       });
       setDocs(d.requiredDocuments);
     }).catch((err) => setError(err.response?.data?.message || 'Could not load system settings.'));
@@ -101,7 +105,12 @@ export default function SystemSettingsPage() {
           {data.gradeLevels.map((g) => (
             <div key={g.id} className="settings-row">
               <span>{g.name}</span>
-              <span className="muted" style={{ fontSize: 12.5 }}>{g.enrolled_count}/{g.total_slots} slots</span>
+              <span className="muted" style={{ fontSize: 12.5 }}>
+                {g.total_slots > 0
+                  ? `${g.enrolled_count}/${g.total_slots} taken \u00b7 ${g.slots_left} left`
+                  : 'No sections yet'}
+                {g.waiting > 0 && ` \u00b7 ${g.waiting} approved, no section yet`}
+              </span>
             </div>
           ))}
         </div>
@@ -109,7 +118,7 @@ export default function SystemSettingsPage() {
 
       <div className="card">
         <h2>Required Documents Configuration</h2>
-        <p className="hint" style={{ marginTop: -8 }}>Applies to every new application.</p>
+        <p className="hint" style={{ marginTop: -8 }}>Only the checked documents are requested from parents and listed for walk-in enrollment. Unchecked documents are not offered at all.</p>
         <div className="field-grid cols-2">
           {docs.map((d) => (
             <label key={d.id} className="check-row">
@@ -119,7 +128,7 @@ export default function SystemSettingsPage() {
               />
               {d.label}
               <span className={`pill ${d.is_required ? 'pill-needs_revision' : 'pill-disabled'}`} style={{ marginLeft: 'auto' }}>
-                {d.is_required ? 'Required' : 'Optional'}
+                {d.is_required ? 'Requested' : 'Not requested'}
               </span>
             </label>
           ))}

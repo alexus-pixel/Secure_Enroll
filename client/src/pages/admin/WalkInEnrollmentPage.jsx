@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { adminWalkIn } from '../../api/walkIn';
+import useEnrollment from '../../hooks/useEnrollment';
 import {
   validateName, validateContactNumber, validateText, validateLrn, validateBirthDate, validateEmail,
-  birthDateBounds, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
+  birthDateBounds, sanitizePhone, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
 } from '../../utils/validators';
 
 const BIRTH_BOUNDS = birthDateBounds();
@@ -48,7 +49,7 @@ const emptyForm = {
   existingStudentId: null,
   guardianEmail: '', confirmEmail: '', guardianFirstName: '', guardianMiddleName: '', guardianLastName: '',
   guardianContactNumber: '', guardianAddress: '', guardianValidIdType: '', relationship: '',
-  gradeLevelId: '', sectionId: '',
+  gradeLevelId: '',
 };
 
 // Shared by the admin and registrar portals: `client` picks which API prefix
@@ -56,7 +57,7 @@ const emptyForm = {
 export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel = 'Admin-assisted' }) {
   const [form, setForm] = useState(emptyForm);
   const [gradeLevels, setGradeLevels] = useState([]);
-  const [sections, setSections] = useState([]);
+  const seats = useEnrollment().grades;   // slots left per grade
   const [docTypes, setDocTypes] = useState([]);
   const [checkedDocs, setCheckedDocs] = useState([]);
   const [lrnQuery, setLrnQuery] = useState('');
@@ -81,17 +82,12 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
       .catch(() => setLoadError('We could not load the lists for this form. Please refresh the page or sign in again.'));
   }, [client]);
 
-  useEffect(() => {
-    if (!form.gradeLevelId) return;
-    client.sections(form.gradeLevelId).then(setSections).catch(() => setSections([]));
-  }, [client, form.gradeLevelId]);
-
   function toggleDoc(code) {
     setCheckedDocs((d) => d.includes(code) ? d.filter((x) => x !== code) : [...d, code]);
   }
 
   function switchMode(isNew) {
-    setForm({ ...emptyForm, isNewStudent: isNew, gradeLevelId: form.gradeLevelId, sectionId: form.sectionId });
+    setForm({ ...emptyForm, isNewStudent: isNew, gradeLevelId: form.gradeLevelId });
     setLrnQuery('');
     setLrnResult(null);
     setCheckedDocs([]);
@@ -173,7 +169,6 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
         middleName: form.middleName.trim() || undefined,
         guardianValidIdType: form.guardianValidIdType.trim() || undefined,
         relationship: form.relationship || undefined,
-        sectionId: form.sectionId || undefined,
         physicalDocTypes: checkedDocs,
       });
       setSuccess(result);
@@ -273,8 +268,10 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
           </div>
           <div className="field-grid cols-3">
             <div><label className="label">Contact number</label>
-              <input {...bind('guardianContactNumber')} placeholder="09171234567" inputMode="numeric" maxLength={11} />
-              {fieldError('guardianContactNumber')}</div>
+              <input {...bind('guardianContactNumber')} placeholder="09171234567" inputMode="tel" maxLength={13}
+                onChange={(e) => bind('guardianContactNumber').onChange({ target: { value: sanitizePhone(e.target.value) } })} />
+              {errors.guardianContactNumber ? fieldError('guardianContactNumber')
+                : <p className="hint">09XXXXXXXXX or +63XXXXXXXXXX</p>}</div>
             <div><label className="label">Relationship to student</label>
               <select className="input" value={form.relationship} onChange={(e) => setForm({ ...form, relationship: e.target.value })}>
                 <option value="">Select (recorded as Guardian if blank)</option>
@@ -363,13 +360,16 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
               <select
                 {...bind('gradeLevelId')}
                 onChange={(e) => {
-                  setForm({ ...form, gradeLevelId: e.target.value, sectionId: '' });
-                  setSections([]);
+                  setForm({ ...form, gradeLevelId: e.target.value });
                   setErrors((prev) => ({ ...prev, gradeLevelId: e.target.value ? '' : prev.gradeLevelId }));
                 }}
               >
                 <option value="">Select grade level</option>
-                {gradeLevels.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                {gradeLevels.map((g) => {
+                  const sg = seats.find((x) => x.id === g.id);
+                  const full = Boolean(sg && sg.totalSlots && sg.slotsLeft <= 0);
+                  return <option key={g.id} value={g.id} disabled={full}>{g.name}{full ? ' (full)' : sg && sg.totalSlots ? ` (${sg.slotsLeft} ${sg.slotsLeft === 1 ? 'slot' : 'slots'} left)` : ''}</option>;
+                })}
               </select>
               {fieldError('gradeLevelId')}
               {loadError && <p className="field-error">{loadError}</p>}
@@ -378,26 +378,31 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
               )}
             </div>
             <div>
-              <label className="label">Section (optional — can be assigned later)</label>
-              <select className="input" value={form.sectionId} onChange={(e) => setForm({ ...form, sectionId: e.target.value })} disabled={!form.gradeLevelId}>
-                <option value="">Not yet assigned</option>
-                {sections.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              <label className="label">Section</label>
+              <p className="hint" style={{ marginTop: 6 }}>
+                A section is chosen after the application is approved, from the sections of this grade that still have room.
+              </p>
+              {(() => {
+                const picked = seats.find((g) => String(g.id) === String(form.gradeLevelId));
+                if (!picked || !picked.totalSlots) return null;
+                return <p className="hint">{picked.name}: {picked.slotsLeft <= 0 ? 'no slots left.' : `${picked.slotsLeft} ${picked.slotsLeft === 1 ? 'slot' : 'slots'} left.`}</p>;
+              })()}
             </div>
           </div>
         </div>
 
         <div className="card">
           <strong>Physical Documents Received</strong>
-          <p className="hint">Check off what the parent physically handed over today.</p>
+          <p className="hint">Check off what the parent physically handed over today. Only the documents the school requires (System Settings) are listed.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
             {docTypes.map((d) => (
               <label key={d.code} className="check-row">
                 <input type="checkbox" checked={checkedDocs.includes(d.code)} onChange={() => toggleDoc(d.code)} />
-                {d.label}{d.is_required && <span className="muted" style={{ fontSize: 11 }}> (required)</span>}
+                {d.label}
               </label>
             ))}
           </div>
+          {docTypes.length === 0 && <p className="hint">The school is not requiring any documents right now.</p>}
         </div>
 
         <button className="btn btn-primary" type="submit" disabled={saving || !canSubmit} style={{ width: '100%' }}>

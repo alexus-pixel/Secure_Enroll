@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { getDashboardOverview, getDashboardApplications } from '../../api/admin';
 
 const STATUS_LABELS = {
-  submitted: 'Submitted', under_review: 'Under Review', needs_revision: 'Needs Revision',
+  submitted: 'Submitted', under_review: 'Under Review', resubmitted: 'Resubmitted', needs_revision: 'Needs Revision',
   approved: 'Approved', rejected: 'Rejected', draft: 'Draft',
 };
 
@@ -114,7 +115,7 @@ export default function DashboardPage() {
                   </td>
                   <td>{new Date(a.submitted_at).toLocaleDateString()}</td>
                   <td><span className={`pill pill-${a.status}`}>{STATUS_LABELS[a.status] || a.status}</span></td>
-                  <td><span className="muted" style={{ fontSize: 12 }}>Review (registrar)</span></td>
+                  <td><Link className="btn btn-secondary btn-sm" to={`/admin/applications/${a.id}`}>Review</Link></td>
                 </tr>
               ))}
               {applications.applications.length === 0 && (

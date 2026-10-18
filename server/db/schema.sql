@@ -157,6 +157,7 @@ CREATE TABLE school_years (
     opens_at   TIMESTAMPTZ NOT NULL,
     closes_at  TIMESTAMPTZ NOT NULL,
     is_active  BOOLEAN     NOT NULL DEFAULT FALSE,
+    auto_email_lists BOOLEAN NOT NULL DEFAULT TRUE,   -- email each section's master list to its adviser when enrollment closes
     CHECK (closes_at > opens_at)
 );
 
@@ -187,7 +188,7 @@ CREATE TABLE enrollment_applications (
     grade_level_id SMALLINT    NOT NULL REFERENCES grade_levels(id),
     section_id     INTEGER     REFERENCES sections(id),   -- assigned on approval
     status         VARCHAR(20) NOT NULL DEFAULT 'submitted'
-                   CHECK (status IN ('draft','submitted','under_review',
+                   CHECK (status IN ('draft','submitted','under_review','resubmitted',
                                      'needs_revision','approved','rejected')),
     submitted_by   BIGINT      NOT NULL REFERENCES users(id),
     submitted_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -263,3 +264,4 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE r.name = 'admin';
 INSERT INTO grade_levels (name, sort_order) VALUES
     ('Kinder', 0), ('Grade 1', 1), ('Grade 2', 2), ('Grade 3', 3),
     ('Grade 4', 4), ('Grade 5', 5), ('Grade 6', 6);
+

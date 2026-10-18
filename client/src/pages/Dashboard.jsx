@@ -2,15 +2,17 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import AppNav from '../components/AppNav';
 import api from '../api/client';
+import useEnrollment from '../hooks/useEnrollment';
 
 const STATUS_LABELS = {
-  draft: 'Draft', submitted: 'Submitted', under_review: 'Under Review',
+  draft: 'Draft', submitted: 'Submitted', under_review: 'Under Review', resubmitted: 'Resubmitted',
   needs_revision: 'Needs Revision', approved: 'Approved', rejected: 'Rejected',
 };
 
 export default function Dashboard() {
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const enrollment = useEnrollment();
 
   useEffect(() => {
     api.get('/applications/mine').then((res) => setApplications(res.data)).finally(() => setLoading(false));
@@ -23,17 +25,26 @@ export default function Dashboard() {
         <div className="page-head">
           <div>
             <h1>My Enrollment Applications</h1>
-            <p>School Year 2026&ndash;2027</p>
+            <p>School Year {enrollment.enrollment?.schoolYear ? enrollment.enrollment.schoolYear.replace('-', '\u2013') : '2026\u20132027'}</p>
           </div>
-          <Link className="btn btn-primary" to="/applications/new">+ New Application</Link>
+          {enrollment.isClosed
+            ? <span className="btn btn-primary btn-disabled" aria-disabled="true" title="Enrollment is closed">+ New Application</span>
+            : <Link className="btn btn-primary" to="/applications/new">+ New Application</Link>}
         </div>
+
+        {enrollment.enrollment && (
+          <div className={`enroll-status${enrollment.isClosed ? ' is-closed' : ''}`} role="status">
+            <span className="dot" aria-hidden="true" />
+            <div><b>{enrollment.title}</b>{enrollment.message}</div>
+          </div>
+        )}
 
         <div className="card card-flush">
           {loading ? (
             <div className="empty-state">Loading...</div>
           ) : applications.length === 0 ? (
             <div className="empty-state">
-              No applications yet. Start one with the button above.
+              {enrollment.isClosed ? 'No applications yet. You can start one when enrollment opens.' : 'No applications yet. Start one with the button above.'}
             </div>
           ) : (
             <div className="table-wrap">

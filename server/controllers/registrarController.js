@@ -10,15 +10,12 @@ const {
 } = require('../utils/validators');
 
 const AY = `(SELECT id FROM school_years WHERE is_active LIMIT 1)`;
+const { getDocumentTypes } = require('../lib/documentTypes');
+const { assignSection, sectionsForApplication } = require('../lib/seats');
 
-// The three documents every application is reviewed against. Anything
-// else on file (for example a valid ID handed over at a walk-in) is
-// listed after these.
-const CORE_DOCS = [
-  { type: 'birth_certificate', name: 'Birth Certificate' },
-  { type: 'form_138', name: 'Form 138 / Report Card' },
-  { type: 'good_moral', name: 'Certificate of Good Moral' },
-];
+// Which documents an application is reviewed against is decided in System
+// Settings (required_document_types): required ones are always listed and must
+// be verified before approval; optional ones are listed once uploaded.
 // users.middle_initial is VARCHAR(2)
 const MI_MAX = 2;
 const DOC_STATUSES = ['pending', 'verified', 'flagged', 'rejected'];
@@ -45,20 +42,29 @@ function audit(db, req, action, entityId, details, entityType = 'enrollment_appl
 
 // Newest document row per type. A parent who re-uploads after a
 // rejection adds a row; the registrar always reviews the latest one.
+// 'resubmitted' is true for a pending copy that replaced a flagged or rejected one.
 const LATEST_DOCS = `
-  SELECT DISTINCT ON (doc_type)
-         id, doc_type, file_path, mime_type, status, uploaded_at, review_note,
-         (received_in_person OR is_physical) AS physical
-  FROM documents
-  WHERE application_id = $1
-  ORDER BY doc_type, uploaded_at DESC, id DESC`;
+  SELECT DISTINCT ON (d.doc_type)
+         d.id, d.doc_type, d.file_path, d.mime_type, d.status, d.uploaded_at, d.review_note,
+         (d.received_in_person OR d.is_physical) AS physical,
+         (d.status = 'pending' AND EXISTS (
+            SELECT 1 FROM documents p
+            WHERE p.application_id = d.application_id AND p.doc_type = d.doc_type
+              AND p.id <> d.id AND p.status IN ('flagged', 'rejected'))) AS resubmitted
+  FROM documents d
+  WHERE d.application_id = $1
+  ORDER BY d.doc_type, d.uploaded_at DESC, d.id DESC`;
+
+// A reason for flagging or rejecting must say something: at least 3 words.
+const MIN_REASON_WORDS = 3;
+const countWords = (text) => text.trim().split(/\s+/).filter(Boolean).length;
 
 // ---------- Dashboard ----------
 exports.list = async (req, res) => {
   const stats = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE submitted_at > NOW() - INTERVAL '7 days')::int AS "newThisWeek",
-       COUNT(*) FILTER (WHERE status = 'under_review')::int   AS "underReview",
+       COUNT(*) FILTER (WHERE status IN ('under_review', 'resubmitted'))::int AS "underReview",
        COUNT(*) FILTER (WHERE status = 'needs_revision')::int AS "needsRevision",
        COUNT(*) FILTER (WHERE status = 'approved')::int       AS approved
      FROM enrollment_applications WHERE school_year_id = ${AY}`
@@ -85,6 +91,7 @@ exports.get = async (req, res) => {
   const { rows: [a] } = await pool.query(
     `SELECT a.id, a.status, a.remarks, a.grade_qualification AS "gradeQualification",
             a.submitted_at AS submitted,
+            a.section_id AS "sectionId", (SELECT name FROM sections WHERE id = a.section_id) AS section,
             s.id AS "studentId",
             s.lrn_hash IS NULL AS "missingLrn",
             s.last_name || ', ' || s.first_name AS student, g.name AS grade,
@@ -99,31 +106,34 @@ exports.get = async (req, res) => {
   if (!a) return res.status(404).json({ message: 'Application not found.' });
 
   const { rows: docs } = await pool.query(LATEST_DOCS, [a.id]);
-  const { rows: types } = await pool.query('SELECT code, label FROM required_document_types');
+  const types = await getDocumentTypes();
   const labelOf = Object.fromEntries(types.map((t) => [t.code, t.label]));
+  const requiredOf = Object.fromEntries(types.map((t) => [t.code, t.isRequired]));
 
   const shape = (type, name) => {
     const d = docs.find((x) => x.doc_type === type);
-    if (!d) return { type, name, status: 'awaiting', hasFile: false, receivedInPerson: false };
+    const required = Boolean(requiredOf[type]);
+    if (!d) return { type, name, required, status: 'awaiting', hasFile: false, receivedInPerson: false };
     return {
       type,
       name,
+      required,
       docId: d.id,
       hasFile: Boolean(d.file_path),
       mimeType: d.mime_type,
       receivedInPerson: d.physical,
       uploaded: d.uploaded_at,
       status: d.status,
+      resubmitted: Boolean(d.resubmitted),
       note: d.review_note,
     };
   };
 
-  const coreTypes = CORE_DOCS.map((c) => c.type);
+  const known = new Set(types.map((t) => t.code));
   a.documents = [
-    ...CORE_DOCS.map((c) => shape(c.type, c.name)),
-    ...docs
-      .filter((d) => !coreTypes.includes(d.doc_type))
-      .map((d) => shape(d.doc_type, labelOf[d.doc_type] || d.doc_type)),
+    // Required documents always; optional ones only when the parent sent them.
+    ...types.filter((t) => t.isRequired || docs.some((d) => d.doc_type === t.code)).map((t) => shape(t.code, t.label)),
+    ...docs.filter((d) => !known.has(d.doc_type)).map((d) => shape(d.doc_type, d.doc_type)),
   ];
   res.json(a);
 };
@@ -142,6 +152,11 @@ exports.setDocumentStatus = async (req, res) => {
   if (!DOC_STATUSES.includes(status)) {
     return res.status(400).json({ message: 'Status must be verified, flagged, rejected or pending.' });
   }
+  if ((status === 'flagged' || status === 'rejected') && countWords(note) < MIN_REASON_WORDS) {
+    return res.status(400).json({
+      message: `Give a reason of at least ${MIN_REASON_WORDS} words to ${status === 'flagged' ? 'flag' : 'reject'} a document.`,
+    });
+  }
   if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
 
   const { rows: [app] } = await pool.query(
@@ -150,6 +165,18 @@ exports.setDocumentStatus = async (req, res) => {
   if (!app) return res.status(404).json({ message: 'Application not found.' });
   if (['approved', 'rejected'].includes(app.status)) {
     return res.status(409).json({ message: 'This application is already finalized.' });
+  }
+  if (app.status === 'needs_revision') {
+    return res.status(409).json({ message: 'A revision was requested. Review opens again when the parent resubmits.' });
+  }
+  // A document that has been reviewed stays as decided until the parent uploads a new copy.
+  const { rows: [current] } = await pool.query(
+    `SELECT status FROM documents WHERE application_id = $1 AND doc_type = $2
+     ORDER BY uploaded_at DESC, id DESC LIMIT 1`, [req.params.id, req.params.docType]
+  );
+  if (!current) return res.status(404).json({ message: 'Document not found.' });
+  if (current.status !== 'pending') {
+    return res.status(409).json({ message: 'This document was already reviewed. It opens again when the parent uploads a new copy.' });
   }
 
   const client = await pool.connect();
@@ -174,7 +201,7 @@ exports.setDocumentStatus = async (req, res) => {
     await client.query(
       `UPDATE enrollment_applications
        SET status = 'under_review', reviewed_by = $2
-       WHERE id = $1 AND status = 'submitted'`,
+       WHERE id = $1 AND status IN ('submitted', 'resubmitted')`,
       [req.params.id, req.user.id]
     );
     await audit(client, req, 'DOCUMENT_' + status.toUpperCase(), req.params.id,
@@ -212,8 +239,17 @@ exports.documentFile = async (req, res) => {
   }
 
   await audit(pool, req, 'DOCUMENT_VIEWED', req.params.id, { docType: req.params.docType }).catch(() => {});
-  res.setHeader('Content-Type', d.mime_type || 'application/octet-stream');
-  res.setHeader('Content-Disposition', `inline; filename="${req.params.docType}${path.extname(name)}"`);
+  // Only PDFs and common images are shown inline. Any other file type
+  // (Word, Excel, text, zip, ...) is handed over as a download so it can
+  // never run in the browser. nosniff + sandbox stop content tricks.
+  const SAFE_INLINE = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  const inline = SAFE_INLINE.includes(d.mime_type);
+  res.setHeader('Content-Type', inline ? d.mime_type : 'application/octet-stream');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('X-Original-Type', d.mime_type || '');
+  res.setHeader('Access-Control-Expose-Headers', 'X-Original-Type');
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${req.params.docType}${path.extname(name).replace(/[^.\w]/g, '')}"`);
   res.setHeader('Cache-Control', 'private, no-store');
   fs.createReadStream(full).on('error', () => res.destroy()).pipe(res);
 };
@@ -226,11 +262,11 @@ exports.setQualification = async (req, res) => {
   const { rowCount } = await pool.query(
     `UPDATE enrollment_applications
      SET grade_qualification = $1,
-         status = CASE WHEN status = 'submitted' THEN 'under_review' ELSE status END
-     WHERE id = $2 AND status NOT IN ('approved', 'rejected')`,
+         status = CASE WHEN status IN ('submitted', 'resubmitted') THEN 'under_review' ELSE status END
+     WHERE id = $2 AND status NOT IN ('approved', 'rejected', 'needs_revision')`,
     [req.body.value, req.params.id]
   );
-  if (!rowCount) return res.status(404).json({ message: 'Application not found or already finalized.' });
+  if (!rowCount) return res.status(409).json({ message: 'Application not found, already finalized, or waiting for the parent to resubmit.' });
   res.json({ ok: true });
 };
 
@@ -248,23 +284,38 @@ exports.decide = async (req, res) => {
   if (!/^\d{1,9}$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
 
   const { rows: [a] } = await pool.query(
-    'SELECT status, grade_qualification FROM enrollment_applications WHERE id = $1',
+    'SELECT status, grade_qualification, school_year_id, grade_level_id FROM enrollment_applications WHERE id = $1',
     [req.params.id]
   );
   if (!a) return res.status(404).json({ message: 'Application not found.' });
   if (['approved', 'rejected'].includes(a.status)) {
     return res.status(409).json({ message: 'This application is already finalized.' });
   }
+  if (a.status === 'needs_revision') {
+    return res.status(409).json({ message: 'A revision was requested. Review opens again when the parent resubmits.' });
+  }
+
+  // No decision (approve, revision or reject) until every file on record has
+  // been reviewed and the grade qualification has been marked.
+  const { rows: latest } = await pool.query(LATEST_DOCS, [req.params.id]);
+  const docTypes = await getDocumentTypes();
+  const docName = (type) => (docTypes.find((t) => t.code === type) || {}).label || type;
+  const unreviewed = latest.filter((d) => (d.file_path || d.physical) && d.status === 'pending').map((d) => docName(d.doc_type));
+  if (unreviewed.length || !a.grade_qualification) {
+    const parts = [];
+    if (unreviewed.length) parts.push(`review ${unreviewed.join(', ')}`);
+    if (!a.grade_qualification) parts.push('mark the grade qualification');
+    return res.status(400).json({ message: `Finish the review first: ${parts.join(' and ')}.` });
+  }
 
   if (action === 'approve') {
-    const { rows: latest } = await pool.query(LATEST_DOCS, [req.params.id]);
     const statusOf = Object.fromEntries(latest.map((d) => [d.doc_type, d.status]));
-    const open = [
-      ...CORE_DOCS.filter((c) => statusOf[c.type] !== 'verified').map((c) => c.name),
-      ...latest
-        .filter((d) => !CORE_DOCS.some((c) => c.type === d.doc_type) && d.status !== 'verified')
-        .map((d) => d.doc_type),
-    ];
+    const problems = latest.filter((d) => d.status === 'flagged' || d.status === 'rejected').map((d) => d.doc_type);
+    if (problems.length) {
+      return res.status(400).json({ message: `Before approving, resolve the flagged or rejected documents (${problems.join(', ')}).` });
+    }
+    // Every document the admin marked required must be verified.
+    const open = docTypes.filter((t) => t.isRequired && statusOf[t.code] !== 'verified').map((t) => t.label);
     if (open.length || a.grade_qualification !== 'met') {
       const parts = [];
       if (open.length) parts.push(`verify every document (still open: ${open.join(', ')})`);
@@ -275,14 +326,79 @@ exports.decide = async (req, res) => {
     return res.status(400).json({ message: 'A remark is required.' });
   }
 
-  await pool.query(
-    `UPDATE enrollment_applications
-     SET status = $1, remarks = NULLIF($2, ''), reviewed_by = $3, reviewed_at = NOW()
-     WHERE id = $4`,
-    [status, remarks.trim(), req.user.id, req.params.id]
-  );
+  // Approval enrols the learner in one of the grade's sections that still has
+  // room. The section is chosen here, after approval is decided, and never
+  // before. A grade with no sections set up can be approved without one.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (status === 'approved') {
+      const { rows: [{ n }] } = await client.query(
+        'SELECT COUNT(*)::int AS n FROM sections WHERE school_year_id = $1 AND grade_level_id = $2',
+        [a.school_year_id, a.grade_level_id]
+      );
+      if (n > 0) {
+        const sectionId = Number(req.body && req.body.sectionId);
+        if (!Number.isInteger(sectionId) || sectionId <= 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ message: 'Choose a section for this learner.', reason: 'section_required' });
+        }
+        const placed = await assignSection(client, req.params.id, sectionId);
+        if (!placed.ok) {
+          await client.query('ROLLBACK');
+          return res.status(placed.status).json({ message: placed.message });
+        }
+      }
+    }
+    await client.query(
+      `UPDATE enrollment_applications
+       SET status = $1, remarks = NULLIF($2, ''), reviewed_by = $3, reviewed_at = NOW()
+       WHERE id = $4`,
+      [status, remarks.trim(), req.user.id, req.params.id]
+    );
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
   await audit(pool, req, 'APPLICATION_' + status.toUpperCase(), req.params.id, { remarks });
   res.json({ ok: true, status });
+};
+
+// Sections the learner can be enrolled in (the grade the parent chose).
+exports.sectionOptions = async (req, res) => {
+  if (!/^\d{1,9}$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
+  const data = await sectionsForApplication(pool, req.params.id);
+  if (!data) return res.status(404).json({ message: 'Application not found.' });
+  res.json(data);
+};
+
+// For an approved application that has no section yet (approved before the
+// grade had sections): enrol it in the chosen one.
+exports.assignSection = async (req, res) => {
+  if (!/^\d{1,9}$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
+  const sectionId = Number(req.body && req.body.sectionId);
+  if (!Number.isInteger(sectionId) || sectionId <= 0) return res.status(400).json({ message: 'Choose a section.' });
+  const { rows: [a] } = await pool.query('SELECT status, section_id FROM enrollment_applications WHERE id = $1', [req.params.id]);
+  if (!a) return res.status(404).json({ message: 'Application not found.' });
+  if (a.status !== 'approved') return res.status(409).json({ message: 'A section can only be chosen after the application is approved.' });
+  if (a.section_id) return res.status(409).json({ message: 'This learner is already enrolled in a section.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const placed = await assignSection(client, req.params.id, sectionId);
+    if (!placed.ok) { await client.query('ROLLBACK'); return res.status(placed.status).json({ message: placed.message }); }
+    await client.query('COMMIT');
+    await audit(pool, req, 'APPLICATION_SECTION_ASSIGNED', req.params.id, { sectionId });
+    res.json({ ok: true, section: placed.sectionName });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 };
 
 // ---------- Account settings ----------

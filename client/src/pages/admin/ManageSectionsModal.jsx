@@ -58,7 +58,7 @@ export default function ManageSectionsModal({ gradeLevel, sections, onClose, onC
         {error && <div className="alert alert-error">{error}</div>}
 
         <table className="data" style={{ marginBottom: 16 }}>
-          <thead><tr><th>Section</th><th>Slots</th><th>Enrolled</th><th></th></tr></thead>
+          <thead><tr><th>Section</th><th>Slots</th><th>Enrolled</th><th>Left</th><th></th></tr></thead>
           <tbody>
             {sections.map((s) => (
               <tr key={s.id}>
@@ -72,6 +72,7 @@ export default function ManageSectionsModal({ gradeLevel, sections, onClose, onC
                   ) : s.capacity}
                 </td>
                 <td>{s.enrolled_count}</td>
+                <td>{s.slots_left}</td>
                 <td>
                   {editingId === s.id ? (
                     <button className="link-action" onClick={() => saveCapacity(s.id)}>Save</button>

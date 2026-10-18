@@ -4,40 +4,24 @@ import {
   ClipboardList, Settings, CalendarDays, UserPlus, Hash, LayoutDashboard, Users, GraduationCap,
   ScrollText, School, BarChart3, Menu, X,
 } from 'lucide-react';
+import Logo from './Logo';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 
 const ROLE_LABELS = { parent: 'Parent / Guardian', registrar: 'Registrar', admin: 'Administrator' };
 
-function Mark({ size = 20 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" />
-      <path d="M3 7.5V16l9 5 9-5V7.5" />
-      <path d="M12 12v9" />
-    </svg>
-  );
-}
-
-function HamburgerIcon({ size = 26 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round">
-      <line x1="4" y1="7" x2="20" y2="7" />
-      <line x1="4" y1="12" x2="20" y2="12" />
-      <line x1="4" y1="17" x2="20" y2="17" />
-    </svg>
-  );
-}
-
-export function Brand() {
-  return (
-    <span className="brand">
-      <Mark />
+// `to` turns the brand into a link (the public pages link it back to the
+// landing page); without it the brand is a plain label.
+export function Brand({ to }) {
+  const inner = (
+    <>
+      <Logo size={30} />
       SecureEnroll
-    </span>
+    </>
   );
+  return to
+    ? <Link to={to} className="brand" aria-label="SecureEnroll home">{inner}</Link>
+    : <span className="brand">{inner}</span>;
 }
 
 // One navigation list per role. Every portal (parent, registrar, admin)
@@ -93,16 +77,8 @@ export default function AppNav({ crumb, crumbs }) {
   const items = crumbs || (crumb ? [{ label: 'Dashboard', to: homePath }, { label: crumb }] : null);
   const displayName = user?.firstName || user?.full_name?.split(' ')[0] || nameFromEmail(user?.email) || 'there';
   const initial = displayName.trim().charAt(0).toUpperCase() || '?';
-
-  // Collapsed (icon-only) vs expanded (icon + label) is a per-browser
-  // preference, not per-page state, so it lives in localStorage. The CSS
-  // variable is what actually resizes everything (sidebar, topbar,
-  // container, the banner) at once, since they all read var(--sidebar-w).
-  const [expanded, setExpanded] = useState(() => localStorage.getItem('sidebarExpanded') === 'true');
-  useEffect(() => {
-    document.documentElement.style.setProperty('--sidebar-w', expanded ? '220px' : '84px');
-    localStorage.setItem('sidebarExpanded', String(expanded));
-  }, [expanded]);
+  // The round avatar opens the signed-in user's own Edit Profile page.
+  const profilePath = role === 'registrar' ? '/registrar/settings' : '/settings';
 
   // On phones the sidebar is a slide-in drawer opened from the topbar.
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -153,12 +129,11 @@ export default function AppNav({ crumb, crumbs }) {
 
   return (
     <>
-      <aside className={`sidebar${expanded ? ' expanded' : ''}${mobileOpen ? ' mobile-open' : ''}`} aria-label="Main navigation">
-        <button type="button" className="sidebar-brand" onClick={() => setExpanded((v) => !v)}
-          aria-label={expanded ? 'Collapse menu' : 'Expand menu'} aria-expanded={expanded}>
-          <span className="sidebar-brand-icon sidebar-brand-icon-default"><Mark size={26} /></span>
-          <span className="sidebar-brand-icon sidebar-brand-icon-hover"><HamburgerIcon size={26} /></span>
-        </button>
+      <aside className={`sidebar${mobileOpen ? ' mobile-open' : ''}`} aria-label="Main navigation">
+        <Link to={homePath} className="sidebar-brand" aria-label="SecureEnroll home" onClick={() => setMobileOpen(false)}>
+          <Logo size={40} />
+          <span className="sidebar-brand-text">SecureEnroll</span>
+        </Link>
         <span className="sidebar-mobile-brand"><Brand /></span>
         <button type="button" className="sidebar-close" onClick={() => setMobileOpen(false)} aria-label="Close menu">
           <X size={22} />
@@ -171,7 +146,7 @@ export default function AppNav({ crumb, crumbs }) {
               <Link key={item.to} to={item.to} className={`sidebar-icon${active ? ' active' : ''}`}
                 aria-label={item.label} aria-current={active ? 'page' : undefined} title={item.label}
                 onClick={() => setMobileOpen(false)}>
-                <Icon size={22} strokeWidth={2} />
+                <span className="sidebar-glyph"><Icon size={22} strokeWidth={2} /></span>
                 <span className="sidebar-label">{item.label}</span>
               </Link>
             );
@@ -202,7 +177,7 @@ export default function AppNav({ crumb, crumbs }) {
         </div>
         <div className="topbar-right">
           <span className="welcome">Welcome, {displayName}!</span>
-          <span className="avatar" aria-hidden="true">{initial}</span>
+          <Link to={profilePath} className="avatar" aria-label="Edit profile" title="Edit profile">{initial}</Link>
           <button className="btn-ghost" onClick={logout}>Log out</button>
         </div>
       </header>

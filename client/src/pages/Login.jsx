@@ -59,7 +59,7 @@ export default function Login() {
     <div className="auth-wrap">
       <aside className="auth-panel">
         <div>
-          <Brand />
+          <Brand to="/" />
           <h2>Enrollment for Caloocan City Elementary School</h2>
           <p>
             Welcome to the online enrollment system of Caloocan City Elementary School,

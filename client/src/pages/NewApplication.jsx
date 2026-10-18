@@ -1,23 +1,28 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import AppNav from '../components/AppNav';
+import EnrollmentGate from '../components/EnrollmentGate';
+import useEnrollment from '../hooks/useEnrollment';
 import { useScrollToError } from '../hooks/useScrollToError';
 import {
   validateName, validateContactNumber, validateText, validateLrn, validateBirthDate, validateFile,
-  birthDateBounds, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
+  birthDateBounds, sanitizePhone, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
 } from '../utils/validators';
 
-const GRADE_LEVELS = [
+// Shown only until the school's grade list loads from the server.
+const FALLBACK_GRADES = [
   { id: 1, name: 'Kinder' }, { id: 2, name: 'Grade 1' }, { id: 3, name: 'Grade 2' },
   { id: 4, name: 'Grade 3' }, { id: 5, name: 'Grade 4' }, { id: 6, name: 'Grade 5' }, { id: 7, name: 'Grade 6' },
 ];
 
-const DOC_LABELS = {
-  birth_certificate: 'Birth Certificate',
-  form_138: 'Form 138 / Report Card',
-  good_moral: 'Certificate of Good Moral Character',
-};
+// "12 slots left", "1 slot left" or "full" for a grade that has sections set up.
+function slotsText(g) {
+  if (!g || !g.totalSlots) return '';
+  if (g.slotsLeft <= 0) return 'full';
+  return `${g.slotsLeft} ${g.slotsLeft === 1 ? 'slot' : 'slots'} left`;
+}
 
 // The date picker only offers real school-age birth dates (3 to 18 years
 // old, never in the future); the server checks the same rule.
@@ -45,7 +50,7 @@ function validateField(name, form) {
 
 // Uploads the chosen files one by one. A file that fails does not stop the
 // others; the names of the failures come back so the parent can retry them.
-async function uploadDocuments(applicationId, files) {
+async function uploadDocuments(applicationId, files, labelOf) {
   const failed = [];
   for (const [docType, file] of Object.entries(files)) {
     if (!file) continue;
@@ -55,7 +60,7 @@ async function uploadDocuments(applicationId, files) {
     try {
       await api.post(`/applications/${applicationId}/documents`, fd);
     } catch (err) {
-      failed.push(`${DOC_LABELS[docType]} (${err.response?.data?.message || 'upload failed'})`);
+      failed.push(`${labelOf(docType)} (${err.response?.data?.message || 'upload failed'})`);
     }
   }
   return failed;
@@ -67,6 +72,14 @@ export default function NewApplication() {
   const [mode, setMode] = useState('choose');
   const [studentType, setStudentType] = useState('new');
   const navigate = useNavigate();
+
+  // The document checklist and the grades (with slots left) come from the
+  // administrator's settings, so changing them there changes this form.
+  const enrollment = useEnrollment();
+  const docTypes = enrollment.documents;
+  const docLabels = Object.fromEntries(docTypes.map((d) => [d.code, d.label]));
+  const labelOf = (code) => docLabels[code] || code.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  const grades = enrollment.grades.length ? enrollment.grades : FALLBACK_GRADES;
 
   // ---------------- Find Returning Student ----------------
   const [lrn, setLrn] = useState('');
@@ -106,7 +119,7 @@ export default function NewApplication() {
   // A wrong file type or size is reported straight away, next to the field.
   const pickPromoFile = (docType) => (e) => {
     const file = e.target.files[0] || null;
-    const problem = validateFile(file, { label: DOC_LABELS[docType] });
+    const problem = validateFile(file, { label: labelOf(docType) });
     setPromoFileErrors({ ...promoFileErrors, [docType]: problem });
     setPromoFiles({ ...promoFiles, [docType]: problem ? null : file });
     if (problem) e.target.value = '';
@@ -121,7 +134,7 @@ export default function NewApplication() {
       const { data } = await api.post('/applications/promote', {
         studentId: result.student.id, gradeLevelId: result.nextGradeLevelId,
       });
-      const failed = await uploadDocuments(data.id, promoFiles);
+      const failed = await uploadDocuments(data.id, promoFiles, labelOf);
       if (failed.length) {
         setPartial({ id: data.id, failed });
         return;
@@ -135,18 +148,30 @@ export default function NewApplication() {
   }
 
   // ---------------- Fresh application ----------------
+  const { user } = useAuth();
   const [form, setForm] = useState({
     firstName: '', middleName: '', lastName: '', birthDate: '', sex: 'F', lrn: '',
-    guardianFirstName: '', guardianMiddleName: '', guardianLastName: '',
+    guardianFirstName: user?.firstName || '', guardianMiddleName: user?.middleName || '', guardianLastName: user?.lastName || '',
     relationship: 'Mother', contactNumber: '', address: '',
     gradeLevelId: '1',
   });
+  // The guardian is usually the signed-in parent, so their name is filled in
+  // from the account (as soon as it has loaded, and only while the fields are
+  // still empty). It can be edited if the guardian is someone else; that never
+  // changes the name on the account itself.
+  useEffect(() => {
+    if (user?.firstName && user?.lastName) {
+      setForm((f) => (f.guardianFirstName || f.guardianLastName ? f : {
+        ...f, guardianFirstName: user.firstName, guardianMiddleName: user.middleName || '', guardianLastName: user.lastName,
+      }));
+    }
+  }, [user?.firstName, user?.middleName, user?.lastName]);
   const [error, setError] = useState('');
   useScrollToError(error);
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState({});
   const [submitting, setSubmitting] = useState(false);
-  const [files, setFiles] = useState({ birth_certificate: null, form_138: null, good_moral: null });
+  const [files, setFiles] = useState({});
   const [fileErrors, setFileErrors] = useState({});
 
   const update = (field) => (e) => {
@@ -161,6 +186,7 @@ export default function NewApplication() {
     }
   };
   // The LRN box accepts digits only, never more than 12.
+  const updatePhone = (e) => update('contactNumber')({ target: { value: sanitizePhone(e.target.value) } });
   const updateLrn = (e) => update('lrn')({ target: { value: e.target.value.replace(/\D/g, '').slice(0, 12) } });
   const handleBlur = (field) => () => {
     setTouched((prev) => ({ ...prev, [field]: true }));
@@ -178,7 +204,7 @@ export default function NewApplication() {
 
   const pickFile = (docType) => (e) => {
     const file = e.target.files[0] || null;
-    const problem = validateFile(file, { label: DOC_LABELS[docType] });
+    const problem = validateFile(file, { label: labelOf(docType) });
     setFileErrors({ ...fileErrors, [docType]: problem });
     setFiles({ ...files, [docType]: problem ? null : file });
     if (problem) e.target.value = '';
@@ -220,7 +246,7 @@ export default function NewApplication() {
         contactNumber: trim(form.contactNumber), address: trim(form.address),
         lrn: trim(form.lrn) || undefined,
       });
-      const failed = await uploadDocuments(data.id, files);
+      const failed = await uploadDocuments(data.id, files, labelOf);
       if (failed.length) {
         setFreshPartial({ id: data.id, failed });
         return;
@@ -242,9 +268,10 @@ export default function NewApplication() {
           <div className="page-head">
             <div>
               <h1>Find Returning Student</h1>
-              <p>School Year 2026&ndash;2027</p>
+              <p>{enrollment.year ? `School Year ${enrollment.year}` : ''}</p>
             </div>
           </div>
+<EnrollmentGate closed={enrollment.isClosed} title={enrollment.title} message={enrollment.message}>
 
           <form className="card" onSubmit={handleSearch}>
             <h3>Search by Learner Reference Number (LRN)</h3>
@@ -291,23 +318,23 @@ export default function NewApplication() {
               <div className="card">
                 <p className="section-label">
                   {result.documentsNeeded.length > 0
-                    ? `Only ${result.documentsNeeded.map((t) => DOC_LABELS[t]).join(' and ')} required for promotion.`
+                    ? 'Documents for promotion'
                     : 'All documents already on file.'}
                   {result.documentsOnFile.length > 0
-                    && ` ${result.documentsOnFile.map((t) => DOC_LABELS[t]).join(' and ')} already on file.`}
+                    && ` ${result.documentsOnFile.map((t) => labelOf(t)).join(' and ')} already on file.`}
                 </p>
                 {result.documentsNeeded.map((docType) => (
                   <div className="field" key={docType}>
-                    <label className="label">{DOC_LABELS[docType]}</label>
+                    <label className="label">{labelOf(docType)}</label>
                     <input className={`input${promoFileErrors[docType] ? ' input-error' : ''}`} type="file"
-                      accept=".pdf,.jpg,.jpeg,.png" onChange={pickPromoFile(docType)} />
+                      onChange={pickPromoFile(docType)} />
                     {promoFileErrors[docType] && <p className="field-error">{promoFileErrors[docType]}</p>}
                   </div>
                 ))}
                 {result.documentsOnFile.map((docType) => (
                   <div className="doc-row doc-row-done" key={docType}>
                     <div>
-                      <div className="doc-name">{DOC_LABELS[docType]}</div>
+                      <div className="doc-name">{labelOf(docType)}</div>
                       <div className="doc-sub">Already on file.</div>
                     </div>
                   </div>
@@ -329,7 +356,8 @@ export default function NewApplication() {
               </button>
             </>
           )}
-        </div>
+        </EnrollmentGate>
+</div>
       </>
     );
   }
@@ -343,9 +371,10 @@ export default function NewApplication() {
           <div className="page-head">
             <div>
               <h1>New Enrollment Application</h1>
-              <p>School Year 2026&ndash;2027</p>
+              <p>{enrollment.year ? `School Year ${enrollment.year}` : ''}</p>
             </div>
           </div>
+<EnrollmentGate closed={enrollment.isClosed} title={enrollment.title} message={enrollment.message}>
           {error && <div className="alert alert-error" role="alert">{error}</div>}
           {freshPartial && (
             <div className="alert alert-error" role="alert">
@@ -406,15 +435,17 @@ export default function NewApplication() {
                 <input {...inputProps('guardianLastName')} maxLength={NAME_MAX} autoComplete="family-name" />
                 {fieldError('guardianLastName')}</div>
             </div>
+            <p className="hint">Filled in from your account. Change it only if the guardian is someone else.</p>
             <div className="field-grid cols-2">
               <div><label className="label" htmlFor="relationship">Relationship to student</label>
                 <select id="relationship" className="input" value={form.relationship} onChange={update('relationship')}>
                   {RELATIONSHIPS.map((r) => <option key={r}>{r}</option>)}
                 </select></div>
               <div><label className="label" htmlFor="contactNumber">Contact number</label>
-                <input {...inputProps('contactNumber')} inputMode="numeric" maxLength={11} autoComplete="tel"
+                <input {...inputProps('contactNumber')} onChange={updatePhone} inputMode="tel" maxLength={13} autoComplete="tel"
                   placeholder="09171234567" />
-                {fieldError('contactNumber')}</div>
+                {errors.contactNumber ? fieldError('contactNumber')
+                  : <p className="hint">09XXXXXXXXX or +63XXXXXXXXXX</p>}</div>
             </div>
             <div className="field">
               <label className="label" htmlFor="address">Address</label>
@@ -428,20 +459,35 @@ export default function NewApplication() {
             <div className="field">
               <label className="label" htmlFor="gradeLevelId">Applying for</label>
               <select id="gradeLevelId" className="input" value={form.gradeLevelId} onChange={update('gradeLevelId')}>
-                {GRADE_LEVELS.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                {grades.map((g) => {
+                  const note = slotsText(g);
+                  return (
+                    <option key={g.id} value={g.id} disabled={note === 'full'}>
+                      {g.name}{note ? ` (${note})` : ''}
+                    </option>
+                  );
+                })}
               </select>
+              {(() => {
+                const picked = grades.find((g) => String(g.id) === String(form.gradeLevelId));
+                const note = slotsText(picked);
+                if (!note) return null;
+                return <p className="hint">{note === 'full'
+                  ? `${picked.name} has no slots left. Please choose another grade or ask the school office.`
+                  : `${picked.name}: ${note}.`}</p>;
+              })()}
             </div>
           </div>
 
           <div className="card">
             <h3>Required Documents</h3>
-            <p className="hint">PDF, JPG or PNG. Maximum 5MB each.</p>
-            {[['birth_certificate', 'Birth Certificate'], ['form_138', 'Form 138 / Report Card'],
-              ['good_moral', 'Certificate of Good Moral Character']].map(([docType, label]) => (
+            <p className="hint">Any file type except audio and video. Maximum 5 MB each. These are the documents the school asks for.</p>
+            {docTypes.length === 0 && <p className="hint">The school is not asking for any documents right now.</p>}
+            {docTypes.map((d) => [d.code, d.label]).map(([docType, label]) => (
               <div className="field" key={docType}>
                 <label className="label" htmlFor={`file_${docType}`}>{label}</label>
                 <input id={`file_${docType}`} className={`input${fileErrors[docType] ? ' input-error' : ''}`} type="file"
-                  accept=".pdf,.jpg,.jpeg,.png" onChange={pickFile(docType)} />
+                  onChange={pickFile(docType)} />
                 {fileErrors[docType] && <p className="field-error">{fileErrors[docType]}</p>}
               </div>
             ))}
@@ -454,7 +500,8 @@ export default function NewApplication() {
             <button type="button" className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Cancel</button>
           </div>
         </form>
-        </div>
+        </EnrollmentGate>
+</div>
       </>
     );
   }
@@ -468,9 +515,10 @@ export default function NewApplication() {
         <div className="page-head">
           <div>
             <h1>New Enrollment Application</h1>
-            <p>School Year 2026&ndash;2027</p>
+            <p>{enrollment.year ? `School Year ${enrollment.year}` : ''}</p>
           </div>
         </div>
+<EnrollmentGate closed={enrollment.isClosed} title={enrollment.title} message={enrollment.message}>
 
         <div className="card">
           <h3>Is this student NEW or ALREADY ENROLLED before?</h3>
@@ -499,7 +547,8 @@ export default function NewApplication() {
         <button className="btn btn-primary" onClick={() => setMode(studentType === 'old' ? 'search' : 'fresh')}>
           Continue
         </button>
-      </div>
+      </EnrollmentGate>
+</div>
     </>
   );
 }

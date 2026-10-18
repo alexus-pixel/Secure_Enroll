@@ -70,4 +70,13 @@ const adminApiLimiter = expressRateLimit({
   message: { message: 'Too many requests. Please slow down.' },
 });
 
-module.exports = { rateLimit, loginLimiter, adminApiLimiter };
+/** Public landing-page data: cheap, cacheable, but still capped per IP. */
+const publicApiLimiter = expressRateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests. Please slow down.' },
+});
+
+module.exports = { rateLimit, loginLimiter, adminApiLimiter, publicApiLimiter };

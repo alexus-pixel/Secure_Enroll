@@ -3,7 +3,7 @@ import AppNav from '../components/AppNav';
 import PasswordInput from '../components/PasswordInput';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { validateName, validatePassword, validateConfirmPassword } from '../utils/validators';
+import { validateName, validateInitial, validatePassword, validateConfirmPassword, INITIAL_MAX } from '../utils/validators';
 import { useScrollToError } from '../hooks/useScrollToError';
 
 export default function AccountSettings() {
@@ -38,7 +38,7 @@ export default function AccountSettings() {
     const nextErrors = {
       firstName: validateName(profile.firstName, { label: 'First name' }),
       lastName: validateName(profile.lastName, { label: 'Last name' }),
-      middleName: validateName(profile.middleName, { required: false, label: 'M.I.', max: 5 }),
+      middleName: validateInitial(profile.middleName),
     };
     setProfileErrors(nextErrors);
     if (Object.values(nextErrors).some(Boolean)) return;
@@ -97,11 +97,11 @@ export default function AccountSettings() {
 
   return (
     <>
-      <AppNav crumbs={[{ label: 'Account Settings' }]} />
+      <AppNav crumbs={[{ label: 'Edit Profile' }]} />
       <div className="container container-narrow">
         <div className="page-head">
           <div>
-            <h1>Account Settings</h1>
+            <h1>Edit Profile</h1>
             <p>Update your name and password</p>
           </div>
         </div>
@@ -126,9 +126,9 @@ export default function AccountSettings() {
                   {profileErrors.lastName && <p className="field-error">{profileErrors.lastName}</p>}
                 </div>
                 <div>
-                  <label className="label" htmlFor="middleName">M.I</label>
+                  <label className="label" htmlFor="middleName">M.I. (optional)</label>
                   <input id="middleName" className={`input${profileErrors.middleName ? ' input-error' : ''}`}
-                    value={profile.middleName} onChange={updateProfileField('middleName')} maxLength={5} />
+                    value={profile.middleName} onChange={updateProfileField('middleName')} maxLength={INITIAL_MAX} />
                   {profileErrors.middleName && <p className="field-error">{profileErrors.middleName}</p>}
                 </div>
               </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getAllSubjects, getDegreeOptions, checkTeacherEmail } from '../../api/admin';
+import { sanitizePhone } from '../../utils/validators';
 
 const OTHER_CODE = 'OTHER';
 const STATUS_OPTIONS = [
@@ -179,7 +180,8 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
               )}
             </div>
             <div><label className="label">Contact number</label>
-              <input className="input" placeholder="09171234567" value={form.contactNumber} onChange={(e) => setForm({ ...form, contactNumber: e.target.value })} required /></div>
+              <input className="input" placeholder="09171234567 or +639171234567" inputMode="tel" maxLength={13} value={form.contactNumber} onChange={(e) => setForm({ ...form, contactNumber: sanitizePhone(e.target.value) })} required />
+              <p className="hint">09XXXXXXXXX (11 digits) or +63XXXXXXXXXX (13 characters).</p></div>
           </div>
           <p className="hint">The email is also where the master list and schedule PDFs get sent from the Teachers page.</p>
 
