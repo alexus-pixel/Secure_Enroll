@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getDashboardOverview, getDashboardApplications } from '../../api/admin';
+import Pagination, { usePagination } from '../../components/Pagination';
 
 const STATUS_LABELS = {
   submitted: 'Submitted', under_review: 'Under Review', resubmitted: 'Resubmitted', needs_revision: 'Needs Revision',
@@ -24,6 +25,8 @@ export default function DashboardPage() {
   useEffect(() => {
     getDashboardApplications(filters).then(setApplications).catch(() => {});
   }, [filters]);
+
+  const applicationsPager = usePagination(applications.applications);
 
   if (loading) return <div className="empty-state">Loading dashboard...</div>;
   if (error) return <div className="alert alert-error">{error}</div>;
@@ -72,7 +75,7 @@ export default function DashboardPage() {
             onChange={(e) => setFilters({ ...filters, status: e.target.value })}
           >
             <option value="">All statuses</option>
-            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+            {Object.entries(STATUS_LABELS).filter(([value]) => value !== 'draft').map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
@@ -105,7 +108,7 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {applications.applications.map((a) => (
+              {applicationsPager.pageRows.map((a) => (
                 <tr key={a.id}>
                   <td><b>{a.last_name}, {a.first_name}</b></td>
                   <td>{a.grade_level}</td>
@@ -118,12 +121,21 @@ export default function DashboardPage() {
                   <td><Link className="btn btn-secondary btn-sm" to={`/admin/applications/${a.id}`}>Review</Link></td>
                 </tr>
               ))}
-              {applications.applications.length === 0 && (
+              {applicationsPager.total === 0 && (
                 <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>No applications match these filters.</td></tr>
               )}
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={applicationsPager.page}
+          totalPages={applicationsPager.totalPages}
+          total={applicationsPager.total}
+          from={applicationsPager.from}
+          to={applicationsPager.to}
+          onPage={applicationsPager.setPage}
+          label="applications"
+        />
       </div>
 
       <div className="settings-grid" style={{ marginTop: 18 }}>
@@ -131,7 +143,7 @@ export default function DashboardPage() {
           <h2>Enrollment by Grade Level</h2>
           {byGrade.map((g) => (
             <div key={g.id} style={{ marginBottom: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 4 }}>
                 <span>{g.name}</span>
                 <span className="muted">{g.enrolled}/{g.capacity}</span>
               </div>
@@ -147,7 +159,7 @@ export default function DashboardPage() {
           {statusBreakdown.map((s) => (
             <div key={s.status} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0' }}>
               <span className={`pill pill-${s.status}`}>{STATUS_LABELS[s.status] || s.status}</span>
-              <span style={{ fontSize: 12.5 }}>
+              <span style={{ fontSize: 14 }}>
                 <b>{s.count}</b> <span className="muted">({Math.round((s.count / totalStatus) * 100)}%)</span>
               </span>
             </div>
@@ -157,7 +169,7 @@ export default function DashboardPage() {
 
       <div className="card" style={{ marginTop: 18 }}>
         <h2>Active Registrar Sessions</h2>
-        {registrarActivity.length === 0 && <p className="muted" style={{ fontSize: 13 }}>No registrar activity yet.</p>}
+        {registrarActivity.length === 0 && <p className="muted" style={{ fontSize: 14.5 }}>No registrar activity yet.</p>}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
           {registrarActivity.map((r) => (
             <div key={r.id} className="card" style={{ margin: 0, padding: 14 }}>
@@ -166,7 +178,7 @@ export default function DashboardPage() {
                   width: 8, height: 8, borderRadius: '50%',
                   background: r.is_active ? 'var(--success)' : 'var(--faint)',
                 }} />
-                <b style={{ fontSize: 13 }}>{r.email}</b>
+                <b style={{ fontSize: 14.5 }}>{r.email}</b>
               </div>
               <div className="cell-sub" style={{ marginTop: 4 }}>{r.action}</div>
               <div className="cell-sub">{new Date(r.created_at).toLocaleString()}</div>

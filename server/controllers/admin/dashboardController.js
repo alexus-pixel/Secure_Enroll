@@ -33,14 +33,17 @@ async function applications(req, res) {
     if (submittedDate) {
       const d = new Date(submittedDate);
       if (d < new Date(activeYear.opens_at) || d > new Date(activeYear.closes_at)) {
-        return res.json({ applications: [], total: 0, page: 1, limit: Number(limit) || 20 });
+        return res.json({ applications: [], total: 0, page: 1, limit: Math.min(Math.max(Number(limit) || 20, 1), 200) });
       }
     }
 
     const result = await dashboardDb.listApplications({
       schoolYearId: activeYear.id,
       status, gradeLevelId, submittedDate,
-      page: Number(page) || 1, limit: Number(limit) || 20,
+      // Bounded for the same reason the audit log is: a page size out of a URL
+      // is user input.
+      page: Math.max(Number(page) || 1, 1),
+      limit: Math.min(Math.max(Number(limit) || 20, 1), 200),
     });
     res.json(result);
   } catch (err) {

@@ -5,33 +5,83 @@
 // and reopens the alert: an infinite loop. Inline text next to the field can't
 // do that, because it never takes focus.)
 
-export const NAME_MAX = 60;
+export const NAME_MIN = 2;
+export const NAME_MAX = 50;
 export const EMAIL_MAX = 254;
 export const PASSWORD_MAX_BYTES = 72; // bcrypt ignores everything after 72 bytes
-export const ADDRESS_MAX = 255;
+export const ADDRESS_MIN = 10;
+export const ADDRESS_MAX = 150;
 export const NOTE_MAX = 500;
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
-// Any file type is accepted except audio and video.
-const MEDIA_EXTENSIONS = /\.(mp3|wav|wma|aac|flac|ogg|oga|opus|m4a|m4b|mid|midi|aif|aiff|amr|weba|mp4|m4v|mov|avi|mkv|webm|wmv|flv|f4v|mpg|mpeg|mpe|3gp|3g2|ogv|mts|m2ts|vob)$/i;
+
+// Only three file types are accepted, here and on the server
+// (server/middleware/upload.js, which also checks the file's real bytes).
+export const ALLOWED_FILE_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png'];
+export const ALLOWED_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
+// Put this on every <input type="file"> so the picker offers nothing else.
+export const FILE_ACCEPT = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
+export const FILE_TYPE_MESSAGE = 'Only PDF, JPG and PNG files are accepted.';
 
 // Letters of any language (Niño, Peña, Réyes), spaces, . ' ’ and -
 export const NAME_RE = /^[\p{L}\p{M}][\p{L}\p{M} .'’-]*$/u;
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// 09XXXXXXXXX (11 digits) or +63XXXXXXXXXX (13 characters: "+" then digits only)
-export const PH_MOBILE_RE = /^(09\d{9}|\+63\d{10})$/;
+// A parent signs in with their own Gmail, so these fields take nothing else.
+export const GMAIL_DOMAIN = '@gmail.com';
+// What Google allows in front of the @: letters, digits and dots, starting and
+// ending with a letter or digit, never two dots together, at most 30 long. A
+// "+tag" alias is allowed and checked on the part before the +.
+export const GMAIL_LOCAL_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|\.(?!\.)){0,28}[A-Za-z0-9]$/;
+// 09XXXXXXXXX (11 digits) or +639XXXXXXXXX (13 characters: "+" then digits only)
+export const PH_MOBILE_RE = /^(09\d{9}|\+639\d{9})$/;
 export const INITIAL_MAX = 2; // middle initial: "M" or "M."
 export const CONTACT_MAX = 13;
 export const LRN_RE = /^\d{12}$/;
+// An address: letters, digits, spaces and the punctuation a Philippine address
+// actually uses — , . # - /  (Blk 15 Lot 40, Kingstown Ph. 1 / Brgy. 176)
+export const ADDRESS_RE = /^[\p{L}\p{M}\d ,.#/-]+$/u;
 
-export const RELATIONSHIPS = [
-  'Mother', 'Father', 'Guardian', 'Grandmother', 'Grandfather', 'Aunt', 'Uncle', 'Sibling', 'Other',
-];
+export const RELATIONSHIPS = ['Mother', 'Father', 'Guardian', 'Grandparent', 'Other'];
 
-export function validateName(value, { required = true, label = 'This field', max = NAME_MAX } = {}) {
+export function validateName(value, {
+  required = true, label = 'This field', max = NAME_MAX, min = NAME_MIN,
+} = {}) {
   const v = (value || '').trim();
   if (!v) return required ? `${label} is required.` : '';
+  if (v.length < min) return `${label} must be at least ${min} characters.`;
   if (v.length > max) return `${label} is too long (up to ${max} characters).`;
-  if (!NAME_RE.test(v)) return `${label} should contain letters only.`;
+  if (/\d/.test(v)) return `${label} cannot contain numbers.`;
+  if (!NAME_RE.test(v)) return `${label} should contain letters only (spaces, . ' - are fine).`;
+  return '';
+}
+
+/** Trimmed and lowercased, which is how a Gmail address is stored. */
+export function normalizeGmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+/**
+ * A parent's Gmail. Checks the shape Google itself allows, so a typed-in
+ * address that could not belong to anybody is caught at the desk rather than
+ * after a verification email silently goes nowhere.
+ */
+export function validateGmail(value, { label = 'Gmail address' } = {}) {
+  const v = normalizeGmail(value);
+  if (!v) return `${label} is required.`;
+  if (v.length > EMAIL_MAX) return `${label} is too long.`;
+  if ((v.match(/@/g) || []).length !== 1) return `Enter a valid ${label.toLowerCase()}.`;
+  if (!v.endsWith(GMAIL_DOMAIN)) return `Enter a Gmail address ending in ${GMAIL_DOMAIN}.`;
+  const local = v.slice(0, -GMAIL_DOMAIN.length).split('+')[0];
+  if (!local) return `Enter a valid ${label.toLowerCase()}.`;
+  if (local.length > 30) return 'A Gmail address has at most 30 characters before the @.';
+  if (!GMAIL_LOCAL_RE.test(local)) {
+    return 'Before the @, a Gmail address uses letters, numbers and dots only.';
+  }
+  return '';
+}
+
+export function validateConfirmGmail(email, confirm) {
+  if (!String(confirm || '').trim()) return 'Please confirm the Gmail address.';
+  if (normalizeGmail(email) !== normalizeGmail(confirm)) return 'The two Gmail addresses do not match.';
   return '';
 }
 
@@ -59,6 +109,7 @@ export function validateContactNumber(value) {
   if (v.startsWith('+')) {
     if (!/^\+63/.test(v)) return 'A number starting with + must start with +63.';
     if (!/^\+63\d*$/.test(v)) return 'After +63, use digits only.';
+    if (!/^\+639/.test(v)) return 'A mobile number is +639 followed by 9 digits (e.g. +639171234567).';
     if (v.length !== 13) return 'With +63 the number must be 13 characters long (e.g. +639171234567).';
     return '';
   }
@@ -70,7 +121,29 @@ export function validateContactNumber(value) {
 
 // Middle initial: optional, letters only, at most 2 characters.
 export function validateInitial(value, { label = 'M.I.' } = {}) {
-  return validateName(value, { required: false, label, max: INITIAL_MAX });
+  return validateName(value, { required: false, label, max: INITIAL_MAX, min: 1 });
+}
+
+/**
+ * A middle name. Optional only when the person has ticked "No middle name":
+ * leaving it blank by accident is a different thing from saying there isn't
+ * one, and the second is what the record should say.
+ */
+export function validateMiddleName(value, { none = false, label = 'Middle name' } = {}) {
+  if (none) return '';
+  const v = (value || '').trim();
+  if (!v) return `${label} is required. Tick “No middle name” if there isn’t one.`;
+  return validateName(v, { label });
+}
+
+/** A home address. */
+export function validateAddress(value, { label = 'Address' } = {}) {
+  const v = (value || '').trim().replace(/\s+/g, ' ');
+  if (!v) return `${label} is required.`;
+  if (v.length < ADDRESS_MIN) return `${label} is too short — give the house or block, street and barangay.`;
+  if (v.length > ADDRESS_MAX) return `${label} is too long (up to ${ADDRESS_MAX} characters).`;
+  if (!ADDRESS_RE.test(v)) return `${label} may use letters, numbers and , . # - / only.`;
+  return '';
 }
 
 // Free text such as a home address: required, limited length, no < or >.
@@ -82,6 +155,11 @@ export function validateText(value, { required = true, label = 'This field', max
   return '';
 }
 
+/** Keeps only digits while an LRN is being typed, never more than 12. */
+export function sanitizeLrn(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 12);
+}
+
 // 12 digits. Pass { required: true } where the LRN must be given (Grade 1-6).
 export function validateLrn(value, { required = false } = {}) {
   const v = (value || '').trim();
@@ -91,7 +169,7 @@ export function validateLrn(value, { required = false } = {}) {
   return '';
 }
 
-// A school-age learner: a real date, not in the future, aged 3 to 18.
+// A real calendar date that is not in the future. Age is not restricted.
 export function validateBirthDate(value, today = new Date()) {
   const v = (value || '').trim();
   if (!v) return 'Birth date is required.';
@@ -103,27 +181,96 @@ export function validateBirthDate(value, today = new Date()) {
     return 'That date does not exist. Please check the birth date.';
   }
   if (date > today) return 'The birth date cannot be in the future.';
-  let age = today.getFullYear() - y;
-  if (today.getMonth() + 1 < mo || (today.getMonth() + 1 === mo && today.getDate() < d)) age -= 1;
-  if (age < 3) return 'The learner must be at least 3 years old.';
-  if (age > 18) return 'The learner must be 18 years old or younger.';
+  // No age limit: any past date is accepted for any grade level.
   return '';
 }
 
-// Date input limits for a birth date field (min = 18 years back, max = today).
+// Date input limits for a birth date field. There is no lower limit, so the
+// picker opens on a full list of years; the only impossible date is one in
+// the future. How old the learner has to be is decided per grade level below.
 export function birthDateBounds(today = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   const fmt = (dt) => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
-  const min = new Date(today.getFullYear() - 19, today.getMonth(), today.getDate() + 1);
-  return { min: fmt(min), max: fmt(today) };
+  return { max: fmt(today) };
 }
 
-// One uploaded document: any file type except audio and video, up to 5 MB.
+/* ---------------------------------------------------------------------------
+ * The birth date rule. There is no age limit: a learner may be any age for any
+ * grade level. The date only has to be real and not in the future. Mirrors
+ * server/lib/ageRules.js — change both together.
+ * ------------------------------------------------------------------------- */
+function parseIsoDate(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '').trim());
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) return null;
+  return date;
+}
+
+/** Whole years between a birth date and a reference date — for display only. */
+export function ageOn(birthDate, referenceDate) {
+  const birth = parseIsoDate(birthDate);
+  const ref = referenceDate instanceof Date ? referenceDate : parseIsoDate(referenceDate);
+  if (!birth || !ref) return null;
+  let age = ref.getUTCFullYear() - birth.getUTCFullYear();
+  const beforeBirthday = ref.getUTCMonth() < birth.getUTCMonth()
+    || (ref.getUTCMonth() === birth.getUTCMonth() && ref.getUTCDate() < birth.getUTCDate());
+  return beforeBirthday ? age - 1 : age;
+}
+
+/* ---------------------------------------------------------------------------
+ * How young is too young for a grade level.
+ *
+ * There is no upper limit — a learner may be any age above the minimum, and
+ * adults finishing elementary school are welcome. There is a lower one: a
+ * four-year-old cannot be put into Grade 1, and a learner years younger than
+ * their grade is a mistyped birth date far more often than a prodigy. The
+ * minimum is a year below the usual entry age, so a child who turns the usual
+ * age during the school year still fits. Mirrors server/lib/ageRules.js —
+ * change both together.
+ * ------------------------------------------------------------------------- */
+const MIN_AGE_BY_SORT_ORDER = [4, 5, 6, 7, 8, 9, 10];
+export function minAgeForGrade(sortOrder) {
+  const i = Number(sortOrder);
+  if (!Number.isFinite(i) || i < 0) return 0;
+  return i < MIN_AGE_BY_SORT_ORDER.length
+    ? MIN_AGE_BY_SORT_ORDER[i]
+    : MIN_AGE_BY_SORT_ORDER[MIN_AGE_BY_SORT_ORDER.length - 1] + (i - MIN_AGE_BY_SORT_ORDER.length + 1);
+}
+
+/**
+ * The birth date, plus "is this learner old enough for this grade level".
+ * `grade` is { sortOrder, name }; without one, only the date itself is checked.
+ * `yearStartsOn` is the first day of classes, because that is when the age
+ * that matters is counted.
+ */
+export function validateBirthDateForGrade(value, grade = null, yearStartsOn = null) {
+  const basic = validateBirthDate(value);
+  if (basic) return basic;
+  if (!grade || grade.sortOrder === undefined || grade.sortOrder === null) return '';
+
+  const reference = parseIsoDate(yearStartsOn) || new Date();
+  const age = ageOn(value, reference);
+  const minimum = minAgeForGrade(grade.sortOrder);
+  if (age === null || age >= minimum) return '';
+
+  const name = grade.name || 'that grade level';
+  return `A learner has to be at least ${minimum} years old to enter ${name}, and this birth date makes `
+    + `them ${age === 1 ? '1 year' : `${age} years`} old when classes start. Check the birth date, `
+    + 'or choose a lower grade level.';
+}
+
 export function validateFile(file, { label = 'This file' } = {}) {
   if (!file) return '';
-  if (/^(audio|video)\//i.test(file.type || '') || MEDIA_EXTENSIONS.test(file.name || '')) {
-    return `${label} cannot be an audio or video file. Please choose a document or an image.`;
-  }
+  const name = String(file.name || '').toLowerCase();
+  const dot = name.lastIndexOf('.');
+  const ext = dot >= 0 ? name.slice(dot) : '';
+  const type = String(file.type || '').toLowerCase().split(';')[0].trim();
+  if (!ALLOWED_FILE_EXTENSIONS.includes(ext)) return `${label}: ${FILE_TYPE_MESSAGE}`;
+  // An empty type happens on some phones; the extension is enough there, and
+  // the server checks the real bytes either way.
+  if (type && !ALLOWED_FILE_TYPES.includes(type)) return `${label}: ${FILE_TYPE_MESSAGE}`;
   if (file.size > MAX_UPLOAD_BYTES) return `${label} is larger than 5 MB.`;
   if (file.size === 0) return `${label} is empty.`;
   return '';

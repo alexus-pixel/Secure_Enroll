@@ -66,4 +66,6 @@ require('./db/ensureSchema').ensureSchema()
     app.listen(PORT, () => console.log(`SecureEnroll API running on port ${PORT}`));
     // Emails each section's master list to its adviser once enrollment closes.
     if (process.env.DISABLE_MAIL_SCHEDULER !== '1') require('./lib/masterListMail').startScheduler();
+    // Starts the next school year by itself once the current one ends.
+    require('./lib/schoolYearRollover').startRolloverScheduler();
   });

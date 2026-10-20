@@ -16,6 +16,41 @@ async function resolveSchoolYear(req) {
   return settingsDb.getActiveSchoolYear();
 }
 
+/**
+ * The school years, and the teachers who can be put on a period: read-only
+ * lists the schedule screens need. They sit behind schedule.manage so the
+ * registrar can run the schedules without also being able to change the
+ * school's settings or edit teacher records.
+ */
+async function scheduleSchoolYears(req, res) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, label, opens_at, closes_at, is_active, enrollment_open, dates_confirmed,
+              (closes_at <= CURRENT_DATE) AS is_ended
+       FROM school_years ORDER BY opens_at DESC`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Could not load the school years.' });
+  }
+}
+
+async function scheduleTeachers(req, res) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, first_name, last_name, middle_name, is_active, status, max_periods_per_day
+       FROM teachers
+       WHERE is_active AND status = 'active'
+       ORDER BY last_name, first_name`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Could not load the teachers.' });
+  }
+}
+
 async function gradeSummary(req, res) {
   try {
     const year = await resolveSchoolYear(req);
@@ -60,30 +95,134 @@ async function allSubjects(req, res) {
   }
 }
 
+// A rule the admin broke rather than a fault: the reply carries the
+// reason code the UI switches on plus the numbers behind the message
+// (the grade's limit, how many subjects it has), so the panel can say
+// "Grade 3 is already at its limit of 10 subjects" without parsing
+// prose or asking again.
+function sendRuleError(err, res) {
+  if (!err.status) return false;
+  res.status(err.status).json({
+    message: err.message,
+    ...(err.reason ? { reason: err.reason } : {}),
+    ...(err.details || {}),
+  });
+  return true;
+}
+
+// Everything the subject panel on the grade's schedule page needs:
+// the grade's subjects (with how many periods and teachers each one
+// is tied to), the per-grade limit, and the live count.
+async function subjectSettings(req, res) {
+  try {
+    const year = await resolveSchoolYear(req);
+    if (!year) return res.status(404).json({ message: 'No active school year is set.' });
+    const settings = await schedulesDb.getSubjectSettings(req.params.gradeLevelId, year.id);
+    if (settings.notFound) return res.status(404).json({ message: 'That grade level does not exist.' });
+    res.json(settings);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Could not load subjects.' });
+  }
+}
+
 async function createSubject(req, res) {
   try {
     const activeYear = await settingsDb.getActiveSchoolYear();
     if (!activeYear) return res.status(404).json({ message: 'No active school year is set.' });
-    const subject = await schedulesDb.createSubject({ ...req.body, schoolYearId: activeYear.id });
-    await logAudit(req.user.id, 'SUBJECT_CREATED', 'subject', subject.id, req, { name: subject.name });
-    res.status(201).json(subject);
+    const result = await schedulesDb.createSubject({ ...req.body, schoolYearId: activeYear.id });
+    await logAudit(req.user.id, 'SUBJECT_CREATED', 'subject', result.subject.id, req, {
+      name: result.subject.name, gradeLevelId: req.body.gradeLevelId, isDomain: result.subject.is_domain,
+    });
+    res.status(201).json({ ...result.subject, count: result.count, maxSubjects: result.maxSubjects });
   } catch (err) {
+    if (sendRuleError(err, res)) return;
     if (sendDbError(err, res)) return;
-    if (err.code === '23505') return res.status(409).json({ message: 'That subject already exists for this grade level.' });
+    if (err.code === '23505') return res.status(409).json({ message: 'That subject already exists for this grade level.', reason: 'duplicate_subject_name' });
     console.error(err);
     res.status(500).json({ message: 'Could not create subject.' });
   }
 }
 
+// Renaming (and switching a subject to or from a learning domain)
+// stays allowed while the subject is on the timetable — the periods
+// point at its id, so they simply show the new name.
+async function updateSubject(req, res) {
+  try {
+    const result = await schedulesDb.updateSubject(Number(req.params.id), req.body);
+    if (result.notFound) return res.status(404).json({ message: 'Subject not found.' });
+    await logAudit(req.user.id, 'SUBJECT_UPDATED', 'subject', Number(req.params.id), req, {
+      from: { name: result.before.name, isDomain: result.before.is_domain },
+      to: { name: result.subject.name, isDomain: result.subject.is_domain },
+    });
+    res.json(result.subject);
+  } catch (err) {
+    if (sendRuleError(err, res)) return;
+    if (sendDbError(err, res)) return;
+    if (err.code === '23505') return res.status(409).json({ message: 'That subject already exists for this grade level.', reason: 'duplicate_subject_name' });
+    console.error(err);
+    res.status(500).json({ message: 'Could not rename subject.' });
+  }
+}
+
 async function deleteSubject(req, res) {
   try {
-    await schedulesDb.deleteSubject(req.params.id);
-    await logAudit(req.user.id, 'SUBJECT_REMOVED', 'subject', Number(req.params.id), req);
-    res.status(204).end();
+    const result = await schedulesDb.deleteSubject(Number(req.params.id));
+    if (result.notFound) return res.status(404).json({ message: 'Subject not found.' });
+    await logAudit(req.user.id, 'SUBJECT_REMOVED', 'subject', Number(req.params.id), req, {
+      name: result.subject.name, teacherLinksRemoved: result.teacherLinksRemoved,
+    });
+    res.json({ removed: true, name: result.subject.name, teacherLinksRemoved: result.teacherLinksRemoved });
   } catch (err) {
-    if (err.status) return res.status(err.status).json({ message: err.message });
+    if (sendRuleError(err, res)) return;
     console.error(err);
     res.status(500).json({ message: 'Could not remove subject.' });
+  }
+}
+
+// How many subjects this grade may have at all (1-20). The number is
+// a property of the grade level itself, not of one school year, so
+// the count it is checked against is the active year's.
+async function setMaxSubjects(req, res) {
+  try {
+    const activeYear = await settingsDb.getActiveSchoolYear();
+    if (!activeYear) return res.status(404).json({ message: 'No active school year is set.' });
+    const result = await schedulesDb.setMaxSubjects(
+      Number(req.params.gradeLevelId), req.body.maxSubjects, activeYear.id
+    );
+    if (result.notFound) return res.status(404).json({ message: 'That grade level does not exist.' });
+    await logAudit(req.user.id, 'GRADE_MAX_SUBJECTS_CHANGED', 'grade_level', result.gradeLevelId, req, {
+      gradeLevelName: result.gradeLevelName, from: result.previousMax, to: result.maxSubjects,
+    });
+    res.json(result);
+  } catch (err) {
+    if (sendRuleError(err, res)) return;
+    if (sendDbError(err, res)) return;
+    console.error(err);
+    res.status(500).json({ message: 'Could not change the subject limit.' });
+  }
+}
+
+/**
+ * Who advises the section whose schedule is on screen. The adviser
+ * is sections.adviser_teacher_id, set from School Settings — but the
+ * registrar runs the schedules without being able to reach the
+ * school-settings endpoints, so the read lives here, behind
+ * schedule.manage, alongside /school-years and /teachers.
+ *
+ * Replies with adviserTeacherId: null and adviserName: null for a
+ * section that has no adviser yet; the page shows "No adviser yet".
+ */
+async function sectionAdviser(req, res) {
+  try {
+    const year = await resolveSchoolYear(req);
+    if (!year) return res.status(404).json({ message: 'No active school year is set.' });
+    const result = await schedulesDb.getSectionAdviser(req.params.sectionId, year.id);
+    if (result.notFound) return res.status(404).json({ message: 'Section not found.' });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Could not load the section adviser.' });
   }
 }
 
@@ -145,10 +284,16 @@ function conflictMessage(conflict) {
     + `${conflict.start_time?.slice(0, 5)}\u2013${conflict.end_time?.slice(0, 5)}.`;
 }
 
-function dailyCapMessage(dailyCapExceeded) {
+function dailyCapMessage(x) {
   const dayNames = { 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday' };
-  return `This teacher is already at their daily limit on ${dayNames[dailyCapExceeded.day]} `
-    + `(${dailyCapExceeded.current}/${dailyCapExceeded.cap} periods).`;
+  // Two different ceilings can bind: the teacher's own limit, or the number of
+  // periods the day actually runs. Saying which one it is saves a guess.
+  if (x.daySlots && x.teacherCap && x.daySlots < x.teacherCap) {
+    return `${dayNames[x.day]} only runs ${x.daySlots} period${x.daySlots === 1 ? '' : 's'}, `
+      + `and this teacher already has ${x.current} of them. Add another period to the day first.`;
+  }
+  return `This teacher is already at their daily limit on ${dayNames[x.day]} `
+    + `(${x.current}/${x.cap} periods).`;
 }
 
 function duplicateSubjectMessage(duplicateSubject) {
@@ -156,6 +301,22 @@ function duplicateSubjectMessage(duplicateSubject) {
   const days = (duplicateSubject.days || []).map((d) => dayNames[d]).join('/');
   return `This subject is already scheduled for this section on ${days}, `
     + `${duplicateSubject.start_time?.slice(0, 5)}\u2013${duplicateSubject.end_time?.slice(0, 5)}.`;
+}
+
+// A period whose time sits in the other half of the day from the
+// session it was filed under. The reply names the session and the
+// times, and which field is at fault, so the drawer can mark that
+// field instead of only showing a banner.
+function sendSessionMismatch(mismatch, res) {
+  return res.status(409).json({
+    message: mismatch.message,
+    reason: 'session_time_mismatch',
+    field: mismatch.field,
+    session: mismatch.session,
+    startTime: mismatch.startTime,
+    endTime: mismatch.endTime,
+    errors: [{ field: mismatch.field, message: mismatch.message }],
+  });
 }
 
 async function createEntry(req, res) {
@@ -166,6 +327,7 @@ async function createEntry(req, res) {
     const result = await schedulesDb.createScheduleEntry({
       ...req.body, schoolYearId: activeYear.id, createdBy: req.user.id,
     });
+    if (result.sessionMismatch) return sendSessionMismatch(result.sessionMismatch, res);
     if (result.duplicateSubject) {
       return res.status(409).json({ message: duplicateSubjectMessage(result.duplicateSubject) });
     }
@@ -184,7 +346,7 @@ async function createEntry(req, res) {
     res.status(201).json(result.entry);
   } catch (err) {
     if (sendDbError(err, res)) return;
-    if (err.status) return res.status(err.status).json({ message: err.message });
+    if (sendRuleError(err, res)) return;
     console.error(err);
     res.status(500).json({ message: 'Could not save the schedule entry.' });
   }
@@ -194,6 +356,7 @@ async function updateEntry(req, res) {
   try {
     const result = await schedulesDb.updateScheduleEntry(Number(req.params.id), req.body);
     if (result.notFound) return res.status(404).json({ message: 'Schedule entry not found.' });
+    if (result.sessionMismatch) return sendSessionMismatch(result.sessionMismatch, res);
     if (result.duplicateSubject) {
       return res.status(409).json({ message: duplicateSubjectMessage(result.duplicateSubject) });
     }
@@ -242,6 +405,8 @@ async function teacherAssignments(req, res) {
 }
 
 module.exports = {
-  gradeSummary, sectionsForGrade, subjectsForGrade, allSubjects, createSubject, deleteSubject,
-  sectionSchedule, checkConflict, createEntry, updateEntry, deleteEntry, teacherAssignments,
+  scheduleSchoolYears, scheduleTeachers,
+  gradeSummary, sectionsForGrade, subjectsForGrade, subjectSettings, allSubjects,
+  createSubject, updateSubject, deleteSubject, setMaxSubjects,
+  sectionSchedule, sectionAdviser, checkConflict, createEntry, updateEntry, deleteEntry, teacherAssignments,
 };

@@ -22,6 +22,10 @@ export default function ApplicationView() {
   const [loadError, setLoadError] = useState('');
   const [remarks, setRemarks] = useState('');
   const [notice, setNotice] = useState(null); // { type: 'ok' | 'error', text }
+  // "This LRN is not correct" — the note the parent will see, and its state.
+  const [flagging, setFlagging] = useState(false);
+  const [flagNote, setFlagNote] = useState('');
+  const [flagSaving, setFlagSaving] = useState(false);
   const [viewing, setViewing] = useState(null); // document type being viewed
   const [deciding, setDeciding] = useState(false);
   // The section list shown after Approve (or for an approved learner with no section yet).
@@ -64,11 +68,17 @@ export default function ApplicationView() {
   const locked = finalized || awaitingParent;
   const docs = app.documents;
   const viewingDoc = docs.find((d) => d.type === viewing);
-  // A decision needs every file on record reviewed and the grade qualification marked.
+  // A decision needs every file on record reviewed and the grade qualification
+  // marked. Kinder is the entry grade: there are no previous grades to qualify
+  // with, so that step does not exist for it at all.
   const toReview = docs.filter((d) => (d.hasFile || d.receivedInPerson) && d.status === 'pending');
-  const qualificationMarked = Boolean(app.gradeQualification);
+  const needsQualification = app.requiresQualification !== false;
+  const qualificationMarked = !needsQualification || Boolean(app.gradeQualification);
   const reviewDone = toReview.length === 0 && qualificationMarked;
   const problemDocs = docs.filter((d) => d.status === 'flagged' || d.status === 'rejected');
+  const reviewTodoTitle = needsQualification
+    ? 'Review every document and the grade qualification first'
+    : 'Review every document first';
 
   // Verify, flag or reject one document. Throws on failure so the
   // dialog or viewer that called it can show the error.
@@ -86,6 +96,21 @@ export default function ApplicationView() {
     await api.patch(`/registrar/applications/${id}/documents/${type}`, { status, note });
     setNotice(null);
     load();
+  }
+
+  // Tell the parent the LRN on file is wrong, and clear it.
+  async function flagLrn() {
+    setFlagSaving(true);
+    try {
+      await api.post(`/registrar/students/${app.studentId}/lrn-flag`, { note: flagNote.trim() });
+      setFlagging(false);
+      setNotice({ type: 'ok', text: 'The LRN was cleared and the parent has been asked for the correct one.' });
+      load();
+    } catch (err) {
+      setNotice({ type: 'error', text: err.response?.data?.message || 'Could not flag that LRN.' });
+    } finally {
+      setFlagSaving(false);
+    }
   }
 
   async function setQualification(value) {
@@ -173,8 +198,55 @@ export default function ApplicationView() {
         <StatusBadge status={app.status} />
       </p>
 
-      {app.missingLrn && (
+      {app.missingLrn && !app.lrnFlaggedAt && (
         <div className="reg-banner">This student has no LRN on file yet. You can enter it under Missing LRN.</div>
+      )}
+      {app.lrnFlaggedAt && (
+        <div className="reg-banner reg-banner-warn">
+          The LRN for this learner was flagged as incorrect on {fmt(app.lrnFlaggedAt)} and removed.
+          The parent has been asked to send the right one.
+          {app.lrnFlagNote && <div style={{ marginTop: 4 }}><b>Reason:</b> {app.lrnFlagNote}</div>}
+        </div>
+      )}
+
+      {/* "I cannot find this LRN in the LIS." Clears the wrong number and asks
+          the parent for the correct one. */}
+      {!app.missingLrn && !finalized && (
+        <div className="reg-card">
+          <p className="reg-card-label">Learner Reference Number</p>
+          {!flagging ? (
+            <div className="reg-item">
+              <div className="reg-item-main">
+                <div className="reg-item-name">An LRN is on file for this learner</div>
+                <div className="reg-item-meta">
+                  If you cannot find it in the DepEd LIS, flag it: the number is removed and the parent is
+                  asked to send the correct one.
+                </div>
+              </div>
+              <div className="reg-item-actions">
+                <button type="button" className="reg-btn reg-btn-sm reg-btn-orange" onClick={() => { setFlagging(true); setFlagNote(''); }}>
+                  LRN not correct
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="reg-label" htmlFor="lrn-flag-note">
+                What is wrong with it? The parent sees this note.
+              </label>
+              <textarea id="lrn-flag-note" className="reg-textarea" value={flagNote}
+                onChange={(e) => setFlagNote(e.target.value)}
+                placeholder="e.g. This LRN is not found in the DepEd LIS for this learner." />
+              <div className="reg-actions" style={{ marginTop: 8 }}>
+                <button type="button" className="reg-btn reg-btn-orange" disabled={flagSaving || flagNote.trim().split(/\s+/).filter(Boolean).length < 3}
+                  onClick={flagLrn}>
+                  {flagSaving ? 'Saving…' : 'Flag this LRN and notify the parent'}
+                </button>
+                <button type="button" className="reg-btn" onClick={() => setFlagging(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
       {notice && <div className={`reg-notice reg-notice-${notice.type}`} role="status">{notice.text}</div>}
       {finalized && (
@@ -222,6 +294,7 @@ export default function ApplicationView() {
         })}
       </div>
 
+      {needsQualification && (
       <div className="reg-card">
         <p className="reg-card-label">Requirements</p>
         <div className="reg-item">
@@ -241,6 +314,7 @@ export default function ApplicationView() {
           </div>
         </div>
       </div>
+      )}
 
       <div className="reg-card">
         <p className="reg-card-title">Registrar Remarks</p>
@@ -296,17 +370,17 @@ export default function ApplicationView() {
 
       <div className="reg-actions">
         <button className="reg-btn reg-btn-blue" disabled={locked || deciding || !reviewDone || problemDocs.length > 0}
-          title={!reviewDone ? 'Review every document and the grade qualification first' : problemDocs.length ? 'Resolve flagged or rejected documents first' : undefined}
+          title={!reviewDone ? reviewTodoTitle : problemDocs.length ? 'Resolve flagged or rejected documents first' : undefined}
           onClick={() => openSectionPicker('approve')}>
           Approve Application
         </button>
         <button className="reg-btn reg-btn-orange" disabled={locked || deciding || !reviewDone}
-          title={!reviewDone ? 'Review every document and the grade qualification first' : undefined}
+          title={!reviewDone ? reviewTodoTitle : undefined}
           onClick={() => decide('revision', 'Revision requested. The parent will see your remarks and any flagged documents.')}>
           Request Revision
         </button>
         <button className="reg-btn reg-btn-red" disabled={locked || deciding || !reviewDone}
-          title={!reviewDone ? 'Review every document and the grade qualification first' : undefined}
+          title={!reviewDone ? reviewTodoTitle : undefined}
           onClick={() => decide('reject', 'Application rejected.')}>
           Reject Application
         </button>
@@ -316,7 +390,7 @@ export default function ApplicationView() {
         <p className="reg-help" role="status">
           The decision buttons turn on once every document has been verified, flagged or rejected
           {toReview.length > 0 && ` (still to review: ${toReview.map((d) => d.name).join(', ')})`}
-          {!qualificationMarked && (toReview.length > 0 ? ' and the grade qualification is marked' : ', and the grade qualification is marked')}.
+          {needsQualification && !app.gradeQualification && (toReview.length > 0 ? ' and the grade qualification is marked' : ', and the grade qualification is marked')}.
         </p>
       )}
       {reviewDone && problemDocs.length > 0 && !locked && (

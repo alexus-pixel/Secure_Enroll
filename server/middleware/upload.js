@@ -7,15 +7,30 @@ const fs = require('fs');
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// Any file type is accepted EXCEPT audio and video. (The file's real content
-// is checked again after upload, see utils/fileSignature.js.)
-const BLOCKED_EXTENSIONS = new Set([
-  '.mp3', '.wav', '.wma', '.aac', '.flac', '.ogg', '.oga', '.opus', '.m4a', '.m4b', '.mid', '.midi', '.aif', '.aiff', '.amr', '.weba',
-  '.mp4', '.m4v', '.mov', '.avi', '.mkv', '.webm', '.wmv', '.flv', '.f4v', '.mpg', '.mpeg', '.mpe', '.3gp', '.3g2', '.ogv', '.mts', '.m2ts', '.vob',
+// Only three file types are accepted: PDF, JPG and PNG. Anything else is
+// refused here by its type and extension, and what actually arrives is then
+// checked against the file's own first bytes (utils/fileSignature.js), because
+// the type the browser reports is only a header and can be set to anything.
+const ALLOWED_TYPES = new Map([
+  ['application/pdf', ['.pdf']],
+  ['image/jpeg', ['.jpg', '.jpeg']],
+  ['image/png', ['.png']],
 ]);
-const isAudioOrVideo = (file) =>
-  /^(audio|video)\//i.test(file.mimetype || '') || BLOCKED_EXTENSIONS.has(path.extname(file.originalname || '').toLowerCase());
-const NO_MEDIA_MESSAGE = 'Audio and video files are not accepted. Please upload a document or an image.';
+const ALLOWED_EXTENSIONS = new Set(['.pdf', '.jpg', '.jpeg', '.png']);
+// What the file picker offers, and what the API documents.
+const ACCEPT_ATTRIBUTE = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
+const FILE_TYPE_MESSAGE = 'Only PDF, JPG and PNG files are accepted.';
+
+function fileTypeProblem(file) {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  const type = String(file.mimetype || '').toLowerCase().split(';')[0].trim();
+  if (!ALLOWED_EXTENSIONS.has(ext)) return FILE_TYPE_MESSAGE;
+  if (!ALLOWED_TYPES.has(type)) return FILE_TYPE_MESSAGE;
+  // The name and the type have to agree: "photo.png" sent as a PDF is refused
+  // before it is ever written to disk.
+  if (!ALLOWED_TYPES.get(type).includes(ext)) return FILE_TYPE_MESSAGE;
+  return '';
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
@@ -30,7 +45,8 @@ const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (isAudioOrVideo(file)) return cb(new Error(NO_MEDIA_MESSAGE));
+    const problem = fileTypeProblem(file);
+    if (problem) return cb(new Error(problem));
     cb(null, true);
   },
 });
@@ -54,4 +70,9 @@ function uploadSingle(field) {
   };
 }
 
-module.exports = { upload, uploadSingle, UPLOAD_DIR, NO_MEDIA_MESSAGE };
+module.exports = {
+  upload, uploadSingle, UPLOAD_DIR,
+  ALLOWED_TYPES, ALLOWED_EXTENSIONS, ACCEPT_ATTRIBUTE, FILE_TYPE_MESSAGE, fileTypeProblem,
+  // Kept so older callers that imported this name still work.
+  NO_MEDIA_MESSAGE: FILE_TYPE_MESSAGE,
+};

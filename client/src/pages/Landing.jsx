@@ -68,10 +68,20 @@ const FAQS = [
   },
 ];
 
+// Dates are written the way a Philippine reader writes them, day before
+// month: "2 June 2026", not "June 2, 2026". The time zone is pinned to UTC
+// because the value is already a plain Y-M-D decided in Manila on the
+// server, and reading it in the visitor's own zone would shift it by a day
+// for anyone abroad.
 const fmtDate = (ymd, opts) =>
-  new Intl.DateTimeFormat('en-PH', { timeZone: 'UTC', ...opts }).format(new Date(`${ymd}T00:00:00Z`));
+  new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', ...opts }).format(new Date(`${ymd}T00:00:00Z`));
 const short = (ymd) => fmtDate(ymd, { month: 'short', day: 'numeric' });
 const long = (ymd) => fmtDate(ymd, { month: 'long', day: 'numeric', year: 'numeric' });
+// "1 April to 15 May 2026" — the year is said once when both dates fall in
+// it, so the sentence reads the way it would be spoken.
+const range = (from, to) => (from.slice(0, 4) === to.slice(0, 4)
+  ? `${fmtDate(from, { month: 'long', day: 'numeric' })} to ${long(to)}`
+  : `${long(from)} to ${long(to)}`);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // How far through the enrollment window today is, from 0 to 1.
@@ -132,8 +142,15 @@ function EnrollmentStatus({ status, onRetry }) {
   }
 
   const e = status.data.enrollment;
+  const sy = status.data.schoolYear;
   const d = describe(e);
-  const hasDates = e.opensOn && e.closesOn;
+  // A school year the system started by itself carries provisional dates
+  // until the registrar's office enters the real ones. Printing those as
+  // though they were settled would have parents turning up on a day the
+  // school never agreed to, so until they are confirmed the page says plainly
+  // that they are not final yet and shows no dates at all.
+  const confirmed = sy ? sy.datesConfirmed : true;
+  const hasDates = confirmed && e.opensOn && e.closesOn;
   const pct = Math.round(progressOf(e) * 100);
 
   return (
@@ -158,10 +175,23 @@ function EnrollmentStatus({ status, onRetry }) {
       {hasDates && (
         <p className="lp-window-range">
           <span className="lp-sr">Enrollment period: </span>
-          {long(e.opensOn)} to {long(e.closesOn)}
+          Enrollment is open from {range(e.opensOn, e.closesOn)}
         </p>
       )}
-      <p className="lp-window-detail">{d.detail}</p>
+      {hasDates && sy?.classesStartOn && (
+        <p className="lp-class-start">
+          <span className="lp-sr">First day of classes: </span>
+          Classes start {long(sy.classesStartOn)}
+        </p>
+      )}
+      {!confirmed ? (
+        <p className="lp-window-detail">
+          The school has not confirmed the dates for School Year {d.year} yet. The day classes start and the
+          enrollment period will appear here as soon as the registrar&rsquo;s office sets them.
+        </p>
+      ) : (
+        <p className="lp-window-detail">{d.detail}</p>
+      )}
 
       <div className="lp-window-actions">
         {d.cta === 'start' && <Link to="/register" className="lp-btn lp-btn-gold">Create account and apply</Link>}
@@ -192,7 +222,10 @@ export default function Landing() {
   const otherDocs = docs.filter((d) => !d.required);
   const home = user ? HOME_BY_ROLE[user.role] || '/dashboard' : null;
   const e = data?.enrollment;
+  const sy = data?.schoolYear;
   const stateIsOpen = e?.state === 'open';
+  // Provisional dates are never stated as fact anywhere on the page.
+  const datesSettled = Boolean(e?.opensOn && e?.closesOn && (!sy || sy.datesConfirmed));
 
   return (
     <div className="lp">
@@ -445,9 +478,11 @@ export default function Landing() {
                 {stateIsOpen ? 'Enrollment is open. Start your application today.' : 'Get your account ready for enrollment.'}
               </h2>
               <p>
-                {e && e.opensOn && e.closesOn
-                  ? `School Year ${e.schoolYear.replace('-', '–')}: ${long(e.opensOn)} to ${long(e.closesOn)}.`
-                  : 'Create your account now and verify your email so you can apply as soon as you are ready.'}
+                {datesSettled
+                  ? `School Year ${e.schoolYear.replace('-', '–')}: enrollment is open from `
+                    + `${range(e.opensOn, e.closesOn)}`
+                    + `${sy?.classesStartOn ? `, and classes start ${long(sy.classesStartOn)}` : ''}.`
+                  : 'Create your account now and verify your email so you can apply as soon as the school announces its dates.'}
               </p>
             </div>
             <div className="lp-final-actions">

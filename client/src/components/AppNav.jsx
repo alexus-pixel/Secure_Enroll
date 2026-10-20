@@ -38,6 +38,8 @@ const NAV_ITEMS = {
     { to: '/registrar', label: 'Applications', icon: ClipboardList, exact: true, also: ['/registrar/applications'] },
     { to: '/registrar/walk-in', label: 'Walk-in Enrollment', icon: UserPlus },
     { to: '/registrar/missing-lrn', label: 'Missing LRN', icon: Hash },
+    // The registrar runs the class schedules with the same screens as the admin.
+    { to: '/registrar/schedules', label: 'Class Schedules', icon: CalendarDays },
     { to: '/registrar/settings', label: 'Account Settings', icon: Settings },
   ],
   admin: [

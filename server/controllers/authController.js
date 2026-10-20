@@ -5,15 +5,16 @@ const {
 } = require('../db/users');
 const { createGuardianProfile, getGuardianProfile, updateGuardianProfile } = require('../db/guardians');
 const {
-  isValidEmail, isValidName, isValidContactNumber, passwordIssues, PASSWORD_MAX_BYTES, INITIAL_MAX, CONTACT_MESSAGE,
+  isValidEmail, isValidName, isValidGmail, normalizeGmail, isValidContactNumber,
+  passwordIssues, PASSWORD_MAX_BYTES, INITIAL_MAX, CONTACT_MESSAGE, GMAIL_MESSAGE,
 } = require('../utils/validators');
 const { sendDbError } = require('../utils/dbErrors');
 
 const isText = (v) => typeof v === 'string';
-const { checkEmailDomain } = require('../utils/emailDomain');
+const { checkEmailAcceptable } = require('../lib/emailGate');
 const { issueToken, findValidToken, findTokenRecord, consumeToken } = require('../db/authTokens');
 const {
-  sendMail, sendVerificationMail, verificationEmail, passwordResetEmail,
+  sendMail, sendVerificationMail, verificationEmail, passwordResetEmail, describeMailError,
 } = require('../utils/mailer');
 const pool = require('../db/pool');
 
@@ -39,6 +40,9 @@ function publicUser(row) {
     middleName: row.middle_name || null,
     lastName: row.last_name || null,
     emailVerified: Boolean(row.email_verified_at),
+    // A staff account created by an administrator starts with a temporary
+    // password and cannot do anything else until it has been replaced.
+    mustChangePassword: Boolean(row.must_change_password),
   };
 }
 
@@ -98,17 +102,18 @@ function secondsUntilResend(userId) {
 
 // Returns { ok } instead of hiding the outcome: callers must be able to
 // tell the user whether the email really went out.
-async function sendVerificationEmail(userId, email) {
+async function sendVerificationEmail(userId, email, { setPassword = false } = {}) {
   try {
     const token = await issueToken(userId, 'email_verify', EMAIL_VERIFY_TTL_MS);
     // Greet the parent by first name when we have it (best effort only).
     const nameRow = await pool.query('SELECT first_name FROM guardians WHERE user_id = $1', [userId]).catch(() => null);
-    const { subject, text, html } = verificationEmail(token, nameRow?.rows[0]?.first_name);
+    const { subject, text, html } = verificationEmail(token, nameRow?.rows[0]?.first_name, { setPassword });
     await sendVerificationMail({ to: email, subject, text, html });
     lastVerificationSent.set(String(userId), Date.now());
     return { ok: true };
   } catch (err) {
-    console.error('Could not send verification email:', err);
+    console.error('Could not send verification email:', err.message || err);
+    console.error('  Fix:', describeMailError(err));
     return { ok: false };
   }
 }
@@ -150,16 +155,23 @@ async function register(req, res) {
   const client = await pool.connect();
   try {
     const {
-      email, password, firstName, middleName, lastName, contactNumber, privacyConsent,
-    } = req.body;
+      email, confirmEmail, password, firstName, middleName, lastName, contactNumber, privacyConsent,
+    // A request with no body, or one that is not JSON, arrives as undefined.
+    } = req.body || {};
 
     const problems = [];
     // Data Privacy Act (RA 10173): the parent must agree before we collect data.
     if (privacyConsent !== true) problems.push('Please read and accept the Data Privacy Notice to create an account.');
-    if (!isValidEmail(email)) problems.push('A valid email address is required.');
+    // A parent signs in with their own Gmail. Staff accounts are made in User
+    // Management and are not restricted this way.
+    if (!isValidGmail(email)) problems.push(GMAIL_MESSAGE);
+    else if (confirmEmail !== undefined && normalizeGmail(confirmEmail) !== normalizeGmail(email)) {
+      problems.push('The two Gmail addresses do not match.');
+    }
     if (!isValidName(firstName)) problems.push('First name is required and should contain letters only.');
     if (!isValidName(lastName)) problems.push('Last name is required and should contain letters only.');
-    if (!isValidName(middleName, { required: false, max: INITIAL_MAX })) problems.push(`M.I. should contain letters only (up to ${INITIAL_MAX} characters).`);
+    // An initial is one letter, so the 2-character minimum for names is wrong here.
+    if (!isValidName(middleName, { required: false, min: 1, max: INITIAL_MAX })) problems.push(`M.I. should contain letters only (up to ${INITIAL_MAX} characters).`);
     if (!isValidContactNumber(contactNumber)) problems.push(CONTACT_MESSAGE);
     const pwIssues = passwordIssues(password);
     if (pwIssues.length) problems.push(`Password needs ${pwIssues.join(', ')}.`);
@@ -168,12 +180,16 @@ async function register(req, res) {
       return res.status(400).json({ message: problems[0], errors: problems });
     }
 
-    const domainCheck = await checkEmailDomain(email);
-    if (!domainCheck.ok) {
-      return res.status(400).json({ message: domainCheck.reason });
+    // The same gate the front desk uses: the domain is one the school's mail
+    // service reaches, the mailbox is not known to be dead, and Brevo is not
+    // already refusing it (lib/emailGate.js). An account on an address nobody
+    // can receive mail at is an account nobody can ever open.
+    const gate = await checkEmailAcceptable(email, { requireGmail: true });
+    if (!gate.ok) {
+      return res.status(400).json({ message: gate.reason });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = normalizeGmail(email);
     const existing = await findUserByEmail(normalizedEmail);
     if (existing) {
       return res.status(409).json({ message: 'An account with that email address already exists.' });
@@ -220,6 +236,54 @@ async function register(req, res) {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Brute-force lockout.
+ *
+ * Three wrong passwords lock the account. The first lock lasts a minute and
+ * each further one is a minute longer — 1, 2, 3, 4, then 5 minutes, which is
+ * as long as it gets. A person who mistyped waits a moment; a script gets
+ * nowhere, because every three guesses costs it another five minutes.
+ *
+ * A clean day resets the count, and so does a successful sign-in, so an
+ * ordinary user never carries yesterday's mistakes.
+ * ------------------------------------------------------------------------- */
+const FAILED_ATTEMPTS_BEFORE_LOCK = 3;
+const FIRST_LOCK_MINUTES = 1;
+const MAX_LOCK_MINUTES = 5;
+const ATTEMPT_MEMORY_HOURS = 24;
+
+function lockMinutesFor(lockoutNumber) {
+  return Math.min(FIRST_LOCK_MINUTES + Math.max(0, lockoutNumber - 1), MAX_LOCK_MINUTES);
+}
+
+async function registerFailedLogin(user) {
+  const lastFailed = user.last_failed_login_at ? new Date(user.last_failed_login_at) : null;
+  const stale = !lastFailed || (Date.now() - lastFailed.getTime()) > ATTEMPT_MEMORY_HOURS * 3600 * 1000;
+  const attempts = (stale ? 0 : Number(user.failed_login_attempts) || 0) + 1;
+
+  if (attempts < FAILED_ATTEMPTS_BEFORE_LOCK) {
+    await pool.query(
+      'UPDATE users SET failed_login_attempts = $2, last_failed_login_at = NOW() WHERE id = $1',
+      [user.id, attempts]
+    );
+    return { locked: false, attemptsLeft: FAILED_ATTEMPTS_BEFORE_LOCK - attempts };
+  }
+
+  const lockoutNumber = (Number(user.lockout_count) || 0) + 1;
+  const minutes = lockMinutesFor(lockoutNumber);
+  const { rows: [row] } = await pool.query(
+    `UPDATE users
+     SET failed_login_attempts = 0,
+         lockout_count = $2,
+         last_failed_login_at = NOW(),
+         locked_until = NOW() + ($3 || ' minutes')::interval
+     WHERE id = $1
+     RETURNING locked_until`,
+    [user.id, lockoutNumber, String(minutes)]
+  );
+  return { locked: true, minutes, attemptsLeft: 0, lockedUntil: row ? new Date(row.locked_until).toISOString() : null };
+}
+
 async function login(req, res) {
   try {
     const { email, password } = req.body || {};
@@ -238,20 +302,29 @@ async function login(req, res) {
     if (!user) return genericError();
 
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      return res.status(423).json({ message: 'This account is temporarily locked. Please try again later.' });
+      const seconds = Math.max(1, Math.ceil((new Date(user.locked_until) - Date.now()) / 1000));
+      return res.status(423).json({
+        message: 'Too many failed sign-in attempts. This account is locked.',
+        retryAfter: seconds,
+        lockedUntil: new Date(user.locked_until).toISOString(),
+      });
     }
 
     const match = await bcrypt.compare(password || '', user.password_hash);
     if (!match) {
-      await pool.query(
-        `UPDATE users SET failed_login_attempts = failed_login_attempts + 1,
-         locked_until = CASE WHEN failed_login_attempts + 1 >= 5
-                              THEN NOW() + INTERVAL '15 minutes' ELSE locked_until END
-         WHERE id = $1`,
-        [user.id]
-      );
-      await logAudit(user.id, 'LOGIN_FAILED', req);
-      return genericError();
+      const lock = await registerFailedLogin(user);
+      await logAudit(user.id, lock.locked ? 'LOGIN_LOCKED' : 'LOGIN_FAILED', req);
+      if (lock.locked) {
+        return res.status(423).json({
+          message: `Too many failed sign-in attempts. This account is locked for ${lock.minutes} ${lock.minutes === 1 ? 'minute' : 'minutes'}.`,
+          retryAfter: lock.minutes * 60,
+          lockedUntil: lock.lockedUntil,
+        });
+      }
+      return res.status(401).json({
+        message: 'Invalid email or password.',
+        attemptsLeft: lock.attemptsLeft,
+      });
     }
 
     if (!user.is_active) {
@@ -279,7 +352,8 @@ async function login(req, res) {
 
     await pool.query(
       `UPDATE users SET failed_login_attempts = 0, locked_until = NULL,
-       last_login_at = NOW() WHERE id = $1`,
+       lockout_count = 0, last_failed_login_at = NULL, last_login_at = NOW()
+       WHERE id = $1`,
       [user.id]
     );
 
@@ -315,12 +389,13 @@ async function getMe(req, res) {
 
 async function updateProfile(req, res) {
   try {
-    const { firstName, middleName, lastName } = req.body;
+    const { firstName, middleName, lastName } = req.body || {};
 
     const problems = [];
     if (!isValidName(firstName)) problems.push('First name is required and should contain letters only.');
     if (!isValidName(lastName)) problems.push('Last name is required and should contain letters only.');
-    if (!isValidName(middleName, { required: false, max: INITIAL_MAX })) problems.push(`M.I. should contain letters only (up to ${INITIAL_MAX} characters).`);
+    // An initial is one letter, so the 2-character minimum for names is wrong here.
+    if (!isValidName(middleName, { required: false, min: 1, max: INITIAL_MAX })) problems.push(`M.I. should contain letters only (up to ${INITIAL_MAX} characters).`);
     if (problems.length) return res.status(400).json({ message: problems[0], errors: problems });
 
     const names = {
@@ -388,6 +463,8 @@ async function changePassword(req, res) {
 
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await updateUserPassword(req.user.id, passwordHash);
+    // Choosing a password of their own clears the "temporary password" flag.
+    await pool.query('UPDATE users SET must_change_password = FALSE WHERE id = $1', [req.user.id]);
 
     await logAudit(req.user.id, 'PASSWORD_CHANGED', req);
     res.json({ message: 'Password updated.' });
@@ -401,16 +478,18 @@ async function checkEmail(req, res) {
   try {
     const email = (req.query.email || '').toString();
 
-    if (!isValidEmail(email)) {
-      return res.json({ valid: false, reason: 'Enter a valid email address.' });
+    // Public sign-up makes a parent account, and a parent signs in with their
+    // own Gmail — so this answers for a Gmail, not for any address.
+    if (!isValidGmail(email)) {
+      return res.json({ valid: false, reason: GMAIL_MESSAGE });
     }
 
-    const domainCheck = await checkEmailDomain(email);
-    if (!domainCheck.ok) {
-      return res.json({ valid: false, reason: domainCheck.reason });
+    const gate = await checkEmailAcceptable(email, { requireGmail: true });
+    if (!gate.ok) {
+      return res.json({ valid: false, reason: gate.reason });
     }
 
-    const existing = await findUserByEmail(email.toLowerCase().trim());
+    const existing = await findUserByEmail(normalizeGmail(email));
     if (existing) {
       return res.json({ valid: false, reason: 'An account with that email address already exists.' });
     }
@@ -425,15 +504,94 @@ async function checkEmail(req, res) {
   }
 }
 
-async function verifyEmail(req, res) {
+/**
+ * What is behind a verification link, without using it up.
+ *
+ * The page needs to know before it shows anything whether this account still
+ * has to choose a password — an account made for a parent at the front desk
+ * has no password they know. Verifying consumes the token, so that question
+ * has to be answerable first.
+ */
+async function inspectVerificationToken(req, res) {
   try {
     const token = (req.query.token || '').toString();
+    if (!token || token.length > 200) {
+      return res.status(400).json({ message: 'This link is invalid or has expired.' });
+    }
+    const row = await findValidToken(token, 'email_verify');
+    if (!row) {
+      const record = await findTokenRecord(token, 'email_verify');
+      if (record) {
+        const { rows: [u] } = await pool.query('SELECT email_verified_at FROM users WHERE id = $1', [record.user_id]);
+        if (u?.email_verified_at) {
+          return res.json({ valid: false, alreadyVerified: true, message: 'Your email address is already verified. You can sign in.' });
+        }
+      }
+      return res.status(400).json({ message: 'This link is invalid or has expired.' });
+    }
+    const { rows: [user] } = await pool.query(
+      'SELECT email, must_change_password FROM users WHERE id = $1', [row.user_id]
+    );
+    res.json({
+      valid: true,
+      email: user?.email || '',
+      mustSetPassword: Boolean(user?.must_change_password),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'We could not check that link. Please try again.' });
+  }
+}
+
+async function verifyEmail(req, res) {
+  try {
+    // The token arrives in the query on a plain click, or in the body when the
+    // parent is also choosing their password on the same screen.
+    const token = (req.query.token || req.body?.token || '').toString();
+    const newPassword = typeof req.body?.password === 'string' ? req.body.password : null;
     if (!token || token.length > 200) {
       return res.status(400).json({ message: 'This verification link is invalid or has expired.' });
     }
     const row = await findValidToken(token, 'email_verify');
 
     if (row) {
+      const { rows: [account] } = await pool.query(
+        'SELECT must_change_password FROM users WHERE id = $1', [row.user_id]
+      );
+      const mustSetPassword = Boolean(account?.must_change_password);
+
+      // An account created at the front desk has no password its owner knows.
+      // It is set here, from the link only they received, so no temporary
+      // password ever has to be read out or written on a slip of paper.
+      if (mustSetPassword) {
+        if (!newPassword) {
+          return res.status(400).json({
+            message: 'Choose a password to finish setting up your account.',
+            reason: 'password_required',
+          });
+        }
+        const issues = passwordIssues(newPassword);
+        if (issues.length) {
+          return res.status(400).json({ message: `Password needs ${issues.join(', ')}.` });
+        }
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+        await pool.query(
+          `UPDATE users
+              SET password_hash = $2, must_change_password = FALSE,
+                  failed_login_attempts = 0, locked_until = NULL,
+                  email_verified_at = COALESCE(email_verified_at, NOW())
+            WHERE id = $1`,
+          [row.user_id, passwordHash]
+        );
+        await consumeToken(row.id);
+        await logAudit(row.user_id, 'EMAIL_VERIFIED', req);
+        await logAudit(row.user_id, 'PASSWORD_SET_FROM_LINK', req);
+        return res.json({
+          message: 'Your email address is verified and your password is set. You can now sign in.',
+          passwordSet: true,
+        });
+      }
+
       await pool.query(
         `UPDATE users SET email_verified_at = NOW() WHERE id = $1 AND email_verified_at IS NULL`,
         [row.user_id]
@@ -567,7 +725,10 @@ async function resetPassword(req, res) {
 }
 
 module.exports = {
+  // Shared with walk-in enrollment, which makes a parent account at the desk
+  // and needs the same verification link to go out.
+  sendVerificationEmail,
   register, login, getMe, updateProfile, changePassword, checkEmail,
-  verifyEmail, resendVerification, resendVerificationByTicket, verificationStatus,
+  inspectVerificationToken, verifyEmail, resendVerification, resendVerificationByTicket, verificationStatus,
   forgotPassword, resetPassword,
 };

@@ -95,28 +95,28 @@ async function findUserById(id) {
 }
 
 async function findUserByEmail(email) {
-  const result = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+  // Case and stray spaces never make a different account: somebody typing
+  // Maria.Cruz@Gmail.com is the holder of maria.cruz@gmail.com.
+  const result = await pool.query(
+    'SELECT id FROM users WHERE lower(btrim(email)) = lower(btrim($1))', [email]
+  );
   return result.rows[0] || null;
 }
 
-async function createStaffUser({ email, fullName, passwordHash, roleId }) {
+async function createStaffUser({ email, firstName, lastName, middleInitial, passwordHash, roleId }) {
+  // The name is kept in parts, which is what Edit Profile shows; full_name is
+  // written too because the user list and the greeting read it.
+  const fullName = [firstName, middleInitial, lastName].map((v) => (v || '').trim()).filter(Boolean).join(' ');
   const result = await pool.query(
-    `INSERT INTO users (email, full_name, password_hash, role_id, is_active)
-     VALUES ($1, $2, $3, $4, TRUE)
-     RETURNING id, email, full_name, role_id, is_active, created_at`,
-    [email, fullName || null, passwordHash, roleId]
+    `INSERT INTO users (email, full_name, first_name, last_name, middle_initial,
+                        password_hash, role_id, is_active, must_change_password)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, TRUE)
+     RETURNING id, email, full_name, first_name, last_name, middle_initial, role_id, is_active, created_at`,
+    [email, fullName || null, firstName.trim(), lastName.trim(), (middleInitial || '').trim() || null, passwordHash, roleId]
   );
   return result.rows[0];
 }
 
-async function updateUserRole(id, roleId) {
-  const result = await pool.query(
-    `UPDATE users SET role_id = $2, updated_at = NOW() WHERE id = $1
-     RETURNING id, email, role_id`,
-    [id, roleId]
-  );
-  return result.rows[0] || null;
-}
 
 async function setUserActive(id, isActive) {
   const result = await pool.query(
@@ -127,21 +127,8 @@ async function setUserActive(id, isActive) {
   return result.rows[0] || null;
 }
 
-async function resetPassword(id, passwordHash) {
-  // Resetting a password is also a reasonable moment to clear any
-  // existing lockout — an admin resetting a locked-out user's
-  // password is clearly trying to get them back in, not leave
-  // them locked out with a new password they still can't use.
-  const result = await pool.query(
-    `UPDATE users SET password_hash = $2, failed_login_attempts = 0,
-     locked_until = NULL, updated_at = NOW() WHERE id = $1
-     RETURNING id, email`,
-    [id, passwordHash]
-  );
-  return result.rows[0] || null;
-}
 
 module.exports = {
   listUsers, getUserCounts, getRoles, findUserById, findUserByEmail,
-  createStaffUser, updateUserRole, setUserActive, resetPassword,
+  createStaffUser, setUserActive,
 };

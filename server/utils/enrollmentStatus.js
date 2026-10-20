@@ -46,7 +46,11 @@ function computeEnrollment(year, now = new Date()) {
   }
   const opensOn = dateOnly(year.opens_at);
   const closesOn = dateOnly(year.closes_at);
-  const base = { schoolYear: year.label, opensOn, closesOn, today, daysUntilOpen: null, daysLeft: null };
+  // The day enrollment actually stopped taking applications, which is only
+  // the planned closing date when the window ran all the way out
+  // (school_years.enrollment_closed_at — see db/admin/settings.js).
+  const closedOn = dateOnly(year.enrollment_closed_at);
+  const base = { schoolYear: year.label, opensOn, closesOn, closedOn, today, daysUntilOpen: null, daysLeft: null };
 
   if (opensOn && today < opensOn) {
     return { ...base, state: 'upcoming', reason: 'not_started', daysUntilOpen: daysBetween(today, opensOn) };
@@ -74,9 +78,12 @@ function formatLong(ymd) {
 function closedMessage(status) {
   if (status.state === 'none') return 'Enrollment is not currently open for any school year.';
   if (status.state === 'upcoming') return `Enrollment for School Year ${status.schoolYear} opens on ${formatLong(status.opensOn)}.`;
-  if (status.reason === 'full') return `All slots for School Year ${status.schoolYear} are filled, so enrollment is now closed.`;
-  if (status.reason === 'ended') return `Enrollment for School Year ${status.schoolYear} closed on ${formatLong(status.closesOn)}.`;
-  return `Enrollment for School Year ${status.schoolYear} is temporarily closed. Please check back or visit the school office.`;
+  // Where the day it closed is known, it is the day worth printing: a window
+  // that was switched off early did not close on the date it was planning to.
+  const on = status.closedOn ? ` on ${formatLong(status.closedOn)}` : '';
+  if (status.reason === 'full') return `All slots for School Year ${status.schoolYear} are filled, so enrollment closed${on || ''}.`;
+  if (status.reason === 'ended') return `Enrollment for School Year ${status.schoolYear} closed on ${formatLong(status.closedOn || status.closesOn)}.`;
+  return `Enrollment for School Year ${status.schoolYear} is closed${on}. Please check back or visit the school office.`;
 }
 
 module.exports = { computeEnrollment, closedMessage, manilaToday };

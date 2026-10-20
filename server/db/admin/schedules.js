@@ -1,5 +1,10 @@
 const pool = require('../pool');
 const { isSchoolYearEditable } = require('./schoolSettings');
+const { sessionTimeIssue } = require('../../validators/scheduleValidators');
+
+// Times come back from Postgres as 'HH:MM:SS'; the rule (and the
+// client) work in 'HH:MM'.
+const hhmm = (t) => (t ? String(t).slice(0, 5) : null);
 
 async function assertSchoolYearEditable(schoolYearId) {
   const editable = await isSchoolYearEditable(schoolYearId);
@@ -28,12 +33,56 @@ async function listGradeScheduleSummary(schoolYearId) {
   return result.rows;
 }
 
+// The section list carries each section's adviser (sections.adviser_teacher_id,
+// set from School Settings) so the schedule page can say whose section
+// the timetable on screen belongs to without a second round trip, and
+// without needing the school-settings endpoints the registrar cannot
+// reach. adviser_teacher_id is nullable, so adviser_name comes back
+// null for a section that has no adviser yet.
 async function listSectionsForGrade(gradeLevelId, schoolYearId) {
   const result = await pool.query(
-    `SELECT id, name FROM sections WHERE grade_level_id = $1 AND school_year_id = $2 ORDER BY name`,
+    `SELECT sec.id, sec.name, sec.adviser_teacher_id,
+            t.first_name AS adviser_first_name,
+            t.last_name  AS adviser_last_name,
+            t.middle_name AS adviser_middle_name,
+            CASE WHEN t.id IS NULL THEN NULL
+                 ELSE t.first_name || ' ' || t.last_name END AS adviser_name
+     FROM sections sec
+     LEFT JOIN teachers t ON t.id = sec.adviser_teacher_id
+     WHERE sec.grade_level_id = $1 AND sec.school_year_id = $2
+     ORDER BY sec.name`,
     [gradeLevelId, schoolYearId]
   );
   return result.rows;
+}
+
+// One section's adviser on its own, for the schedule being viewed.
+async function getSectionAdviser(sectionId, schoolYearId) {
+  const result = await pool.query(
+    `SELECT sec.id, sec.name, sec.adviser_teacher_id,
+            gl.id AS grade_level_id, gl.name AS grade_level_name,
+            t.first_name AS adviser_first_name,
+            t.last_name  AS adviser_last_name,
+            CASE WHEN t.id IS NULL THEN NULL
+                 ELSE t.first_name || ' ' || t.last_name END AS adviser_name
+     FROM sections sec
+     JOIN grade_levels gl ON gl.id = sec.grade_level_id
+     LEFT JOIN teachers t ON t.id = sec.adviser_teacher_id
+     WHERE sec.id = $1 AND sec.school_year_id = $2`,
+    [sectionId, schoolYearId]
+  );
+  const row = result.rows[0];
+  if (!row) return { notFound: true };
+  return {
+    sectionId: row.id,
+    sectionName: row.name,
+    gradeLevelId: row.grade_level_id,
+    gradeLevelName: row.grade_level_name,
+    adviserTeacherId: row.adviser_teacher_id || null,
+    adviserName: row.adviser_name,
+    adviserFirstName: row.adviser_first_name,
+    adviserLastName: row.adviser_last_name,
+  };
 }
 
 async function listSubjects(gradeLevelId, schoolYearId) {
@@ -59,29 +108,220 @@ async function listAllSubjects(schoolYearId) {
   return result.rows;
 }
 
-async function createSubject({ name, gradeLevelId, schoolYearId, isDomain }) {
+// Each grade level carries its own ceiling on how many subjects it
+// may have (grade_levels.max_subjects, 1-20, default 10) — a Grade 1
+// pupil does not sit the same number of subjects as a Grade 6 one,
+// so the admin sets the number per grade rather than school-wide.
+//
+// Two admins adding the last allowed subject at the same moment
+// would both read "9 of 10" and both insert, so the count and the
+// insert happen inside one transaction behind an advisory lock on
+// the grade level. The same lock guards lowering the limit, which
+// is the mirror-image race (one admin adds a subject while another
+// drops the ceiling to the count they just read).
+const SUBJECT_LOCK_NAMESPACE = 21826;
+
+function ruleError(message, status, reason, details) {
+  const err = new Error(message);
+  err.status = status;
+  err.reason = reason;
+  err.details = details;
+  return err;
+}
+
+async function getGradeLevel(gradeLevelId) {
   const result = await pool.query(
-    `INSERT INTO subjects (name, grade_level_id, school_year_id, is_domain)
-     VALUES ($1, $2, $3, $4) RETURNING id, name, is_domain`,
-    [name, gradeLevelId, schoolYearId, isDomain]
+    'SELECT id, name, max_subjects FROM grade_levels WHERE id = $1',
+    [gradeLevelId]
   );
-  return result.rows[0];
+  return result.rows[0] || null;
+}
+
+async function countSubjects(db, gradeLevelId, schoolYearId) {
+  const result = await db.query(
+    'SELECT COUNT(*)::int AS count FROM subjects WHERE grade_level_id = $1 AND school_year_id = $2',
+    [gradeLevelId, schoolYearId]
+  );
+  return result.rows[0].count;
+}
+
+// The panel on the grade's schedule page needs more than the names:
+// how many periods each subject fills (removal is refused while that
+// is above zero) and how many teachers are linked to it (removal is
+// allowed, but the confirmation has to say what gets unlinked).
+async function listSubjectsWithUsage(gradeLevelId, schoolYearId) {
+  const result = await pool.query(
+    `SELECT s.id, s.name, s.is_domain,
+            (SELECT COUNT(*)::int FROM schedule_entries se WHERE se.subject_id = s.id) AS scheduled_count,
+            (SELECT COUNT(*)::int FROM teacher_subjects ts WHERE ts.subject_id = s.id) AS teacher_count
+     FROM subjects s
+     WHERE s.grade_level_id = $1 AND s.school_year_id = $2
+     ORDER BY s.is_domain DESC, s.name`,
+    [gradeLevelId, schoolYearId]
+  );
+  return result.rows;
+}
+
+// Everything the subject panel shows in one reply: the grade, its
+// limit, the live count behind the "7 of 10 subjects" counter, and
+// the subjects themselves.
+async function getSubjectSettings(gradeLevelId, schoolYearId) {
+  const grade = await getGradeLevel(gradeLevelId);
+  if (!grade) return { notFound: true };
+  const subjects = await listSubjectsWithUsage(gradeLevelId, schoolYearId);
+  return {
+    gradeLevelId: grade.id,
+    gradeLevelName: grade.name,
+    maxSubjects: grade.max_subjects,
+    count: subjects.length,
+    subjects,
+  };
+}
+
+async function createSubject({ name, gradeLevelId, schoolYearId, isDomain }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [SUBJECT_LOCK_NAMESPACE, gradeLevelId]);
+    const graded = await client.query('SELECT id, name, max_subjects FROM grade_levels WHERE id = $1', [gradeLevelId]);
+    if (graded.rows.length === 0) {
+      throw ruleError('That grade level does not exist.', 404, 'grade_level_not_found');
+    }
+    const grade = graded.rows[0];
+    const count = await countSubjects(client, gradeLevelId, schoolYearId);
+    if (count >= grade.max_subjects) {
+      throw ruleError(
+        `${grade.name} is already at its limit of ${grade.max_subjects} subjects. `
+          + `Raise the limit for ${grade.name} or remove a subject first.`,
+        409,
+        'subject_limit_reached',
+        { gradeLevelId: grade.id, gradeLevelName: grade.name, limit: grade.max_subjects, count }
+      );
+    }
+    const result = await client.query(
+      `INSERT INTO subjects (name, grade_level_id, school_year_id, is_domain)
+       VALUES ($1, $2, $3, $4) RETURNING id, name, is_domain`,
+      [name, gradeLevelId, schoolYearId, isDomain]
+    );
+    await client.query('COMMIT');
+    return { subject: { ...result.rows[0], scheduled_count: 0, teacher_count: 0 }, count: count + 1, maxSubjects: grade.max_subjects };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* the transaction is already gone */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Renaming is deliberately allowed even while the subject is on the
+// timetable: schedule_entries points at the subject's id, not its
+// name, so "Math" becoming "Mathematics" updates every period that
+// shows it rather than orphaning anything. Only REMOVAL is blocked
+// while the subject is scheduled (see deleteSubject).
+async function updateSubject(id, { name, isDomain }) {
+  const existing = await pool.query(
+    'SELECT id, name, is_domain, grade_level_id, school_year_id FROM subjects WHERE id = $1',
+    [id]
+  );
+  if (existing.rows.length === 0) return { notFound: true };
+  const before = existing.rows[0];
+  const nextName = name !== undefined ? name : before.name;
+  const nextIsDomain = isDomain !== undefined ? isDomain : before.is_domain;
+  const result = await pool.query(
+    'UPDATE subjects SET name = $2, is_domain = $3 WHERE id = $1 RETURNING id, name, is_domain',
+    [id, nextName, nextIsDomain]
+  );
+  const usage = await pool.query(
+    `SELECT (SELECT COUNT(*)::int FROM schedule_entries se WHERE se.subject_id = $1) AS scheduled_count,
+            (SELECT COUNT(*)::int FROM teacher_subjects ts WHERE ts.subject_id = $1) AS teacher_count`,
+    [id]
+  );
+  return { before, subject: { ...result.rows[0], ...usage.rows[0] } };
 }
 
 async function deleteSubject(id) {
+  const existing = await pool.query(
+    'SELECT id, name, grade_level_id, school_year_id FROM subjects WHERE id = $1',
+    [id]
+  );
+  if (existing.rows.length === 0) return { notFound: true };
+  const subject = existing.rows[0];
+
   // Removing a subject that is actively scheduled would silently
   // orphan those schedule_entries rows (subject_id has no ON DELETE
   // rule of its own beyond the FK, so this would fail loudly
   // instead — which is what we want: force the admin to remove the
   // schedule entries first, not lose the record of what a class
   // was actually being taught).
-  const inUse = await pool.query('SELECT 1 FROM schedule_entries WHERE subject_id = $1 LIMIT 1', [id]);
-  if (inUse.rows.length > 0) {
-    const err = new Error('This subject is still used in the schedule. Remove those periods first.');
-    err.status = 409;
-    throw err;
+  const inUse = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM schedule_entries WHERE subject_id = $1',
+    [id]
+  );
+  if (inUse.rows[0].count > 0) {
+    throw ruleError(
+      `${subject.name} is still used in ${inUse.rows[0].count} scheduled period`
+        + `${inUse.rows[0].count === 1 ? '' : 's'}. Remove those periods first.`,
+      409,
+      'subject_in_schedule',
+      { scheduledCount: inUse.rows[0].count }
+    );
   }
+
+  // A subject only linked to teachers (teacher_subjects, ON DELETE
+  // CASCADE) may go — nothing on the timetable depends on it — but
+  // the caller is told how many links disappear so the confirmation
+  // can say so out loud instead of quietly dropping them.
+  const links = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM teacher_subjects WHERE subject_id = $1',
+    [id]
+  );
   await pool.query('DELETE FROM subjects WHERE id = $1', [id]);
+  return { subject, teacherLinksRemoved: links.rows[0].count };
+}
+
+// Lowering the ceiling under what the grade already has would leave
+// it permanently over its own limit, so that is refused and the
+// admin is told how many subjects stand in the way.
+async function setMaxSubjects(gradeLevelId, maxSubjects, schoolYearId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [SUBJECT_LOCK_NAMESPACE, gradeLevelId]);
+    const graded = await client.query(
+      'SELECT id, name, max_subjects FROM grade_levels WHERE id = $1 FOR UPDATE',
+      [gradeLevelId]
+    );
+    if (graded.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { notFound: true };
+    }
+    const grade = graded.rows[0];
+    const count = await countSubjects(client, gradeLevelId, schoolYearId);
+    if (maxSubjects < count) {
+      const over = count - maxSubjects;
+      throw ruleError(
+        `${grade.name} already has ${count} subjects, so the limit cannot be lowered to ${maxSubjects}. `
+          + `Remove ${over} subject${over === 1 ? '' : 's'} first.`,
+        409,
+        'limit_below_current',
+        { gradeLevelId: grade.id, gradeLevelName: grade.name, count, requestedLimit: maxSubjects }
+      );
+    }
+    await client.query('UPDATE grade_levels SET max_subjects = $2 WHERE id = $1', [gradeLevelId, maxSubjects]);
+    await client.query('COMMIT');
+    return {
+      gradeLevelId: grade.id,
+      gradeLevelName: grade.name,
+      previousMax: grade.max_subjects,
+      maxSubjects,
+      count,
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* the transaction is already gone */ }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function findBlankPeriodEntry(sectionId, schoolYearId, session, startTime, endTime) {
@@ -157,6 +397,48 @@ async function findDuplicateSubjectInSection(db, { sectionId, subjectId, schoolY
   return result.rows[0] || null;
 }
 
+/**
+ * Can this teacher be put on a class at all?
+ *
+ * A teacher who has been deactivated or retired keeps the classes they already
+ * had until somebody hands them over, but takes no new ones: the picker leaves
+ * them out, and this is the rule behind it, for anything that calls the API
+ * directly.
+ */
+/**
+ * A period is filed under one school year, so the section it sits in has to
+ * belong to that year. Without this, a section id from last year would quietly
+ * attach this year's period to last year's class.
+ */
+async function assertSectionInYear(db, sectionId, schoolYearId) {
+  if (!sectionId || !schoolYearId) return;
+  const { rows: [row] } = await db.query(
+    'SELECT id FROM sections WHERE id = $1 AND school_year_id = $2', [sectionId, schoolYearId]
+  );
+  if (!row) {
+    throw Object.assign(
+      new Error('That section does not belong to this school year.'),
+      { status: 400, reason: 'section_wrong_year' }
+    );
+  }
+}
+
+async function assertTeacherAssignable(db, teacherId) {
+  if (!teacherId) return;
+  const { rows: [t] } = await db.query(
+    'SELECT first_name, last_name, is_active, status FROM teachers WHERE id = $1', [teacherId]
+  );
+  if (!t) {
+    throw Object.assign(new Error('That teacher was not found.'), { status: 404 });
+  }
+  if (!t.is_active || t.status !== 'active') {
+    throw Object.assign(
+      new Error(`${t.last_name}, ${t.first_name} is not an active teacher and cannot be given a class. Reactivate them first.`),
+      { status: 409, reason: 'teacher_inactive' }
+    );
+  }
+}
+
 async function getTeacherWeeklyLoad(db, teacherId, schoolYearId, excludeEntryId) {
   const result = await db.query(
     `SELECT COUNT(*)::int AS count FROM schedule_entries
@@ -186,7 +468,7 @@ async function getTeacherDailyLoad(db, teacherId, schoolYearId, day, excludeEntr
 
 async function getTeacherMaxPeriodsPerDay(db, teacherId) {
   const result = await db.query('SELECT max_periods_per_day FROM teachers WHERE id = $1', [teacherId]);
-  return result.rows[0]?.max_periods_per_day ?? 5;
+  return result.rows[0]?.max_periods_per_day ?? 10;
 }
 
 // Each teacher has their own editable daily cap (teachers.max_periods_per_day,
@@ -194,12 +476,33 @@ async function getTeacherMaxPeriodsPerDay(db, teacherId) {
 // it touches gets checked; the first day that would be pushed over
 // its cap is returned (with enough context for a clear message),
 // not just a bare yes/no.
+/**
+ * How many period slots the school actually runs on one day: the distinct
+ * start-and-end times anything is timetabled at. Nobody can teach more periods
+ * in a day than there are slots to teach them in, whatever their own limit
+ * says, because two of them would have to be at the same hour.
+ */
+async function getDailySlotCount(db, schoolYearId, day) {
+  const { rows: [row] } = await db.query(
+    `SELECT COUNT(DISTINCT (start_time, end_time))::int AS slots
+       FROM schedule_entries
+      WHERE school_year_id = $1 AND role_type = 'subject'
+        AND $2 = ANY(days) AND start_time IS NOT NULL AND end_time IS NOT NULL`,
+    [schoolYearId, day]
+  );
+  return row?.slots || 0;
+}
+
 async function checkDailyCap(db, teacherId, schoolYearId, days, excludeEntryId) {
   const cap = await getTeacherMaxPeriodsPerDay(db, teacherId);
   for (const day of days) {
     const current = await getTeacherDailyLoad(db, teacherId, schoolYearId, day, excludeEntryId);
-    if (current + 1 > cap) {
-      return { day, current, cap };
+    // The day's own ceiling binds as well as the teacher's: a teacher allowed
+    // 8 periods still cannot take a 4th on a day that only runs 3.
+    const slots = await getDailySlotCount(db, schoolYearId, day);
+    const effective = slots > 0 ? Math.min(cap, slots) : cap;
+    if (current + 1 > effective) {
+      return { day, current, cap: effective, teacherCap: cap, daySlots: slots };
     }
   }
   return null;
@@ -233,6 +536,22 @@ async function getTeacherWeeklyCap(db, teacherId) {
  */
 async function createScheduleEntry(input) {
   await assertSchoolYearEditable(input.schoolYearId);
+  // The session/time rule, re-checked here rather than only in the
+  // request schema: this is the last gate before the row is written,
+  // so every caller (including a future one) gets the same answer.
+  if (input.roleType !== 'adviser') {
+    const mismatch = sessionTimeIssue(input.session, input.startTime, input.endTime);
+    if (mismatch) {
+      return {
+        sessionMismatch: {
+          ...mismatch,
+          session: input.session,
+          startTime: hhmm(input.startTime),
+          endTime: hhmm(input.endTime),
+        },
+      };
+    }
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -250,6 +569,9 @@ async function createScheduleEntry(input) {
         return { duplicateSubject };
       }
     }
+
+    await assertTeacherAssignable(client, input.teacherId);
+    await assertSectionInYear(client, input.sectionId, input.schoolYearId);
 
     if (input.roleType === 'subject' && input.teacherId) {
       const conflict = await findTeacherConflict(client, input);
@@ -327,10 +649,43 @@ async function updateScheduleEntry(id, input) {
     const roleType = input.roleType !== undefined ? input.roleType : row.role_type;
     const sectionId = input.sectionId !== undefined ? input.sectionId : row.section_id;
     const days = input.days !== undefined ? input.days : row.days;
-    const startTime = input.startTime !== undefined ? input.startTime : row.start_time;
-    const endTime = input.endTime !== undefined ? input.endTime : row.end_time;
+    const startTime = hhmm(input.startTime !== undefined ? input.startTime : row.start_time);
+    const endTime = hhmm(input.endTime !== undefined ? input.endTime : row.end_time);
+    const session = input.session !== undefined ? input.session : row.session;
+
+    // Changing only the session (or only one of the times) can still
+    // land the period in the wrong half of the day, so the rule is
+    // applied to the row as it WOULD stand after this update, not
+    // just to the fields that happen to have been sent.
+    if (roleType !== 'adviser') {
+      const mismatch = sessionTimeIssue(session, startTime, endTime);
+      if (mismatch) {
+        await client.query('ROLLBACK');
+        return { sessionMismatch: { ...mismatch, session, startTime, endTime } };
+      }
+      if (startTime && endTime && startTime >= endTime) {
+        await client.query('ROLLBACK');
+        return {
+          sessionMismatch: {
+            field: 'endTime', message: 'End time must be after start time.',
+            session, startTime, endTime,
+          },
+        };
+      }
+    }
 
     if (teacherId) await client.query('SELECT pg_advisory_xact_lock($1)', [teacherId]);
+
+    // Moving a period onto somebody is giving them a class, so the same rule
+    // applies — unless the teacher on the row is not changing, which would
+    // otherwise make an inactive teacher's existing period impossible to edit
+    // or hand over.
+    if (input.teacherId !== undefined && input.teacherId !== row.teacher_id) {
+      await assertTeacherAssignable(client, input.teacherId);
+    }
+    if (input.sectionId !== undefined && String(input.sectionId) !== String(row.section_id)) {
+      await assertSectionInYear(client, input.sectionId, schoolYearId);
+    }
 
     if (roleType === 'subject' && subjectId) {
       const duplicateSubject = await findDuplicateSubjectInSection(client, {
@@ -417,7 +772,8 @@ async function getTeacherAssignments(teacherId, schoolYearId) {
 
 module.exports = {
   listGradeScheduleSummary, listSectionsForGrade, listSubjects, listAllSubjects,
-  createSubject, deleteSubject, getSectionWeeklySchedule, findTeacherConflict, checkDailyCap,
+  listSubjectsWithUsage, getSubjectSettings, getGradeLevel, setMaxSubjects, getSectionAdviser,
+  createSubject, updateSubject, deleteSubject, getSectionWeeklySchedule, findTeacherConflict, checkDailyCap,
   getTeacherWeeklyLoad, createScheduleEntry, updateScheduleEntry, deleteScheduleEntry,
-  getTeacherAssignments,
+  getTeacherAssignments, assertTeacherAssignable,
 };

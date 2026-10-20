@@ -9,13 +9,13 @@ const longDate = (ymd) => new Intl.DateTimeFormat('en-PH', { timeZone: 'UTC', ye
 // the settings the administrator controls. The server also refuses applications while it is
 // closed, so this is only the friendly side of the same rule.
 export default function useEnrollment() {
-  const [state, setState] = useState({ loading: true, enrollment: null, documents: [], grades: [] });
+  const [state, setState] = useState({ loading: true, enrollment: null, schoolYear: null, documents: [], grades: [] });
 
   useEffect(() => {
     let alive = true;
     const load = () => api.get('/public/enrollment')
       .then(({ data }) => alive && setState({
-        loading: false, enrollment: data.enrollment, documents: data.documents || [], grades: (data.grades || []).map((g) => ({ ...g, id: g.gradeLevelId })),
+        loading: false, enrollment: data.enrollment, schoolYear: data.schoolYear || null, documents: data.documents || [], grades: (data.grades || []).map((g) => ({ ...g, id: g.gradeLevelId })),
       }))
       .catch(() => alive && setState((s) => ({ ...s, loading: false })));
     load();
@@ -47,13 +47,15 @@ export default function useEnrollment() {
       message = `Enrollment for School Year ${year} opens on ${longDate(e.opensOn)}. The application form will be available then.`;
     } else if (e.state === 'closed' && e.reason === 'ended') {
       title = 'Enrollment is closed';
-      message = `Enrollment for School Year ${year} ended on ${longDate(e.closesOn)}. The application form is turned off.`;
+      message = `Enrollment for School Year ${year} ended on ${longDate(e.closedOn || e.closesOn)}. The application form is turned off.`;
     } else if (e.state === 'closed' && e.reason === 'full') {
       title = 'Enrollment is closed';
-      message = `All slots for School Year ${year} are filled, so enrollment is closed.`;
+      message = `All slots for School Year ${year} are filled, so enrollment closed${e.closedOn ? ` on ${longDate(e.closedOn)}` : ''}.`;
     } else if (e.state === 'closed') {
       title = 'Enrollment is closed';
-      message = `Enrollment for School Year ${year} is not open right now. The application form will be available again when the school opens enrollment.`;
+      // The day it closed, where the school closed it early.
+      message = `Enrollment for School Year ${year} is not open right now${e.closedOn ? `; it closed on ${longDate(e.closedOn)}` : ''}. `
+        + 'The application form will be available again when the school opens enrollment.';
     } else {
       title = 'Enrollment is closed';
       message = 'The school has not opened enrollment yet. The application form will be available when it does.';

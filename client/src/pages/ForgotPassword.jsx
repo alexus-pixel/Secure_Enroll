@@ -64,7 +64,15 @@ export default function ForgotPassword() {
               <div className="field">
                 <label className="label" htmlFor="email">Email Address</label>
                 <input id="email" className={`input${error ? ' input-error' : ''}`} type="email"
-                  value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
+                  placeholder="e.g. juandelacruz@gmail.com"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    // Only once something is typed, so the box does not turn
+                    // red the moment it is cleared.
+                    setError(e.target.value.trim() ? validateEmail(e.target.value) : '');
+                  }}
+                  autoComplete="email" required />
                 {error && <p className="field-error">{error}</p>}
               </div>
 

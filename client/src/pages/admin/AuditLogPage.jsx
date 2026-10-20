@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getAuditLogs, getAuditLogActions, downloadAuditLogCsv } from '../../api/admin';
 import ColumnFilterIcon from './ColumnFilterIcon';
+import Pagination, { usePagination } from '../../components/Pagination';
 
 export default function AuditLogPage() {
   const [logs, setLogs] = useState([]);
@@ -13,6 +14,8 @@ export default function AuditLogPage() {
   useEffect(() => {
     getAuditLogs(filters).then((r) => setLogs(r.logs)).catch((err) => setError(err.response?.data?.message || 'Could not load the audit log.'));
   }, [filters]);
+
+  const pager = usePagination(logs);
 
   async function handleExport() {
     setExporting(true);
@@ -82,12 +85,12 @@ export default function AuditLogPage() {
               </tr>
             </thead>
             <tbody>
-              {logs.map((log) => (
+              {pager.pageRows.map((log) => (
                 <tr key={log.id}>
                   <td style={{ whiteSpace: 'nowrap' }}>{new Date(log.created_at).toLocaleString()}</td>
                   <td>{log.user_email || 'system'}</td>
                   <td>
-                    <span className={`action-code ${log.action?.includes('FAILED') ? 'action-failed' : ''}`} style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 600 }}>
+                    <span className={`action-code ${log.action?.includes('FAILED') ? 'action-failed' : ''}`} style={{ fontFamily: 'ui-monospace, monospace', fontSize: 13.5, fontWeight: 600 }}>
                       {log.action}
                     </span>
                   </td>
@@ -95,12 +98,21 @@ export default function AuditLogPage() {
                   <td className="cell-sub">{log.ip_address || '\u2014'}</td>
                 </tr>
               ))}
-              {logs.length === 0 && (
+              {pager.total === 0 && (
                 <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>No activity yet.</td></tr>
               )}
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={pager.page}
+          totalPages={pager.totalPages}
+          total={pager.total}
+          from={pager.from}
+          to={pager.to}
+          onPage={pager.setPage}
+          label="entries"
+        />
       </div>
     </div>
   );

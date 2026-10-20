@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import LrnEntry from '../../components/registrar/LrnEntry';
+import Pagination, { usePagination } from '../../components/Pagination';
 
 const LIS_URL = 'https://lis.deped.gov.ph';
 
@@ -29,6 +30,8 @@ export default function MissingLrn() {
     return () => { alive = false; };
   }, [reloadKey]);
 
+  const pager = usePagination(students);
+
   return (
     <div className="reg-page">
       <h1 className="reg-title">Students without an LRN</h1>
@@ -52,8 +55,9 @@ export default function MissingLrn() {
       )}
 
       {students.length > 0 && (
-        <div className="reg-table-wrap">
-          <table className="reg-table">
+        <>
+          <div className="reg-table-wrap">
+            <table className="reg-table">
             <thead>
               <tr>
                 <th>Student</th>
@@ -64,9 +68,17 @@ export default function MissingLrn() {
               </tr>
             </thead>
             <tbody>
-              {students.map((s) => (
+              {pager.pageRows.map((s) => (
                 <tr key={s.studentId}>
-                  <td className="reg-strong">{s.student}</td>
+                  <td className="reg-strong">
+                    {s.student}
+                    {s.lrnFlaggedAt && (
+                      <div className="reg-item-meta">
+                        Flagged as incorrect on {fmt(s.lrnFlaggedAt)}. Waiting for the parent to send the right one.
+                        {s.lrnFlagNote && <><br /><b>Reason:</b> {s.lrnFlagNote}</>}
+                      </div>
+                    )}
+                  </td>
                   <td>{s.grade}</td>
                   <td>{fmt(s.submitted)}</td>
                   <td><LrnEntry studentId={s.studentId} onSaved={load} /></td>
@@ -78,8 +90,18 @@ export default function MissingLrn() {
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+          <Pagination
+            page={pager.page}
+            totalPages={pager.totalPages}
+            total={pager.total}
+            from={pager.from}
+            to={pager.to}
+            onPage={pager.setPage}
+            label="students"
+          />
+        </>
       )}
     </div>
   );

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   register, login, getMe, updateProfile, changePassword, checkEmail,
-  verifyEmail, resendVerification, resendVerificationByTicket, verificationStatus,
+  inspectVerificationToken, verifyEmail, resendVerification, resendVerificationByTicket, verificationStatus,
   forgotPassword, resetPassword,
 } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
@@ -13,14 +13,19 @@ const { rateLimit, loginLimiter } = require('../middleware/rateLimit');
 // enough to blunt automated abuse, loose enough that nobody locks
 // themselves out by mistyping a password a few times.
 router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: 8 }), register);
-// The DB-backed lockout in authController.login (5 failed attempts
-// -> 15 min) protects one account against a brute force targeted
+// The DB-backed lockout in authController.login (3 failed attempts,
+// then 1 minute growing to 5) protects one account against a brute force targeted
 // at it. This IP-based limiter is a second, independent layer: it
 // slows down a script trying many different email addresses from
 // one place, which the per-account lockout alone would not catch.
 router.post('/login', loginLimiter, login);
 router.get('/check-email', rateLimit({ windowMs: 60 * 1000, max: 20 }), checkEmail);
 router.get('/verify-email', rateLimit({ windowMs: 60 * 1000, max: 10 }), verifyEmail);
+// What is behind the link, without using it up: the page has to know whether
+// this account still needs a password before it shows anything.
+router.get('/verification-token', rateLimit({ windowMs: 60 * 1000, max: 20 }), inspectVerificationToken);
+// Used when the parent is choosing their password on the same screen.
+router.post('/verify-email', rateLimit({ windowMs: 60 * 1000, max: 10 }), verifyEmail);
 // Used by the "Verifying email" screen for someone who cannot sign in yet.
 // Both are authorised by the short-lived ticket in the request body.
 router.post('/verification-status', rateLimit({ windowMs: 60 * 1000, max: 60 }), verificationStatus);

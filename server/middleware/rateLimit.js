@@ -27,8 +27,14 @@ function rateLimit({ windowMs, max }) {
       return next();
     }
     if (bucket.count >= max) {
-      res.set('Retry-After', String(Math.ceil((bucket.start + windowMs - now) / 1000)));
-      return res.status(429).json({ message: 'Too many requests. Please try again shortly.' });
+      // The page counts down to this, so "try again shortly" is a number.
+      const seconds = Math.max(1, Math.ceil((bucket.start + windowMs - now) / 1000));
+      res.set('Retry-After', String(seconds));
+      return res.status(429).json({
+        message: 'Too many requests. Please try again shortly.',
+        retryAfter: seconds,
+        lockedUntil: new Date(bucket.start + windowMs).toISOString(),
+      });
     }
     bucket.count += 1;
     next();
@@ -40,8 +46,8 @@ function rateLimit({ windowMs, max }) {
 // ---------------------------------------------------------------------
 
 /**
- * Login already has DB-backed lockout (5 failed attempts -> 15 min
- * lock, in authController.js). This adds a second, IP-based layer
+ * Login already has DB-backed lockout (3 failed attempts -> 1 to 5
+ * minutes, in authController.js). This adds a second, IP-based layer
  * in front of it: it stops one IP from hammering many different
  * email addresses (the DB lockout alone only slows down attempts
  * against a single known account). 10 attempts per 10 minutes per IP
@@ -53,7 +59,20 @@ const loginLimiter = expressRateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Too many login attempts. Please wait a few minutes and try again.' },
+  // The sign-in page counts down to the moment this lifts, so the reply
+  // carries the time rather than "a few minutes".
+  handler: (req, res, next, options) => {
+    const resetAt = req.rateLimit && req.rateLimit.resetTime
+      ? new Date(req.rateLimit.resetTime)
+      : new Date(Date.now() + options.windowMs);
+    const seconds = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+    res.set('Retry-After', String(seconds));
+    res.status(options.statusCode).json({
+      message: 'Too many sign-in attempts from this device.',
+      retryAfter: seconds,
+      lockedUntil: resetAt.toISOString(),
+    });
+  },
 });
 
 /**

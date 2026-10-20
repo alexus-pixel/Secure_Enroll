@@ -1,17 +1,22 @@
 const { z } = require('zod');
 
 // Same password policy as parent sign-up (8-72 bytes, upper, lower, number, special).
-const { strongPassword, email, id } = require('./common');
-
-// Staff names may contain letters, spaces and . ' - only.
-const fullName = z.string().trim().min(2, 'Full name is required.').max(120, 'Full name is too long.')
-  .regex(/^[\p{L}\p{M}][\p{L}\p{M} .'\u2019-]*$/u, 'Full name: use letters only (spaces, . \' - are fine).');
+const { strongPassword, email, id, personName } = require('./common');
 
 // Admin can create registrar or admin accounts here (parents
 // self-register through the public flow). Whether the chosen role is
 // a staff role is checked against the roles table in the controller.
+// A staff account is created with its name in parts, the same three boxes the
+// person later sees in Edit Profile, so nothing has to be guessed by splitting
+// a full name on its spaces.
 const createStaffUser = z.object({
-  fullName,
+  firstName: personName('First name'),
+  lastName: personName('Last name'),
+  middleInitial: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.string().trim().max(2, 'Middle initial can be at most 2 characters.')
+      .regex(/^[\p{L}][\p{L}.]?$/u, 'Middle initial should be a letter.').optional()
+  ),
   email,
   password: strongPassword,
   roleId: id('Role'),

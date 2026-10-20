@@ -6,9 +6,12 @@ import AppNav from '../components/AppNav';
 import EnrollmentGate from '../components/EnrollmentGate';
 import useEnrollment from '../hooks/useEnrollment';
 import { useScrollToError } from '../hooks/useScrollToError';
+import MiddleNameField from '../components/MiddleNameField';
+import { sampleFor } from '../utils/samplePlaceholders';
 import {
-  validateName, validateContactNumber, validateText, validateLrn, validateBirthDate, validateFile,
-  birthDateBounds, sanitizePhone, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
+  validateName, validateContactNumber, validateAddress, validateLrn, validateBirthDate, validateFile,
+  validateBirthDateForGrade, validateMiddleName, FILE_ACCEPT,
+  birthDateBounds, sanitizePhone, sanitizeLrn, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
 } from '../utils/validators';
 
 // Shown only until the school's grade list loads from the server.
@@ -24,26 +27,43 @@ function slotsText(g) {
   return `${g.slotsLeft} ${g.slotsLeft === 1 ? 'slot' : 'slots'} left`;
 }
 
-// The date picker only offers real school-age birth dates (3 to 18 years
-// old, never in the future); the server checks the same rule.
+// The picker offers a complete list of years and refuses only a date in the
+// future. There is no age limit for any grade level.
 const BIRTH_BOUNDS = birthDateBounds();
 
 const FRESH_FIELDS = [
   'firstName', 'middleName', 'lastName', 'birthDate', 'lrn',
-  'guardianFirstName', 'guardianLastName', 'contactNumber', 'address',
+  'guardianFirstName', 'guardianMiddleName', 'guardianLastName',
+  'relationshipOther', 'contactNumber', 'address',
 ];
 
-function validateField(name, form) {
+function validateField(name, form, context = {}) {
   switch (name) {
     case 'firstName': return validateName(form.firstName, { label: 'First name' });
-    case 'middleName': return validateName(form.middleName, { required: false, label: 'Middle name' });
+    case 'middleName': return validateMiddleName(form.middleName, { none: form.noMiddleName });
     case 'lastName': return validateName(form.lastName, { label: 'Last name' });
-    case 'birthDate': return validateBirthDate(form.birthDate);
-    case 'lrn': return validateLrn(form.lrn, { required: form.gradeLevelId !== '1' });
+    case 'birthDate':
+      return context.grade
+        ? validateBirthDateForGrade(form.birthDate, context.grade, context.yearStartsOn)
+        : validateBirthDate(form.birthDate);
+    case 'lrn': {
+      // Kinder is the entry grade and the only one where a learner may have no
+      // LRN yet. Which grade that is comes from the server's own sort order,
+      // not from a hardcoded id, so renumbering the grades cannot silently
+      // change the rule.
+      const entryGrade = context.grade ? context.grade.sortOrder === 0 : form.gradeLevelId === '1';
+      return validateLrn(form.lrn, { required: !entryGrade });
+    }
     case 'guardianFirstName': return validateName(form.guardianFirstName, { label: 'First name' });
+    case 'guardianMiddleName':
+      return validateMiddleName(form.guardianMiddleName, { none: form.guardianNoMiddleName });
     case 'guardianLastName': return validateName(form.guardianLastName, { label: 'Last name' });
+    case 'relationshipOther':
+      return form.relationship === 'Other'
+        ? validateName(form.relationshipOther, { label: 'Relationship' })
+        : '';
     case 'contactNumber': return validateContactNumber(form.contactNumber);
-    case 'address': return validateText(form.address, { label: 'Address', max: ADDRESS_MAX });
+    case 'address': return validateAddress(form.address);
     default: return '';
   }
 }
@@ -80,6 +100,8 @@ export default function NewApplication() {
   const docLabels = Object.fromEntries(docTypes.map((d) => [d.code, d.label]));
   const labelOf = (code) => docLabels[code] || code.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const grades = enrollment.grades.length ? enrollment.grades : FALLBACK_GRADES;
+  // Age for a grade level is counted on the first day of classes.
+  const yearStartsOn = enrollment.schoolYear?.classesStartOn || enrollment.enrollment?.opensOn || '';
 
   // ---------------- Find Returning Student ----------------
   const [lrn, setLrn] = useState('');
@@ -128,11 +150,20 @@ export default function NewApplication() {
   async function handlePromote() {
     if (promoting) return; // ignore a double click
     setSearchError('');
+    const stillNeeded = (result?.documentsNeeded || []).filter((code) => !promoFiles[code]);
+    if (stillNeeded.length) {
+      setSearchError(`Please attach ${stillNeeded.map((c) => labelOf(c)).join(', ')}. Every required document has to be in hand before you can enroll.`);
+      return;
+    }
     setPartial(null);
     setPromoting(true);
     try {
       const { data } = await api.post('/applications/promote', {
         studentId: result.student.id, gradeLevelId: result.nextGradeLevelId,
+        providedDocuments: [
+          ...result.documentsOnFile,
+          ...Object.keys(promoFiles).filter((code) => promoFiles[code]),
+        ],
       });
       const failed = await uploadDocuments(data.id, promoFiles, labelOf);
       if (failed.length) {
@@ -150,9 +181,10 @@ export default function NewApplication() {
   // ---------------- Fresh application ----------------
   const { user } = useAuth();
   const [form, setForm] = useState({
-    firstName: '', middleName: '', lastName: '', birthDate: '', sex: 'F', lrn: '',
-    guardianFirstName: user?.firstName || '', guardianMiddleName: user?.middleName || '', guardianLastName: user?.lastName || '',
-    relationship: 'Mother', contactNumber: '', address: '',
+    firstName: '', middleName: '', noMiddleName: false, lastName: '', birthDate: '', sex: 'F', lrn: '',
+    guardianFirstName: user?.firstName || '', guardianMiddleName: user?.middleName || '',
+    guardianNoMiddleName: false, guardianLastName: user?.lastName || '',
+    relationship: 'Mother', relationshipOther: '', contactNumber: '', address: '',
     gradeLevelId: '1',
   });
   // The guardian is usually the signed-in parent, so their name is filled in
@@ -174,23 +206,58 @@ export default function NewApplication() {
   const [files, setFiles] = useState({});
   const [fileErrors, setFileErrors] = useState({});
 
+  // The grade level decides the age window and whether the LRN is required,
+  // so both are re-checked whenever it changes.
+  const chosenGrade = grades.find((g) => String(g.id) === String(form.gradeLevelId)) || null;
+  const ageContext = {
+    grade: chosenGrade && chosenGrade.sortOrder !== undefined
+      ? { sortOrder: chosenGrade.sortOrder, name: chosenGrade.name } : null,
+    yearStartsOn,
+  };
+  const checkField = (field, next) => validateField(field, next, ageContext);
+  // The entry grade is the one the school lists first, not whichever id it
+  // happens to have; a learner entering any grade above it already has an LRN.
+  const isEntryGrade = chosenGrade && chosenGrade.sortOrder !== undefined
+    ? chosenGrade.sortOrder === 0
+    : String(form.gradeLevelId) === '1';
+
   const update = (field) => (e) => {
     const next = { ...form, [field]: e.target.value };
     setForm(next);
-    // Once a field has been flagged, re-check it as the parent retypes it so
-    // the message clears right away.
-    if (touched[field]) setErrors((prev) => ({ ...prev, [field]: validateField(field, next) }));
-    // The LRN rule depends on the grade level (optional only for Kinder).
-    if (field === 'gradeLevelId' && touched.lrn) {
-      setErrors((prev) => ({ ...prev, lrn: validateField('lrn', next) }));
+    // Warn as the parent types, but do not say "this is required" about a
+    // field they have not finished with yet.
+    const problem = checkField(field, next);
+    const stillEmpty = !String(next[field] || '').trim();
+    setErrors((prev) => ({ ...prev, [field]: stillEmpty && !touched[field] ? '' : problem }));
+    if (field === 'gradeLevelId') {
+      // Both of these depend on which grade was just chosen, and `ageContext`
+      // still describes the one before it, so the new grade is read from the
+      // value in hand rather than from the previous render.
+      const picked = grades.find((x) => String(x.id) === String(next.gradeLevelId));
+      const nextContext = {
+        ...ageContext,
+        grade: picked && picked.sortOrder !== undefined
+          ? { sortOrder: picked.sortOrder, name: picked.name } : null,
+      };
+      setErrors((prev) => ({
+        ...prev,
+        lrn: touched.lrn ? validateField('lrn', next, nextContext) : prev.lrn,
+        birthDate: next.birthDate ? validateField('birthDate', next, nextContext) : prev.birthDate,
+      }));
     }
   };
   // The LRN box accepts digits only, never more than 12.
   const updatePhone = (e) => update('contactNumber')({ target: { value: sanitizePhone(e.target.value) } });
-  const updateLrn = (e) => update('lrn')({ target: { value: e.target.value.replace(/\D/g, '').slice(0, 12) } });
+  const updateLrn = (e) => update('lrn')({ target: { value: sanitizeLrn(e.target.value) } });
+  // Ticking "No middle name" clears the box and settles the field.
+  const toggleNoMiddle = (key, nameKey) => (checked) => {
+    const next = { ...form, [key]: checked, ...(checked ? { [nameKey]: '' } : {}) };
+    setForm(next);
+    setErrors((prev) => ({ ...prev, [nameKey]: validateField(nameKey, next, ageContext) }));
+  };
   const handleBlur = (field) => () => {
     setTouched((prev) => ({ ...prev, [field]: true }));
-    setErrors((prev) => ({ ...prev, [field]: validateField(field, form) }));
+    setErrors((prev) => ({ ...prev, [field]: checkField(field, form) }));
   };
   const inputProps = (field) => ({
     id: field,
@@ -198,9 +265,39 @@ export default function NewApplication() {
     value: form[field],
     onChange: update(field),
     onBlur: handleBlur(field),
+    // An example of the format, while the box is empty. A placeholder written
+    // on the box itself overrides this one, since it comes after the spread.
+    placeholder: sampleFor(field),
     'aria-invalid': errors[field] ? 'true' : undefined,
   });
   const fieldError = (field) => (errors[field] ? <p className="field-error">{errors[field]}</p> : null);
+
+  // A learner's name has to be unique across the school, so the form says so
+  // while it is being typed rather than only when the server refuses it.
+  const [nameTaken, setNameTaken] = useState(null);
+  const nameKey = `${form.firstName.trim().toLowerCase()}|${form.middleName.trim().toLowerCase()}|${form.lastName.trim().toLowerCase()}`;
+  useEffect(() => {
+    const [first, , last] = nameKey.split('|');
+    if (!first || !last) { setNameTaken(null); return undefined; }
+    let alive = true;
+    const timer = setTimeout(() => {
+      api.get('/students/name-taken', {
+        params: {
+          firstName: form.firstName.trim(),
+          middleName: form.middleName.trim() || undefined,
+          lastName: form.lastName.trim(),
+        },
+      })
+        .then(({ data }) => { if (alive) setNameTaken(data.taken ? data : null); })
+        .catch(() => { if (alive) setNameTaken(null); });
+    }, 500);
+    return () => { alive = false; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nameKey]);
+
+  // Required documents that have no file chosen yet. The form cannot be
+  // submitted while this list has anything in it (the server repeats the rule).
+  const missingDocs = docTypes.filter((d) => !files[d.code]).map((d) => ({ code: d.code, label: d.label }));
 
   const pickFile = (docType) => (e) => {
     const file = e.target.files[0] || null;
@@ -222,7 +319,7 @@ export default function NewApplication() {
     // means the student has been enrolled somewhere in DepEd's system before,
     // so they should already have one.
     const found = {};
-    FRESH_FIELDS.forEach((f) => { found[f] = validateField(f, form); });
+    FRESH_FIELDS.forEach((f) => { found[f] = checkField(f, form); });
     setErrors(found);
     setTouched(Object.fromEntries(FRESH_FIELDS.map((f) => [f, true])));
     const firstBad = FRESH_FIELDS.find((f) => found[f]);
@@ -235,15 +332,31 @@ export default function NewApplication() {
       setError('Please replace the file that cannot be uploaded.');
       return;
     }
+    // Nothing is submitted with a requirement missing.
+    if (missingDocs.length) {
+      setError(`Please attach ${missingDocs.map((d) => d.label).join(', ')}. Every required document has to be in hand before you can enroll.`);
+      document.getElementById(`file_${missingDocs[0].code}`)?.focus({ preventScroll: true });
+      return;
+    }
 
     setSubmitting(true);
     try {
       const trim = (v) => v.trim();
       const { data } = await api.post('/applications', {
         ...form,
-        firstName: trim(form.firstName), middleName: trim(form.middleName), lastName: trim(form.lastName),
-        guardianFirstName: trim(form.guardianFirstName), guardianLastName: trim(form.guardianLastName),
-        contactNumber: trim(form.contactNumber), address: trim(form.address),
+        providedDocuments: Object.keys(files).filter((code) => files[code]),
+        firstName: trim(form.firstName),
+        middleName: form.noMiddleName ? '' : trim(form.middleName),
+        noMiddleName: form.noMiddleName,
+        lastName: trim(form.lastName),
+        guardianFirstName: trim(form.guardianFirstName),
+        guardianMiddleName: form.guardianNoMiddleName ? '' : trim(form.guardianMiddleName),
+        guardianNoMiddleName: form.guardianNoMiddleName,
+        guardianLastName: trim(form.guardianLastName),
+        relationship: form.relationship,
+        relationshipOther: form.relationship === 'Other' ? trim(form.relationshipOther) : undefined,
+        contactNumber: trim(form.contactNumber),
+        address: trim(form.address).replace(/\s+/g, ' '),
         lrn: trim(form.lrn) || undefined,
       });
       const failed = await uploadDocuments(data.id, files, labelOf);
@@ -327,7 +440,7 @@ export default function NewApplication() {
                   <div className="field" key={docType}>
                     <label className="label">{labelOf(docType)}</label>
                     <input className={`input${promoFileErrors[docType] ? ' input-error' : ''}`} type="file"
-                      onChange={pickPromoFile(docType)} />
+                      accept={FILE_ACCEPT} onChange={pickPromoFile(docType)} />
                     {promoFileErrors[docType] && <p className="field-error">{promoFileErrors[docType]}</p>}
                   </div>
                 ))}
@@ -393,16 +506,25 @@ export default function NewApplication() {
               <div><label className="label" htmlFor="firstName">First name</label>
                 <input {...inputProps('firstName')} maxLength={NAME_MAX} autoComplete="off" />
                 {fieldError('firstName')}</div>
-              <div><label className="label" htmlFor="middleName">Middle name</label>
-                <input {...inputProps('middleName')} maxLength={NAME_MAX} autoComplete="off" />
-                {fieldError('middleName')}</div>
+              <MiddleNameField
+                id="middleName" value={form.middleName} none={form.noMiddleName}
+                error={errors.middleName} onChange={update('middleName')} onBlur={handleBlur('middleName')}
+                onToggleNone={toggleNoMiddle('noMiddleName', 'middleName')}
+              />
               <div><label className="label" htmlFor="lastName">Last name</label>
                 <input {...inputProps('lastName')} maxLength={NAME_MAX} autoComplete="off" />
                 {fieldError('lastName')}</div>
             </div>
+            {nameTaken && (
+              <div className="alert alert-error" role="alert">
+                <b>That name is already taken.</b>
+                <div style={{ marginTop: 4 }}>{nameTaken.message}</div>
+              </div>
+            )}
+
             <div className="field-grid cols-2">
               <div><label className="label" htmlFor="birthDate">Birth date</label>
-                <input {...inputProps('birthDate')} type="date" min={BIRTH_BOUNDS.min} max={BIRTH_BOUNDS.max} />
+                <input {...inputProps('birthDate')} type="date" max={BIRTH_BOUNDS.max} />
                 {fieldError('birthDate')}</div>
               <div><label className="label" htmlFor="sex">Sex</label>
                 <select id="sex" className="input" value={form.sex} onChange={update('sex')}>
@@ -411,14 +533,14 @@ export default function NewApplication() {
             </div>
             <div className="field">
               <label className="label" htmlFor="lrn">
-                Learner Reference Number (LRN){form.gradeLevelId === '1' ? ' \u2014 if already assigned' : ''}
+                Learner Reference Number (LRN){isEntryGrade ? ' \u2014 if already assigned' : ''}
               </label>
               <input {...inputProps('lrn')} onChange={updateLrn} inputMode="numeric" autoComplete="off"
                 placeholder="12-digit LRN" maxLength={12} />
               {errors.lrn
                 ? <p className="field-error">{errors.lrn}</p>
                 : <p className="hint hint-spaced">
-                    {form.gradeLevelId === '1'
+                    {isEntryGrade
                       ? 'Leave this blank for a first-time Kinder entrant \u2014 the school assigns one.'
                       : 'Required \u2014 a student entering Grade 1 or above should already have an LRN from a previous enrollment.'}
                   </p>}
@@ -427,10 +549,17 @@ export default function NewApplication() {
 
           <div className="card">
             <h3>Guardian Information</h3>
-            <div className="field-grid cols-2">
+            <div className="field-grid cols-3">
               <div><label className="label" htmlFor="guardianFirstName">Your first name</label>
                 <input {...inputProps('guardianFirstName')} maxLength={NAME_MAX} autoComplete="given-name" />
                 {fieldError('guardianFirstName')}</div>
+              <MiddleNameField
+                id="guardianMiddleName" label="Your middle name"
+                value={form.guardianMiddleName} none={form.guardianNoMiddleName}
+                error={errors.guardianMiddleName} onChange={update('guardianMiddleName')}
+                onBlur={handleBlur('guardianMiddleName')} autoComplete="additional-name"
+                onToggleNone={toggleNoMiddle('guardianNoMiddleName', 'guardianMiddleName')}
+              />
               <div><label className="label" htmlFor="guardianLastName">Your last name</label>
                 <input {...inputProps('guardianLastName')} maxLength={NAME_MAX} autoComplete="family-name" />
                 {fieldError('guardianLastName')}</div>
@@ -445,12 +574,22 @@ export default function NewApplication() {
                 <input {...inputProps('contactNumber')} onChange={updatePhone} inputMode="tel" maxLength={13} autoComplete="tel"
                   placeholder="09171234567" />
                 {errors.contactNumber ? fieldError('contactNumber')
-                  : <p className="hint">09XXXXXXXXX or +63XXXXXXXXXX</p>}</div>
+                  : <p className="hint">09XXXXXXXXX, or +639XXXXXXXXX</p>}</div>
             </div>
+            {form.relationship === 'Other' && (
+              <div className="field">
+                <label className="label" htmlFor="relationshipOther">How are you related to the student?</label>
+                <input {...inputProps('relationshipOther')} maxLength={NAME_MAX} autoComplete="off"
+                  placeholder="Neighbour, foster parent, ..." />
+                {fieldError('relationshipOther')}
+              </div>
+            )}
             <div className="field">
               <label className="label" htmlFor="address">Address</label>
-              <input {...inputProps('address')} maxLength={ADDRESS_MAX} autoComplete="street-address" />
-              {fieldError('address')}
+              <input {...inputProps('address')} maxLength={ADDRESS_MAX} autoComplete="street-address"
+                placeholder="Blk 15 Lot 40, Kingstown Ph. 1, Brgy. 176" />
+              {errors.address ? fieldError('address')
+                : <p className="hint">House or block, street and barangay. Letters, numbers and , . # - / only.</p>}
             </div>
           </div>
 
@@ -481,20 +620,31 @@ export default function NewApplication() {
 
           <div className="card">
             <h3>Required Documents</h3>
-            <p className="hint">Any file type except audio and video. Maximum 5 MB each. These are the documents the school asks for.</p>
+            <p className="hint">PDF, JPG or PNG only. Maximum 5 MB each. Every document listed here has to be attached before the application can be submitted.</p>
             {docTypes.length === 0 && <p className="hint">The school is not asking for any documents right now.</p>}
             {docTypes.map((d) => [d.code, d.label]).map(([docType, label]) => (
               <div className="field" key={docType}>
                 <label className="label" htmlFor={`file_${docType}`}>{label}</label>
                 <input id={`file_${docType}`} className={`input${fileErrors[docType] ? ' input-error' : ''}`} type="file"
-                  onChange={pickFile(docType)} />
+                  accept={FILE_ACCEPT} onChange={pickFile(docType)} />
                 {fileErrors[docType] && <p className="field-error">{fileErrors[docType]}</p>}
               </div>
             ))}
           </div>
 
+          {missingDocs.length > 0 && (
+            <div className="alert alert-warn" role="status">
+              <b>Still to attach before you can submit:</b>
+              <ul style={{ margin: '4px 0 0 18px' }}>
+                {missingDocs.map((d) => <li key={d.code}>{d.label}</li>)}
+              </ul>
+            </div>
+          )}
+
           <div className="btn-row">
-            <button className="btn btn-primary" type="submit" disabled={submitting || Boolean(freshPartial)}>
+            <button className="btn btn-primary" type="submit"
+              disabled={submitting || Boolean(freshPartial)}
+              title={missingDocs.length ? 'Attach every required document first' : undefined}>
               {submitting ? 'Submitting\u2026' : 'Submit Application'}
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => navigate('/dashboard')}>Cancel</button>

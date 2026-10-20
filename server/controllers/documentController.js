@@ -5,7 +5,7 @@ const {
   applicationBelongsToGuardian, createDocument, getDocumentsForApplication,
 } = require('../db/documents');
 const { matchesDeclaredType, looksLikeAudioOrVideo } = require('../utils/fileSignature');
-const { NO_MEDIA_MESSAGE } = require('../middleware/upload');
+const { FILE_TYPE_MESSAGE, fileTypeProblem } = require('../middleware/upload');
 
 const { getRequiredDocumentTypes } = require('../lib/documentTypes');
 
@@ -53,17 +53,19 @@ async function uploadDocument(req, res) {
       return res.status(409).json({ message: 'That document has already been verified.' });
     }
 
-    // Any file type is accepted except audio and video. A file that says it is
-    // a PDF / JPG / PNG must really be one, and no file may be audio or video
-    // in disguise (checked on its real content, not just its name).
+    // Only PDF, JPG and PNG are accepted. The upload middleware refuses
+    // anything else by name and declared type; here the file is on disk, so
+    // its real first bytes decide. A renamed script, a video with a .pdf
+    // name, or a PNG sent as a PDF all stop here and the file is deleted.
+    if (fileTypeProblem(req.file) || !matchesDeclaredType(req.file.path, String(req.file.mimetype || '').toLowerCase())) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({
+        message: `${FILE_TYPE_MESSAGE} This file is not a real ${req.file.mimetype === 'application/pdf' ? 'PDF' : 'image'}, or its name and contents do not match.`,
+      });
+    }
     if (looksLikeAudioOrVideo(req.file.path)) {
       fs.unlinkSync(req.file.path);
-      return res.status(400).json({ message: NO_MEDIA_MESSAGE });
-    }
-    const claimsKnownType = ['application/pdf', 'image/jpeg', 'image/png'].includes(req.file.mimetype);
-    if (claimsKnownType && !matchesDeclaredType(req.file.path, req.file.mimetype)) {
-      fs.unlinkSync(req.file.path);
-      return res.status(400).json({ message: `That file does not look like a real ${req.file.mimetype === 'application/pdf' ? 'PDF' : 'image'}. Please check it and try again.` });
+      return res.status(400).json({ message: FILE_TYPE_MESSAGE });
     }
 
     const doc = await createDocument({

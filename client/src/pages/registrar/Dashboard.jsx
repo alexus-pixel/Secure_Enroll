@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import StatusBadge from '../../components/registrar/StatusBadge';
 import api from '../../api/client';
 import useEnrollment from '../../hooks/useEnrollment';
+import Pagination, { usePagination } from '../../components/Pagination';
 
 const fmt = (d) =>
   new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -18,6 +19,8 @@ export default function Dashboard() {
       .then((res) => setData(res.data))
       .catch((err) => setError(err.response?.data?.message || 'Could not load applications.'));
   }, []);
+
+  const pager = usePagination(data?.applications);
 
   if (error) return <div className="reg-page"><p style={{ color: '#b91c1c' }}>{error}</p></div>;
   if (!data) return <div className="reg-page"><p>Loading...</p></div>;
@@ -69,15 +72,15 @@ export default function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            {applications.length === 0 && (
+            {pager.total === 0 && (
               <tr><td colSpan={6}>No applications yet.</td></tr>
             )}
-            {applications.map((a) => (
+            {pager.pageRows.map((a) => (
               <tr key={a.id}>
                 <td className="reg-strong">
                   {a.student}
                   {a.missingLrn && (
-                    <span style={{ marginLeft: 8, fontSize: 12, color: '#b45309' }}>No LRN</span>
+                    <span style={{ marginLeft: 8, fontSize: 13.5, color: '#b45309' }}>No LRN</span>
                   )}
                 </td>
                 <td>{a.grade}</td>
@@ -95,6 +98,15 @@ export default function Dashboard() {
           </tbody>
         </table>
       </div>
+      <Pagination
+        page={pager.page}
+        totalPages={pager.totalPages}
+        total={pager.total}
+        from={pager.from}
+        to={pager.to}
+        onPage={pager.setPage}
+        label="applications"
+      />
     </div>
   );
 }

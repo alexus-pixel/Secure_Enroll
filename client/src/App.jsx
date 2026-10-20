@@ -8,6 +8,7 @@ import Register from './pages/Register';
 import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
+import ChangePassword from './pages/ChangePassword';
 import Dashboard from './pages/Dashboard';
 import NewApplication from './pages/NewApplication';
 import ApplicationDetail from './pages/ApplicationDetail';
@@ -20,13 +21,13 @@ import RegistrarApplicationView from './pages/registrar/ApplicationView';
 import RegistrarWalkIn from './pages/registrar/WalkInEnrollment';
 import RegistrarAccountSettings from './pages/registrar/AccountSettings';
 import RegistrarMissingLrn from './pages/registrar/MissingLrn';
-
+// The registrar runs the class schedules with the same screens as the admin.
 import AdminLayout from './pages/admin/AdminLayout';
 import DashboardPage from './pages/admin/DashboardPage';
 import UsersPage from './pages/admin/UsersPage';
 import TeachersPage from './pages/admin/TeachersPage';
 import TeacherSchedulePage from './pages/admin/TeacherSchedulePage';
-import EditTeacherAssignmentsPage from './pages/admin/EditTeacherAssignmentsPage';
+// The registrar portal shows these two as well (same screens, same rules).
 import SchedulesPage from './pages/admin/SchedulesPage';
 import GradeSchedulePage from './pages/admin/GradeSchedulePage';
 import AuditLogPage from './pages/admin/AuditLogPage';
@@ -46,6 +47,7 @@ function App() {
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/applications/new" element={<ProtectedRoute><NewApplication /></ProtectedRoute>} />
           <Route path="/applications/:id" element={<ProtectedRoute><ApplicationDetail /></ProtectedRoute>} />
@@ -66,6 +68,8 @@ function App() {
             <Route path="walk-in" element={<RegistrarWalkIn />} />
             <Route path="settings" element={<RegistrarAccountSettings />} />
             <Route path="missing-lrn" element={<RegistrarMissingLrn />} />
+            <Route path="schedules" element={<SchedulesPage />} />
+            <Route path="schedules/:gradeLevelId" element={<GradeSchedulePage />} />
           </Route>
 
           <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
@@ -73,7 +77,6 @@ function App() {
             <Route path="users" element={<UsersPage />} />
             <Route path="teachers" element={<TeachersPage />} />
             <Route path="teachers/:id" element={<TeacherSchedulePage />} />
-            <Route path="teachers/:teacherId/assignments" element={<EditTeacherAssignmentsPage />} />
             <Route path="schedules" element={<SchedulesPage />} />
             <Route path="schedules/:gradeLevelId" element={<GradeSchedulePage />} />
             <Route path="audit-log" element={<AuditLogPage />} />

@@ -7,11 +7,13 @@
 // such as {"firstName": {"a": 1}} is refused with a normal 400 message
 // instead of crashing the handler with a 500.
 
-const NAME_MAX = 60;           // matches VARCHAR(60) in the database
+const NAME_MIN = 2;            // "Jo" is a name; a single stray letter is a slip
+const NAME_MAX = 50;           // the column is VARCHAR(60), so this fits with room to spare
 const INITIAL_MAX = 2;         // middle initial: "M" or "M."
 const EMAIL_MAX = 254;
 const PASSWORD_MAX_BYTES = 72; // bcrypt silently ignores everything after 72 bytes
-const ADDRESS_MAX = 255;
+const ADDRESS_MIN = 10;
+const ADDRESS_MAX = 150;
 const NOTE_MAX = 500;
 const REMARK_MAX = 1000;
 
@@ -20,15 +22,24 @@ const REMARK_MAX = 1000;
 // "-" or "'" alone are not names. Digits, < > and other symbols are refused.
 const NAME_RE = /^[\p{L}\p{M}][\p{L}\p{M} .'’-]*$/u;
 const EMAIL_RE = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
-// Two accepted formats: 09XXXXXXXXX (11 digits) or +63XXXXXXXXXX (13 characters, "+" then digits only).
-const PH_MOBILE_RE = /^(09\d{9}|\+63\d{10})$/;
-const CONTACT_MESSAGE = 'Contact number must be 11 digits starting with 09 (e.g. 09171234567) or 13 characters starting with +63 (e.g. +639171234567).';
+// Two accepted formats: 09XXXXXXXXX (11 digits) or +639XXXXXXXXX (13 characters, "+" then digits only).
+const PH_MOBILE_RE = /^(09\d{9}|\+639\d{9})$/;
+const CONTACT_MESSAGE = 'Contact number must be 11 digits starting with 09 (e.g. 09171234567) or 13 characters starting with +639 (e.g. +639171234567).';
 const LRN_RE = /^\d{12}$/;
-// Free text such as an address: no angle brackets and no control characters.
+// Free text such as a room name: no angle brackets and no control characters.
 const SAFE_TEXT_RE = /^[^<>\u0000-\u001F\u007F]+$/u;
+// A home address: letters, digits, spaces and , . # - / only.
+const ADDRESS_RE = /^[\p{L}\p{M}\d ,.#/-]+$/u;
+const ADDRESS_MESSAGE = `Address may use letters, numbers and , . # - / only, and must be ${ADDRESS_MIN} to ${ADDRESS_MAX} characters.`;
+
+// A parent's login is their own Gmail, so nothing else is accepted in the
+// fields that become one. Staff accounts are not restricted this way.
+const GMAIL_DOMAIN = '@gmail.com';
+const GMAIL_LOCAL_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|\.(?!\.)){0,28}[A-Za-z0-9]$/;
+const GMAIL_MESSAGE = 'Enter a Gmail address ending in @gmail.com.';
 
 const SEXES = ['M', 'F'];
-const RELATIONSHIPS = ['Mother', 'Father', 'Guardian', 'Grandmother', 'Grandfather', 'Aunt', 'Uncle', 'Sibling', 'Other'];
+const RELATIONSHIPS = ['Mother', 'Father', 'Guardian', 'Grandparent', 'Other'];
 
 const isString = (v) => typeof v === 'string';
 
@@ -40,12 +51,43 @@ function isValidEmail(value) {
   return local.length <= 64 && !local.startsWith('.') && !local.endsWith('.') && !v.includes('..');
 }
 
-function isValidName(value, { required = true, max = NAME_MAX } = {}) {
+function isValidName(value, { required = true, max = NAME_MAX, min = NAME_MIN } = {}) {
   if (value === undefined || value === null || value === '') return !required;
   if (!isString(value)) return false;
   const v = value.trim();
   if (!v) return !required;
-  return v.length <= max && NAME_RE.test(v);
+  return v.length >= min && v.length <= max && NAME_RE.test(v);
+}
+
+/** Normalised the way a Gmail address is stored: trimmed and lowercased. */
+function normalizeGmail(value) {
+  return String(value === undefined || value === null ? '' : value).trim().toLowerCase();
+}
+
+/** The shape Google itself allows in front of @gmail.com. */
+function isValidGmail(value) {
+  if (!isString(value)) return false;
+  const v = normalizeGmail(value);
+  if (!v || v.length > EMAIL_MAX) return false;
+  if ((v.match(/@/g) || []).length !== 1) return false;
+  if (!v.endsWith(GMAIL_DOMAIN)) return false;
+  const local = v.slice(0, -GMAIL_DOMAIN.length).split('+')[0];
+  return Boolean(local) && local.length <= 30 && GMAIL_LOCAL_RE.test(local);
+}
+
+/** A home address. Returns '' when it is fine, or the sentence to show. */
+function addressIssue(value, { label = 'Address' } = {}) {
+  if (!isString(value)) return `${label} is required.`;
+  const v = value.trim().replace(/\s+/g, ' ');
+  if (!v) return `${label} is required.`;
+  if (v.length < ADDRESS_MIN) return `${label} is too short — give the house or block, street and barangay.`;
+  if (v.length > ADDRESS_MAX) return `${label} is too long (up to ${ADDRESS_MAX} characters).`;
+  if (!ADDRESS_RE.test(v)) return `${label} may use letters, numbers and , . # - / only.`;
+  return '';
+}
+
+function isValidAddress(value) {
+  return addressIssue(value) === '';
 }
 
 function isValidContactNumber(value) {
@@ -106,9 +148,8 @@ function birthDateIssue(value, today = new Date()) {
   }
   const now = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
   if (dt > now) return 'The birth date cannot be in the future.';
-  let age = now.getUTCFullYear() - y;
-  if (now.getUTCMonth() < m - 1 || (now.getUTCMonth() === m - 1 && now.getUTCDate() < d)) age -= 1;
-  if (age < 3 || age > 18) return 'Please check the birth date. A learner should be between 3 and 18 years old.';
+  // No age limit: the school decides who it admits, and an over-age or
+  // under-age learner is a conversation at the desk, not a blocked form.
   return '';
 }
 
@@ -120,8 +161,11 @@ function toId(value) {
 }
 
 module.exports = {
-  NAME_MAX, INITIAL_MAX, EMAIL_MAX, PASSWORD_MAX_BYTES, ADDRESS_MAX, NOTE_MAX, REMARK_MAX,
-  NAME_RE, SAFE_TEXT_RE, SEXES, RELATIONSHIPS,
+  NAME_MIN, NAME_MAX, INITIAL_MAX, EMAIL_MAX, PASSWORD_MAX_BYTES,
+  ADDRESS_MIN, ADDRESS_MAX, NOTE_MAX, REMARK_MAX,
+  NAME_RE, SAFE_TEXT_RE, ADDRESS_RE, ADDRESS_MESSAGE, SEXES, RELATIONSHIPS,
+  GMAIL_DOMAIN, GMAIL_MESSAGE, normalizeGmail, isValidGmail,
   isValidEmail, isValidName, isValidContactNumber, isValidLrn, isValidSex, isValidRelationship,
-  isValidText, passwordIssues, birthDateIssue, toId, canonicalPhone, CONTACT_MESSAGE,
+  isValidText, isValidAddress, addressIssue,
+  passwordIssues, birthDateIssue, toId, canonicalPhone, CONTACT_MESSAGE,
 };

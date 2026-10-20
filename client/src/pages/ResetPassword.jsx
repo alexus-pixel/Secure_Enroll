@@ -72,11 +72,26 @@ export default function ResetPassword() {
 
           <PasswordInput
             id="password" label="New password" value={password}
-            onChange={(e) => setPassword(e.target.value)} error={errors.password} showRules
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setErrors((prev) => ({
+                ...prev,
+                password: e.target.value ? validatePassword(e.target.value) : '',
+                confirmPassword: confirmPassword ? validateConfirmPassword(e.target.value, confirmPassword) : prev.confirmPassword,
+              }));
+            }}
+            error={errors.password} showRules
           />
           <PasswordInput
             id="confirmPassword" label="Confirm new password" value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)} error={errors.confirmPassword}
+            onChange={(e) => {
+              setConfirmPassword(e.target.value);
+              setErrors((prev) => ({
+                ...prev,
+                confirmPassword: e.target.value ? validateConfirmPassword(password, e.target.value) : '',
+              }));
+            }}
+            error={errors.confirmPassword}
           />
 
           <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>

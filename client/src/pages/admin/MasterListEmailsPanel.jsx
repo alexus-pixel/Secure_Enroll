@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import Pagination, { usePagination } from '../../components/Pagination';
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
@@ -47,6 +48,8 @@ export default function MasterListEmailsPanel() {
     } finally { setBusy(null); }
   }
 
+  const pager = usePagination(data?.sections);
+
   if (!data) return error ? <div className="card"><p className="field-error">{error}</p></div> : null;
 
   return (
@@ -67,7 +70,7 @@ export default function MasterListEmailsPanel() {
       <label className="check-row" style={{ margin: '12px 0' }}>
         <input type="checkbox" checked={data.auto} disabled={busy === 'auto'} onChange={(e) => toggleAuto(e.target.checked)} />
         Send automatically when enrollment closes
-        {data.auto && data.enrollmentState !== 'closed' && <span className="muted" style={{ fontSize: 12 }}> (enrollment is not closed yet)</span>}
+        {data.auto && data.enrollmentState !== 'closed' && <span className="muted" style={{ fontSize: 13.5 }}> (enrollment is not closed yet)</span>}
       </label>
 
       {!data.emailConfigured && (
@@ -82,8 +85,8 @@ export default function MasterListEmailsPanel() {
         <table className="data">
           <thead><tr><th>Section</th><th>Learners</th><th>Adviser</th><th>Last email</th><th></th></tr></thead>
           <tbody>
-            {data.sections.length === 0 && <tr><td colSpan={5} className="muted">No sections have been set up yet.</td></tr>}
-            {data.sections.map((s) => {
+            {pager.total === 0 && <tr><td colSpan={5} className="muted">No sections have been set up yet.</td></tr>}
+            {pager.pageRows.map((s) => {
               const st = s.lastStatus ? STATUS[s.lastStatus] : null;
               return (
                 <tr key={s.sectionId}>
@@ -93,7 +96,7 @@ export default function MasterListEmailsPanel() {
                     {s.recipient ? (
                       <>
                         {s.recipient.name}
-                        {!s.recipient.isAdviser && <span className="muted" style={{ fontSize: 11 }}> (teacher, no adviser set)</span>}
+                        {!s.recipient.isAdviser && <span className="muted" style={{ fontSize: 12.5 }}> (teacher, no adviser set)</span>}
                         <div className="cell-sub">{s.recipient.email}</div>
                       </>
                     ) : <span className="muted">No teacher assigned</span>}
@@ -116,6 +119,15 @@ export default function MasterListEmailsPanel() {
           </tbody>
         </table>
       </div>
+      <Pagination
+        page={pager.page}
+        totalPages={pager.totalPages}
+        total={pager.total}
+        from={pager.from}
+        to={pager.to}
+        onPage={pager.setPage}
+        label="sections"
+      />
     </div>
   );
 }

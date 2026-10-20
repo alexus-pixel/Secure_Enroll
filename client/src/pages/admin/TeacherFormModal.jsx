@@ -3,11 +3,6 @@ import { getAllSubjects, getDegreeOptions, checkTeacherEmail } from '../../api/a
 import { sanitizePhone } from '../../utils/validators';
 
 const OTHER_CODE = 'OTHER';
-const STATUS_OPTIONS = [
-  { value: 'active', label: 'Active' },
-  { value: 'locked', label: 'Locked' },
-  { value: 'retired', label: 'Retired' },
-];
 
 export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
   const [degreeOptions, setDegreeOptions] = useState([]); // [{ degree, label, majors }]
@@ -25,12 +20,24 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
     sex: teacher?.sex || '',
     prcLicenseNumber: teacher?.prc_license_number || '',
     address: teacher?.address || '',
-    status: teacher?.status || 'active',
-    maxPeriodsPerDay: teacher?.max_periods_per_day || 5,
+    maxPeriodsPerDay: teacher?.max_periods_per_day || 10,
     subjectIds: teacher?.subject_ids ? [...teacher.subject_ids] : [],
   });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  // A PRC professional licence number is seven digits. An empty box is fine:
+  // not every teacher on file has one recorded.
+  const prcProblem = form.prcLicenseNumber && !/^\d{7}$/.test(form.prcLicenseNumber)
+    ? 'PRC license number must be exactly 7 digits.' : '';
+  // A full teaching day is ten to twelve periods. The server holds the same
+  // range; this is only so the form says so before Save is pressed.
+  const periodsProblem = (() => {
+    const n = Number(form.maxPeriodsPerDay);
+    if (!Number.isInteger(n)) return 'Periods per day must be a whole number.';
+    if (n < 10) return 'A teacher handles at least 10 periods a day.';
+    if (n > 12) return 'A teacher handles at most 12 periods a day.';
+    return '';
+  })();
 
   // idle | checking | ok | error — drives the inline red message
   // under Email and whether Save is allowed to proceed. This runs
@@ -65,6 +72,15 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Subjects this teacher is still scheduled to teach in the active
+  // school year. The server refuses to un-assign them (the class
+  // would be left without a teacher), so the checkbox is shown
+  // ticked and disabled with the reason, rather than letting the
+  // admin untick it and only then hit the error on Save.
+  const lockedById = new Map(
+    (teacher?.lockedSubjects || []).map((l) => [Number(l.subjectId), l])
+  );
+
   const isOther = degreeSelection === OTHER_CODE;
   const majorsForSelectedDegree = degreeOptions.find((d) => d.degree === degreeSelection)?.majors || [];
   const allSubjects = subjectsByGrade.flatMap((g) => g.items);
@@ -92,10 +108,16 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
   }
 
   function toggleSelectAll() {
-    setForm((f) => ({ ...f, subjectIds: allSelected ? [] : allSubjects.map((s) => s.id) }));
+    // Clearing the lot still leaves the locked ones ticked — they
+    // cannot be removed while they are on the timetable.
+    setForm((f) => ({
+      ...f,
+      subjectIds: allSelected ? [...lockedById.keys()] : allSubjects.map((s) => s.id),
+    }));
   }
 
   function toggleSubject(id) {
+    if (lockedById.has(Number(id))) return;
     setForm((f) => ({
       ...f,
       subjectIds: f.subjectIds.includes(id) ? f.subjectIds.filter((x) => x !== id) : [...f.subjectIds, id],
@@ -135,6 +157,8 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
       // value worth saving — what actually gets submitted as the
       // degree is whatever the admin typed for it.
       const degree = isOther ? customDegree.trim() : degreeSelection;
+      if (prcProblem) { setError(prcProblem); return; }
+      if (periodsProblem) { setError(periodsProblem); return; }
       await onSubmit({ ...form, degree });
     } catch (err) {
       const data = err.response?.data;
@@ -167,16 +191,16 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
               <label className="label">Email</label>
               <input
                 className="input" type="email" value={form.email}
+                placeholder={mode === 'edit' && !teacher?.email ? 'No email address on file' : 'e.g. m.reyes@gmail.com'}
                 onChange={(e) => { setForm({ ...form, email: e.target.value }); setEmailCheckState('idle'); }}
                 onBlur={handleEmailBlur}
-                required
               />
               {emailCheckState === 'checking' && <p className="hint">Checking this address...</p>}
               {emailCheckState === 'error' && (
-                <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>{emailCheckMessage}</p>
+                <p style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 4 }}>{emailCheckMessage}</p>
               )}
               {emailCheckState === 'idle' && (
-                <p className="hint">Checked against a live email-verification service.</p>
+                <p className="hint">Optional. If given, it is checked against a live email-verification service.</p>
               )}
             </div>
             <div><label className="label">Contact number</label>
@@ -236,55 +260,81 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
 
           <div className={`field-grid ${mode === 'edit' ? 'cols-3' : 'cols-2'}`}>
             <div><label className="label">PRC license number</label>
-              <input className="input" placeholder="e.g. 1234567" value={form.prcLicenseNumber} onChange={(e) => setForm({ ...form, prcLicenseNumber: e.target.value })} /></div>
+              <input
+                className={`input${prcProblem ? ' input-error' : ''}`}
+                placeholder="7 digits, e.g. 1234567" inputMode="numeric" maxLength={7}
+                value={form.prcLicenseNumber}
+                onChange={(e) => setForm({ ...form, prcLicenseNumber: e.target.value.replace(/\D/g, '').slice(0, 7) })}
+              />
+              {prcProblem
+                ? <p className="field-error">{prcProblem}</p>
+                : <p className="hint">Exactly 7 digits. Leave blank if the teacher has none.</p>}
+            </div>
             <div>
               <label className="label">Max periods per day</label>
               <input
-                className="input" type="number" min="1" max="20" value={form.maxPeriodsPerDay}
+                className={`input${periodsProblem ? ' input-error' : ''}`} type="number" min="10" max="12" step="1"
+                placeholder="10 to 12, e.g. 10" value={form.maxPeriodsPerDay}
                 onChange={(e) => setForm({ ...form, maxPeriodsPerDay: Number(e.target.value) })}
               />
+              {periodsProblem ? <p className="field-error">{periodsProblem}</p> : null}
             </div>
-            {mode === 'edit' && (
-              <div>
-                <label className="label">Status</label>
-                <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                  {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-                {form.status === 'retired' && teacher?.status !== 'retired' && (
-                  <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
-                    Marking this teacher retired will remove all of their current class assignments.
-                  </p>
-                )}
-              </div>
-            )}
+            {/* Whether a teacher is still teaching is changed from the list,
+                with Deactivate, which first asks what happens to their
+                advisory class and their subjects. It is not a quiet dropdown
+                in the middle of an edit form. */}
           </div>
           <p className="hint">
-            The most periods this teacher can be booked for on any single day, across every grade and section \u2014 separate from the school-wide weekly cap.
+            The most periods this teacher can be booked for on any single day, across every grade and section \u2014 between 10 and 12, and separate from the school-wide weekly cap.
           </p>
 
           <div className="field">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <label className="label" style={{ margin: 0 }}>Subjects</label>
               {allSubjects.length > 0 && (
-                <label className="check-row" style={{ margin: 0, fontSize: 12.5 }}>
+                <label className="check-row" style={{ margin: 0, fontSize: 14 }}>
                   <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
                   Select all
                 </label>
               )}
             </div>
             {subjectsByGrade.length === 0 && (
-              <span className="muted" style={{ fontSize: 12.5 }}>No subjects have been set up yet in Class Schedules.</span>
+              <span className="muted" style={{ fontSize: 14 }}>No subjects have been set up yet in Class Schedules.</span>
+            )}
+            {lockedById.size > 0 && (
+              <p className="hint" style={{ marginTop: 0 }}>
+                Greyed-out subjects are already on this teacher's timetable this school year. Move those
+                periods to another teacher (Teachers &rarr; Deactivate &rarr; transfer, or Class Schedules)
+                before they can be removed here.
+              </p>
             )}
             {subjectsByGrade.map((group) => (
               <div key={group.name} style={{ marginBottom: 10 }}>
                 <div className="cell-sub" style={{ marginBottom: 4 }}>{group.name}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {group.items.map((s) => (
-                    <label key={s.id} className="check-row" style={{ margin: 0, border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px' }}>
-                      <input type="checkbox" checked={form.subjectIds.includes(s.id)} onChange={() => toggleSubject(s.id)} />
-                      {s.name}
-                    </label>
-                  ))}
+                  {group.items.map((s) => {
+                    const lock = lockedById.get(Number(s.id));
+                    const reason = lock
+                      ? `Still scheduled: ${lock.periods.join('; ')}. Move those periods to another teacher first.`
+                      : undefined;
+                    return (
+                      <label
+                        key={s.id} className="check-row" title={reason}
+                        style={{
+                          margin: 0, border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px',
+                          ...(lock ? { opacity: 0.65, cursor: 'not-allowed', background: 'var(--surface-2, transparent)' } : {}),
+                        }}
+                      >
+                        <input
+                          type="checkbox" disabled={!!lock}
+                          checked={form.subjectIds.includes(s.id) || !!lock}
+                          onChange={() => toggleSubject(s.id)}
+                        />
+                        {s.name}
+                        {lock && <span className="muted" style={{ fontSize: 12.5, marginLeft: 6 }}>(scheduled)</span>}
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             ))}

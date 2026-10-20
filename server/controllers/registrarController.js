@@ -3,10 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const pool = require('../db/pool');
-const { notifyLrnRecorded } = require('../mailer');
+const { notifyLrnRecorded, notifyLrnFlagged } = require('../mailer');
 const { UPLOAD_DIR } = require('../middleware/upload');
 const {
-  isValidName, passwordIssues, PASSWORD_MAX_BYTES, NOTE_MAX, REMARK_MAX,
+  isValidName, passwordIssues, PASSWORD_MAX_BYTES, NOTE_MAX, REMARK_MAX, NAME_MIN, NAME_MAX,
 } = require('../utils/validators');
 
 const AY = `(SELECT id FROM school_years WHERE is_active LIMIT 1)`;
@@ -94,7 +94,9 @@ exports.get = async (req, res) => {
             a.section_id AS "sectionId", (SELECT name FROM sections WHERE id = a.section_id) AS section,
             s.id AS "studentId",
             s.lrn_hash IS NULL AS "missingLrn",
+            s.lrn_flagged_at AS "lrnFlaggedAt", s.lrn_flag_note AS "lrnFlagNote",
             s.last_name || ', ' || s.first_name AS student, g.name AS grade,
+            g.sort_order > 0 AS "requiresQualification",
             COALESCE(gd.first_name || ' ' || gd.last_name, '—') AS guardian
      FROM enrollment_applications a
      JOIN students s ON s.id = a.student_id
@@ -259,6 +261,23 @@ exports.setQualification = async (req, res) => {
     return res.status(400).json({ message: 'Value must be met or not_met.' });
   }
   if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
+
+  // Kinder is the entry grade: a first-time learner has no previous grades to
+  // qualify with, so there is nothing to mark and the step does not exist.
+  const { rows: [entry] } = await pool.query(
+    `SELECT g.sort_order = 0 AS is_entry_grade, g.name
+     FROM enrollment_applications a JOIN grade_levels g ON g.id = a.grade_level_id
+     WHERE a.id = $1`,
+    [req.params.id]
+  );
+  if (!entry) return res.status(404).json({ message: 'Application not found.' });
+  if (entry.is_entry_grade) {
+    return res.status(400).json({
+      message: `${entry.name} has no grade qualification to mark — it is the entry grade level.`,
+      reason: 'no_qualification_step',
+    });
+  }
+
   const { rowCount } = await pool.query(
     `UPDATE enrollment_applications
      SET grade_qualification = $1,
@@ -284,7 +303,11 @@ exports.decide = async (req, res) => {
   if (!/^\d{1,9}$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
 
   const { rows: [a] } = await pool.query(
-    'SELECT status, grade_qualification, school_year_id, grade_level_id FROM enrollment_applications WHERE id = $1',
+    `SELECT ea.status, ea.grade_qualification, ea.school_year_id, ea.grade_level_id,
+            g.sort_order > 0 AS requires_qualification
+     FROM enrollment_applications ea
+     JOIN grade_levels g ON g.id = ea.grade_level_id
+     WHERE ea.id = $1`,
     [req.params.id]
   );
   if (!a) return res.status(404).json({ message: 'Application not found.' });
@@ -301,10 +324,11 @@ exports.decide = async (req, res) => {
   const docTypes = await getDocumentTypes();
   const docName = (type) => (docTypes.find((t) => t.code === type) || {}).label || type;
   const unreviewed = latest.filter((d) => (d.file_path || d.physical) && d.status === 'pending').map((d) => docName(d.doc_type));
-  if (unreviewed.length || !a.grade_qualification) {
+  const qualificationPending = a.requires_qualification && !a.grade_qualification;
+  if (unreviewed.length || qualificationPending) {
     const parts = [];
     if (unreviewed.length) parts.push(`review ${unreviewed.join(', ')}`);
-    if (!a.grade_qualification) parts.push('mark the grade qualification');
+    if (qualificationPending) parts.push('mark the grade qualification');
     return res.status(400).json({ message: `Finish the review first: ${parts.join(' and ')}.` });
   }
 
@@ -316,10 +340,11 @@ exports.decide = async (req, res) => {
     }
     // Every document the admin marked required must be verified.
     const open = docTypes.filter((t) => t.isRequired && statusOf[t.code] !== 'verified').map((t) => t.label);
-    if (open.length || a.grade_qualification !== 'met') {
+    const qualificationBlocks = a.requires_qualification && a.grade_qualification !== 'met';
+    if (open.length || qualificationBlocks) {
       const parts = [];
       if (open.length) parts.push(`verify every document (still open: ${open.join(', ')})`);
-      if (a.grade_qualification !== 'met') parts.push('mark the grade qualification as Met');
+      if (qualificationBlocks) parts.push('mark the grade qualification as Met');
       return res.status(400).json({ message: `Before approving, ${parts.join(' and ')}.` });
     }
   } else if (!remarks.trim()) {
@@ -405,12 +430,13 @@ exports.assignSection = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   const { firstName, lastName, middleInitial } = req.body || {};
   if (!isValidName(firstName)) {
-    return res.status(400).json({ message: 'First name is required and should contain letters only (up to 60 characters).' });
+    return res.status(400).json({ message: `First name is required and should contain letters only (${NAME_MIN} to ${NAME_MAX} characters).` });
   }
   if (!isValidName(lastName)) {
-    return res.status(400).json({ message: 'Last name is required and should contain letters only (up to 60 characters).' });
+    return res.status(400).json({ message: `Last name is required and should contain letters only (${NAME_MIN} to ${NAME_MAX} characters).` });
   }
-  if (!isValidName(middleInitial, { required: false, max: MI_MAX })) {
+  // An initial is one letter, so the 2-character minimum for names is wrong here.
+  if (!isValidName(middleInitial, { required: false, min: 1, max: MI_MAX })) {
     return res.status(400).json({ message: `M.I. should contain letters only (up to ${MI_MAX} characters).` });
   }
   const first = firstName.trim();
@@ -461,6 +487,7 @@ exports.listMissingLrn = async (req, res) => {
   const { rows } = await pool.query(
     `SELECT s.id AS "studentId",
             s.last_name || ', ' || s.first_name AS student,
+            s.lrn_flagged_at AS "lrnFlaggedAt", s.lrn_flag_note AS "lrnFlagNote",
             g.name AS grade,
             a.id AS "applicationId",
             a.status,
@@ -475,6 +502,45 @@ exports.listMissingLrn = async (req, res) => {
      ORDER BY g.sort_order, s.last_name, s.first_name`
   );
   res.json({ count: rows.length, students: rows });
+};
+
+/**
+ * "This LRN is not correct." The registrar could not find the number in the
+ * DepEd LIS, so the number on file is wrong: it is cleared (nothing wrong
+ * stays on the learner's record), the reason is kept, the learner goes back
+ * on the Missing LRN worklist, and the parent is told to send the right one.
+ */
+exports.flagLrn = async (req, res) => {
+  if (!/^\d+$/.test(req.params.studentId)) {
+    return res.status(404).json({ message: 'Student not found.' });
+  }
+  const note = typeof (req.body || {}).note === 'string' ? req.body.note.trim() : '';
+  if (!note) return res.status(400).json({ message: 'Say what is wrong with the LRN so the parent knows what to correct.' });
+  if (countWords(note) < MIN_REASON_WORDS) {
+    return res.status(400).json({ message: `Please give a reason of at least ${MIN_REASON_WORDS} words.` });
+  }
+  if (note.length > REMARK_MAX) {
+    return res.status(400).json({ message: `That note is too long (up to ${REMARK_MAX} characters).` });
+  }
+
+  const { rowCount } = await pool.query(
+    `UPDATE students
+     SET lrn_encrypted = NULL, lrn_hash = NULL,
+         lrn_flagged_at = NOW(), lrn_flag_note = $2, lrn_flagged_by = $3, updated_at = NOW()
+     WHERE id = $1`,
+    [req.params.studentId, note, req.user.id]
+  );
+  if (!rowCount) return res.status(404).json({ message: 'Student not found.' });
+
+  // The note is safe to log; the LRN itself never is.
+  await pool.query(
+    `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, ip_address, user_agent, details)
+     VALUES ($1, 'LRN_FLAGGED', 'student', $2, $3, $4, $5)`,
+    [req.user.id, req.params.studentId, req.ip, req.headers['user-agent'], JSON.stringify({ note })]
+  );
+
+  notifyLrnFlagged(req.params.studentId, note); // background, never throws
+  res.json({ ok: true });
 };
 
 // The registrar types in the LRN she got from the DepEd LIS portal.
@@ -500,9 +566,24 @@ exports.setLrn = async (req, res) => {
     if (!s) throw Object.assign(new Error('Student not found.'), { status: 404 });
     if (s.lrn_hash) throw Object.assign(new Error('This student already has an LRN.'), { status: 409 });
 
+    // Who already holds it, so the registrar reads a name rather than a
+    // constraint violation. The unique index still backs this up for two
+    // clerks typing the same number at the same moment.
+    const { rows: [owner] } = await client.query(
+      'SELECT first_name, last_name FROM students WHERE lrn_hash = $1 AND id <> $2 LIMIT 1',
+      [hash, req.params.studentId]
+    );
+    if (owner) {
+      throw Object.assign(
+        new Error(`That LRN is already on file for ${owner.last_name}, ${owner.first_name}. Check the number on the learner's Form 137.`),
+        { status: 409 }
+      );
+    }
+
     await client.query(
       `UPDATE students
-       SET lrn_encrypted = pgp_sym_encrypt($1::text, $2), lrn_hash = $3, updated_at = NOW()
+       SET lrn_encrypted = pgp_sym_encrypt($1::text, $2), lrn_hash = $3, updated_at = NOW(),
+           lrn_flagged_at = NULL, lrn_flag_note = NULL, lrn_flagged_by = NULL
        WHERE id = $4`,
       [lrn, process.env.ENCRYPTION_KEY, hash, req.params.studentId]
     );
@@ -518,7 +599,7 @@ exports.setLrn = async (req, res) => {
     notifyLrnRecorded(req.params.studentId); // runs in the background, never throws
     res.json({ ok: true });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     if (err.status) return res.status(err.status).json({ message: err.message });
     if (err.code === '23505') {
       return res.status(409).json({ message: 'That LRN already belongs to another student.' });

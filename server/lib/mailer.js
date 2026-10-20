@@ -21,7 +21,11 @@ function getTransport() {
     host: SMTP_HOST,
     port: Number(SMTP_PORT) || 587,
     secure: Number(SMTP_PORT) === 465,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    // Gmail App Passwords are shown with spaces; they only work without them.
+    auth: { user: SMTP_USER.trim(), pass: SMTP_PASS.replace(/\s+/g, '') },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
   });
 }
 

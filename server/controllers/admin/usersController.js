@@ -2,6 +2,11 @@ const bcrypt = require('bcryptjs');
 const usersDb = require('../../db/admin/users');
 const { logAudit } = require('../../lib/audit');
 const { sendDbError } = require('../../utils/dbErrors');
+const { checkEmailAcceptable } = require('../../lib/emailGate');
+
+// A staff address may be on the school's own domain, so Gmail is not required
+// of it — the rest of the gate is (lib/emailGate.js).
+const checkStaffEmail = (email) => checkEmailAcceptable(email, { requireGmail: false });
 
 // req.user.id comes from the token as a string; ids from the URL are numbers.
 const sameUser = (targetId, req) => String(targetId) === String(req.user.id);
@@ -36,10 +41,16 @@ async function roles(req, res) {
 
 async function create(req, res) {
   try {
-    const { fullName, email, password, roleId } = req.body;
+    const { firstName, lastName, middleInitial, email, password, roleId } = req.body;
 
     const existing = await usersDb.findUserByEmail(email);
     if (existing) return res.status(409).json({ message: 'An account with that email already exists.' });
+
+    // The same check the type-ahead runs, repeated here because the type-ahead
+    // can be skipped: a staff account's password reset goes to this address,
+    // so it has to be one that can receive mail.
+    const deliverable = await checkStaffEmail(email);
+    if (!deliverable.ok) return res.status(422).json({ message: deliverable.reason });
 
     const role = (await usersDb.getRoles()).find((r) => r.id === roleId);
     if (!role) return res.status(400).json({ message: 'Unknown role.' });
@@ -48,7 +59,9 @@ async function create(req, res) {
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = await usersDb.createStaffUser({ email, fullName, passwordHash, roleId });
+    const user = await usersDb.createStaffUser({
+      email, firstName, lastName, middleInitial, passwordHash, roleId,
+    });
 
     await logAudit(req.user.id, 'USER_CREATED', 'user', user.id, req, { email, role: role.name });
     res.status(201).json(user);
@@ -60,29 +73,6 @@ async function create(req, res) {
   }
 }
 
-async function updateRole(req, res) {
-  try {
-    const targetId = Number(req.params.id);
-    if (sameUser(targetId, req)) {
-      return res.status(400).json({ message: "You can't change your own role." });
-    }
-    const before = await usersDb.findUserById(targetId);
-    if (!before) return res.status(404).json({ message: 'User not found.' });
-
-    const role = (await usersDb.getRoles()).find((r) => r.id === req.body.roleId);
-    if (!role) return res.status(400).json({ message: 'Unknown role.' });
-
-    const updated = await usersDb.updateUserRole(targetId, req.body.roleId);
-    await logAudit(req.user.id, 'USER_ROLE_CHANGED', 'user', targetId, req, {
-      from: before.role, toRoleId: req.body.roleId,
-    });
-    res.json(updated);
-  } catch (err) {
-    if (sendDbError(err, res)) return;
-    console.error(err);
-    res.status(500).json({ message: 'Could not update role.' });
-  }
-}
 
 async function setActive(req, res) {
   try {
@@ -101,23 +91,30 @@ async function setActive(req, res) {
   }
 }
 
-async function resetPassword(req, res) {
-  try {
-    const targetId = Number(req.params.id);
-    const passwordHash = await bcrypt.hash(req.body.newPassword, 12);
-    const updated = await usersDb.resetPassword(targetId, passwordHash);
-    if (!updated) return res.status(404).json({ message: 'User not found.' });
 
-    // Never log the password itself, even hashed — the audit log
-    // is meant to be reviewable by other admins, and a password
-    // hash is still something an attacker who reads the log
-    // shouldn't be handed for free.
-    await logAudit(req.user.id, 'USER_PASSWORD_RESET', 'user', targetId, req);
-    res.json({ id: updated.id, email: updated.email });
+/**
+ * "Is this address already somebody's account?" — answered while it is being
+ * typed, so a clash is seen before the form is filled in rather than after it
+ * is submitted. Also says whether the address can receive mail at all, which
+ * matters because a staff account's password reset goes to it.
+ */
+async function checkEmail(req, res) {
+  try {
+    const email = String(req.query.email || '').trim();
+    if (!email) return res.json({ available: false, reason: 'Enter an email address.' });
+    const existing = await usersDb.findUserByEmail(email);
+    if (existing) {
+      return res.json({ available: false, reason: 'An account with that email address already exists.' });
+    }
+    const deliverable = await checkStaffEmail(email);
+    if (!deliverable.ok) return res.json({ available: false, reason: deliverable.reason });
+    res.json({ available: true });
   } catch (err) {
+    // Our own check breaking is not evidence against the address, and create
+    // re-checks everything anyway.
     console.error(err);
-    res.status(500).json({ message: 'Could not reset password.' });
+    res.json({ available: true });
   }
 }
 
-module.exports = { list, counts, roles, create, updateRole, setActive, resetPassword };
+module.exports = { list, counts, roles, create, setActive, checkEmail };

@@ -28,18 +28,23 @@ function EyeOffIcon() {
 // login password field or a "confirm password" / "current password" field.
 export default function PasswordInput({
   id, label, value, onChange, onBlur, placeholder, autoComplete = 'new-password',
-  error, hint, showRules = false,
+  error, hint, showRules = false, required = true,
+  // The registrar portal has its own field styling, so the class names used
+  // for the wrapper, the label and the box can be swapped without a second
+  // copy of this component (and a second eye button to keep in step).
+  fieldClassName = 'field', inputClassName = 'input', labelClassName = 'label',
+  errorClassName = 'field-error', hintClassName = 'hint',
 }) {
   const [visible, setVisible] = useState(false);
   const rules = showRules ? passwordRules(value) : null;
 
   return (
-    <div className="field">
-      {label && <label className="label" htmlFor={id}>{label}</label>}
+    <div className={fieldClassName}>
+      {label && <label className={labelClassName} htmlFor={id}>{label}</label>}
       <div className="input-icon-wrap">
         <input
           id={id}
-          className={`input${error ? ' input-error' : ''}`}
+          className={`${inputClassName}${error ? ' input-error' : ''}`}
           type={visible ? 'text' : 'password'}
           value={value}
           onChange={onChange}
@@ -47,7 +52,7 @@ export default function PasswordInput({
           placeholder={placeholder}
           autoComplete={autoComplete}
           maxLength={72}
-          required
+          required={required}
         />
         <button
           type="button"
@@ -59,8 +64,8 @@ export default function PasswordInput({
           {visible ? <EyeOffIcon /> : <EyeIcon />}
         </button>
       </div>
-      {error && <p className="field-error">{error}</p>}
-      {!error && hint && <p className="hint">{hint}</p>}
+      {error && <p className={errorClassName}>{error}</p>}
+      {!error && hint && <p className={hintClassName}>{hint}</p>}
       {rules && (
         <ul className="pw-rules">
           {rules.map((r) => (

@@ -7,7 +7,8 @@ const { enrollmentIsFull } = require('./seats');
 
 /**
  * Emails each section's class master list, together with the recipient's
- * weekly teaching schedule, to the section's adviser (the teacher whose
+ * weekly teaching schedule, to the section's adviser (the teacher named as
+ * adviser in School Settings; failing that, the teacher whose
  * schedule has an "Adviser" row for that section). When a section has no
  * adviser yet, the teacher who has the most periods in that section is used
  * instead, so a list is never held back only because the adviser row is
@@ -58,7 +59,8 @@ async function listSections(db, yearId) {
     `SELECT sec.id, sec.name AS section_name, gl.name AS grade_level_name, gl.sort_order,
             (SELECT COUNT(*)::int FROM enrollment_applications ea
               WHERE ea.section_id = sec.id AND ea.status = 'approved') AS student_count,
-            rcpt.teacher_id, rcpt.is_adviser,
+            COALESCE(sec.adviser_teacher_id, rcpt.teacher_id) AS teacher_id,
+            (sec.adviser_teacher_id IS NOT NULL OR rcpt.is_adviser) AS is_adviser,
             t.first_name AS t_first, t.last_name AS t_last, t.email AS t_email, t.status AS t_status,
             lm.status AS last_status, lm.created_at AS last_at, lm.error AS last_error,
             lm.trigger AS last_trigger, lm.to_email AS last_to,
@@ -73,7 +75,7 @@ async function listSections(db, yearId) {
         ORDER BY BOOL_OR(se.role_type = 'adviser') DESC, COUNT(*) DESC, se.teacher_id
         LIMIT 1
      ) rcpt ON TRUE
-     LEFT JOIN teachers t ON t.id = rcpt.teacher_id
+     LEFT JOIN teachers t ON t.id = COALESCE(sec.adviser_teacher_id, rcpt.teacher_id)
      LEFT JOIN LATERAL (
         SELECT status, created_at, error, trigger, to_email FROM masterlist_emails
         WHERE section_id = sec.id AND school_year_id = sec.school_year_id

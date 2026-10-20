@@ -1,0 +1,75 @@
+/* ---------- table pagination (components/Pagination.jsx) ---------- */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.pager-count {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.pager-nav {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pager-pages {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pager-btn {
+  min-width: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.pager-btn:hover:not(:disabled) {
+  border-color: var(--faint);
+  background: var(--surface-2);
+}
+
+.pager-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.pager-num.is-current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.pager-gap {
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .pager {
+    justify-content: center;
+    padding: 12px;
+  }
+  .pager-count { width: 100%; text-align: center; }
+  .pager-nav { justify-content: center; }
+}

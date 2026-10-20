@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const pool = require('./pool');
+const { SEAT_STATUSES } = require('../lib/seats');
 
 function lrnHash(lrn) {
   return crypto.createHash('sha256').update((lrn || '').trim()).digest('hex');
@@ -79,10 +80,33 @@ async function getDocumentsOnFileForStudent(studentId) {
 // Only ever fills in a currently-blank LRN -- the WHERE guard means this
 // silently affects 0 rows (rather than clobbering a correct value) if one
 // is already on file, so the caller can tell the two cases apart.
+/**
+ * The learner this LRN already belongs to, or null. An LRN identifies one
+ * child in DepEd's register, so it may appear against one record and no more.
+ */
+async function findStudentByLrn(lrn, db = pool) {
+  if (!lrn) return null;
+  const { rows } = await db.query(
+    'SELECT id, first_name, middle_name, last_name FROM students WHERE lrn_hash = $1 LIMIT 1',
+    [lrnHash(lrn)]
+  );
+  return rows[0] || null;
+}
+
 async function addLrnIfMissing(studentId, lrn) {
+  // Somebody else may already hold it: the column is unique, but a clear
+  // sentence beats a constraint violation surfacing as a server error.
+  const owner = await findStudentByLrn(lrn);
+  if (owner && String(owner.id) !== String(studentId)) {
+    throw Object.assign(
+      new Error(`That LRN is already on file for ${owner.last_name}, ${owner.first_name}. Check the LRN on the learner's Form 137.`),
+      { status: 409, reason: 'duplicate_lrn' }
+    );
+  }
   const result = await pool.query(
     `UPDATE students
-     SET lrn_encrypted = pgp_sym_encrypt($2::text, $3), lrn_hash = $4
+     SET lrn_encrypted = pgp_sym_encrypt($2::text, $3), lrn_hash = $4,
+         lrn_flagged_at = NULL, lrn_flag_note = NULL, lrn_flagged_by = NULL, updated_at = NOW()
      WHERE id = $1 AND lrn_hash IS NULL
      RETURNING id`,
     [studentId, lrn, process.env.ENCRYPTION_KEY, lrnHash(lrn)]
@@ -90,7 +114,114 @@ async function addLrnIfMissing(studentId, lrn) {
   return result.rows.length > 0;
 }
 
+/**
+ * Finds a learner already on file under the same name.
+ *
+ * A learner's name has to be unique across the whole school, not within one
+ * grade level: two records reading "Librando, Alexandra Keith" — one in Kinder,
+ * one in Grade 6 — cannot be told apart on a master list, a schedule or a
+ * class record, so the second one is refused.
+ *
+ * The comparison ignores case, leading and trailing spaces, and repeated
+ * spaces inside the name. A different middle name makes it a different
+ * learner, which is how two children who share a first and last name are
+ * still both allowed.
+ */
+async function findStudentByFullName({ firstName, middleName, lastName }, db = pool) {
+  const norm = (v) => String(v || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const first = norm(firstName);
+  const last = norm(lastName);
+  const middle = norm(middleName);
+  if (!first || !last) return null;
+
+  const { rows } = await db.query(
+    `SELECT s.id, s.first_name, s.middle_name, s.last_name,
+            gl.name AS grade_level_name, sec.name AS section_name,
+            sy.label AS school_year_label, ea.status
+     FROM students s
+     LEFT JOIN LATERAL (
+       SELECT ea.grade_level_id, ea.section_id, ea.school_year_id, ea.status
+       FROM enrollment_applications ea
+       WHERE ea.student_id = s.id
+       ORDER BY ea.id DESC LIMIT 1
+     ) ea ON TRUE
+     LEFT JOIN grade_levels gl ON gl.id = ea.grade_level_id
+     LEFT JOIN sections sec ON sec.id = ea.section_id
+     LEFT JOIN school_years sy ON sy.id = ea.school_year_id
+     WHERE lower(regexp_replace(btrim(s.first_name), '\\s+', ' ', 'g')) = $1
+       AND lower(regexp_replace(btrim(s.last_name), '\\s+', ' ', 'g')) = $2
+       AND lower(regexp_replace(btrim(COALESCE(s.middle_name, '')), '\\s+', ' ', 'g')) = $3
+     ORDER BY s.id LIMIT 1`,
+    [first, last, middle]
+  );
+  return rows[0] || null;
+}
+
+/** The sentence shown when that name is already taken. */
+function duplicateNameMessage(student) {
+  const name = [student.first_name, student.middle_name, student.last_name].filter(Boolean).join(' ');
+  const where = student.grade_level_name
+    ? ` (currently ${student.grade_level_name}${student.section_name ? `, ${student.section_name}` : ''}${student.school_year_label ? `, SY ${student.school_year_label}` : ''})`
+    : '';
+  return `A learner named ${name} is already on file${where}. Two learners cannot share the same name, even in different grade levels. `
+    + 'If this is the same child, enroll them as a returning student; if it is a different child, add a middle name to tell them apart.';
+}
+
+/**
+ * The application this learner already holds in the school year enrollment is
+ * running for, or null.
+ *
+ * A learner sits in one grade level in one school year, so a transferee or a
+ * returnee whose LRN is already enrolled for the current year is not enrolling
+ * again — they are already in. Withdrawn and rejected applications do not
+ * count, because those learners genuinely are not enrolled; everything from
+ * "submitted" up to "approved" does (SEAT_STATUSES in lib/seats.js), since
+ * each of those is holding a seat.
+ *
+ * Checked at the LRN lookup, so the front desk and the parent are told before
+ * anything is typed, rather than meeting a unique-constraint error at the end
+ * of the form.
+ */
+async function activeYearEnrollment(studentId, db = pool) {
+  if (!studentId) return null;
+  const { rows } = await db.query(
+    `SELECT ea.id, ea.status, ea.submitted_at,
+            gl.name AS grade_name, sec.name AS section_name, sy.label AS school_year_label
+       FROM enrollment_applications ea
+       JOIN school_years sy ON sy.id = ea.school_year_id
+       JOIN grade_levels gl ON gl.id = ea.grade_level_id
+       LEFT JOIN sections sec ON sec.id = ea.section_id
+      WHERE ea.student_id = $1 AND sy.is_active AND ea.status = ANY($2::text[])
+      ORDER BY ea.submitted_at DESC LIMIT 1`,
+    [studentId, SEAT_STATUSES]
+  );
+  return rows[0] || null;
+}
+
+/**
+ * The sentence shown when that learner is already enrolled for this year.
+ * `audience` is 'parent' or 'staff' — the facts are the same, what to do
+ * about it is not.
+ */
+function alreadyEnrolledMessage(found, name = '', audience = 'parent') {
+  const who = name || 'That learner';
+  const year = found.school_year_label ? `School Year ${found.school_year_label}` : 'the current school year';
+  const where = found.section_name ? `${found.grade_name} - ${found.section_name}` : found.grade_name;
+  if (found.status === 'approved') {
+    return `${who} is already enrolled in ${where} for ${year}, so there is nothing left to enroll. `
+      + (audience === 'staff'
+        ? 'Open the learner from the enrollment list to change their grade level or section.'
+        : 'You can see the enrollment on your dashboard.');
+  }
+  return `${who} already has an application for ${where} in ${year}, and it is still being reviewed. `
+    + (audience === 'staff'
+      ? 'Wait for that one to be decided, or withdraw it first.'
+      : 'Wait for the school to decide on that one before applying again.');
+}
+
 module.exports = {
   lrnHash, createStudent, findReturningStudentForGuardian, guardianOwnsStudent,
-  getDocumentsOnFileForStudent, addLrnIfMissing,
+  getDocumentsOnFileForStudent, addLrnIfMissing, findStudentByLrn,
+  findStudentByFullName, duplicateNameMessage,
+  activeYearEnrollment, alreadyEnrolledMessage,
 };

@@ -12,32 +12,63 @@ const CLIENT_URL = () => process.env.CLIENT_URL || 'http://localhost:5173';
 let transporter = null;
 function getTransporter() {
   if (transporter) return transporter;
-  if (!process.env.SMTP_HOST) return null;
+  const host = (process.env.SMTP_HOST || '').trim();
+  if (!host) return null;
+  const port = Number(process.env.SMTP_PORT) || 587;
+  const user = (process.env.SMTP_USER || '').trim();
+  // Gmail shows App Passwords as four groups with spaces ("abcd efgh ijkl mnop").
+  // Pasted into .env with the spaces, they are rejected, so remove all whitespace.
+  const pass = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
   transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: Number(process.env.SMTP_PORT) === 465,
-    auth: process.env.SMTP_USER
-      ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-      : undefined,
+    host,
+    port,
+    secure: port === 465,
+    auth: user ? { user, pass } : undefined,
+    // Fail fast with a clear error instead of hanging when the port is blocked.
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
   });
   return transporter;
 }
 
+// Turns a mail error into a plain sentence that says what to fix. Used in the
+// server console and by scripts/testEmail.js; parents never see these details.
+function describeMailError(err) {
+  const msg = String((err && err.message) || err || 'unknown error');
+  if (/^Brevo 401/.test(msg) && /IP address|unrecogni[sz]ed/i.test(msg)) {
+    return 'Brevo refused the IP address of this server. In Brevo go to Security > Authorised IPs and deactivate IP blocking (or add the server IP), then try again.';
+  }
+  if (/^Brevo 401/.test(msg)) return 'Brevo rejected the API key. Check BREVO_API_KEY (use a v3 API key, not an SMTP key).';
+  if (/^Brevo 400/.test(msg) && /sender/i.test(msg)) {
+    return 'Brevo does not accept the sender. BREVO_SENDER_EMAIL must be a sender you verified in Brevo (Senders, Domains & Dedicated IPs).';
+  }
+  if (/^Brevo 4\d\d/.test(msg)) return 'Brevo refused the request. See the message above.';
+  if (/BREVO_SENDER_EMAIL is not set/.test(msg)) return msg;
+  if (err && (err.code === 'EAUTH' || /535|Invalid login|Username and Password not accepted/i.test(msg))) {
+    return 'The SMTP server rejected the login. For Gmail, turn on 2-Step Verification and use a 16-letter App Password as SMTP_PASS (not your normal password), with SMTP_USER set to the same Gmail address.';
+  }
+  if (err && ['ETIMEDOUT', 'ESOCKET', 'ECONNECTION', 'ECONNREFUSED', 'ENOTFOUND', 'EDNS'].includes(err.code)) {
+    return 'Could not reach the SMTP server. Check SMTP_HOST and SMTP_PORT (Gmail: smtp.gmail.com with 587, or 465), and that your network or firewall allows outgoing mail.';
+  }
+  if (/fetch failed|aborted|timeout/i.test(msg)) return 'Could not reach Brevo. Check the internet connection of the server.';
+  return msg;
+}
+
 // Brevo transactional email API. Used ONLY by sendVerificationMail below.
 async function sendViaBrevo({ to, subject, text, html }) {
-  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+  const res = await fetch(process.env.BREVO_API_URL || 'https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     signal: AbortSignal.timeout(20000),
     headers: {
-      'api-key': process.env.BREVO_API_KEY,
+      'api-key': (process.env.BREVO_API_KEY || '').trim(),
       'content-type': 'application/json',
       accept: 'application/json',
     },
     body: JSON.stringify({
       sender: {
         name: process.env.BREVO_SENDER_NAME || SCHOOL,
-        email: process.env.BREVO_SENDER_EMAIL,
+        email: (process.env.BREVO_SENDER_EMAIL || '').trim(),
       },
       to: [{ email: to }],
       subject,
@@ -60,21 +91,60 @@ function printDevEmail({ to, subject, text }, why) {
 async function sendMail({ to, subject, text, html, attachments }) {
   const t = getTransporter();
   if (!t) return printDevEmail({ to, subject, text }, 'SMTP not configured');
-  const from = process.env.SMTP_FROM || `${SCHOOL} <${process.env.SMTP_USER || 'no-reply@secureenroll.local'}>`;
+  const smtpUser = (process.env.SMTP_USER || '').trim();
+  const from = process.env.SMTP_FROM || `${SCHOOL} <${smtpUser || 'no-reply@secureenroll.local'}>`;
   await t.sendMail({ from, to, subject, text, html, attachments });
 }
 
 // The account verification link: Brevo when it is set up, otherwise SMTP.
+// If Brevo is set up but refuses (bad key, unverified sender, blocked IP, outage)
+// and SMTP is configured, the same email is sent through SMTP instead, so a
+// Brevo problem does not stop parents from verifying their account.
 async function sendVerificationMail({ to, subject, text, html }) {
-  if (!process.env.BREVO_API_KEY) return sendMail({ to, subject, text, html });
-  if (!process.env.BREVO_SENDER_EMAIL) {
-    throw new Error('BREVO_SENDER_EMAIL is not set. Use a sender that is verified in Brevo.');
+  const brevoKey = (process.env.BREVO_API_KEY || '').trim();
+  if (!brevoKey) return sendMail({ to, subject, text, html });
+  try {
+    if (!(process.env.BREVO_SENDER_EMAIL || '').trim()) {
+      throw new Error('BREVO_SENDER_EMAIL is not set. Use a sender that is verified in Brevo.');
+    }
+    return await sendViaBrevo({ to, subject, text, html });
+  } catch (brevoErr) {
+    if (!(process.env.SMTP_HOST || '').trim()) throw brevoErr;
+    console.error('Brevo could not send the verification email, trying SMTP instead.');
+    console.error('  Reason:', brevoErr.message);
+    console.error('  Fix:   ', describeMailError(brevoErr));
+    return sendMail({ to, subject, text, html });
   }
-  return sendViaBrevo({ to, subject, text, html });
 }
 
-function verificationEmail(token, firstName) {
+/**
+ * The link that finishes an account.
+ *
+ * `setPassword` is true for a parent whose child was enrolled at the school
+ * office: they never chose a password, so the same link is where they set one.
+ * Nothing temporary is ever handed over at the counter.
+ */
+function verificationEmail(token, firstName, { setPassword = false } = {}) {
   const link = `${CLIENT_URL()}/verify-email?token=${encodeURIComponent(token)}`;
+  if (setPassword) {
+    const { html: h, text: t } = renderEmail({
+      preheader: 'Choose a password to finish setting up your parent account.',
+      heading: 'Set your password',
+      greeting: firstName ? `Hello ${firstName},` : 'Hello,',
+      paragraphs: [
+        `Your child has been enrolled at ${SCHOOL}, and a parent account has been created for you with this email address.`,
+        'Open the link below to choose your own password. That also confirms this address is yours, so there is nothing else to do afterwards.',
+      ],
+      button: { label: 'Set my password', url: link },
+      steps: [
+        'Open the link above and choose a password.',
+        'Sign in with this email address and the password you chose.',
+        "Follow your child's enrollment and requirements from your dashboard.",
+      ],
+      notice: 'This link expires in 24 hours. If it does, use "Forgot password" on the sign-in page to get a new one. If you were not expecting this email, please contact the school office.',
+    });
+    return { subject: `Set your password - ${SCHOOL} parent account`, text: t, html: h };
+  }
   const { html, text } = renderEmail({
     preheader: 'Confirm your email address to finish creating your parent account.',
     heading: 'Confirm your email address',
@@ -110,4 +180,4 @@ function passwordResetEmail(token) {
   return { subject: `Reset your password - ${SCHOOL} enrollment account`, text, html };
 }
 
-module.exports = { sendMail, sendVerificationMail, verificationEmail, passwordResetEmail };
+module.exports = { sendMail, sendVerificationMail, verificationEmail, passwordResetEmail, describeMailError };

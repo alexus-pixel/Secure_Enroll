@@ -1,14 +1,28 @@
 import { useEffect, useState } from 'react';
-import { getSystemSettings, updateEnrollmentPeriod, updateRequiredDocuments } from '../../api/admin';
+import {
+  getSystemSettings, updateEnrollmentPeriod, updateRequiredDocuments,
+  addRequiredDocument, renameRequiredDocument, removeRequiredDocument,
+} from '../../api/admin';
+import ConfirmDialog from '../../components/ConfirmDialog';
 
 // The API sends timestamps; the form needs the school's calendar date (Manila),
 // otherwise every save would move the window back by one day.
 const manilaDate = (iso) => (iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(iso)) : '');
+// "October 20, 2026" — for reading, not for a date box.
+const longDate = (iso) => (iso
+  ? new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(iso))
+  : '');
 
 export default function SystemSettingsPage() {
   const [data, setData] = useState(null);
   const [period, setPeriod] = useState({ enrollmentOpen: false, opensAt: '', closesAt: '' });
   const [docs, setDocs] = useState([]);
+  // The document list is also editable: a new one can be added, an existing
+  // one renamed, and an unused one removed.
+  const [newDoc, setNewDoc] = useState('');
+  const [docError, setDocError] = useState('');
+  const [editing, setEditing] = useState(null);   // { id, label }
+  const [removing, setRemoving] = useState(null); // the document being removed
   const [saving, setSaving] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -26,8 +40,10 @@ export default function SystemSettingsPage() {
   }
   useEffect(load, []);
 
-  async function handleSavePeriod(e) {
-    e.preventDefault();
+  // Both saves change what every parent sees, so each asks first.
+  const [confirming, setConfirming] = useState(null); // 'period' | 'docs'
+
+  async function handleSavePeriod() {
     setSaving('period'); setMessage(''); setError('');
     try {
       await updateEnrollmentPeriod(period);
@@ -69,10 +85,10 @@ export default function SystemSettingsPage() {
       <div className="settings-grid">
         <div className="card">
           <h2>Enrollment Period</h2>
-          <form onSubmit={handleSavePeriod}>
+          <form onSubmit={(e) => { e.preventDefault(); setConfirming('period'); }}>
             <div className="settings-row" style={{ borderTop: 'none' }}>
               <div>
-                <b style={{ fontSize: 13 }}>Enrollment Portal</b>
+                <b style={{ fontSize: 14.5 }}>Enrollment Portal</b>
                 <div className="cell-sub">Allow new applications to be submitted.</div>
               </div>
               <label style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -83,6 +99,14 @@ export default function SystemSettingsPage() {
                 />
               </label>
             </div>
+            {/* The day enrollment actually stopped, which is not the closing
+                date above when it was switched off early or filled up. */}
+            {data.schoolYear.enrollment_closed_at && (
+              <p className="hint" style={{ marginTop: 6 }}>
+                Closed on <b>{longDate(data.schoolYear.enrollment_closed_at)}</b>. Turning the portal
+                back on clears this.
+              </p>
+            )}
             <div className="field-grid cols-2" style={{ marginTop: 14 }}>
               <div><label className="label">Enrollment opens</label>
                 <input className="input" type="date" value={period.opensAt} onChange={(e) => setPeriod({ ...period, opensAt: e.target.value })} required /></div>
@@ -105,7 +129,7 @@ export default function SystemSettingsPage() {
           {data.gradeLevels.map((g) => (
             <div key={g.id} className="settings-row">
               <span>{g.name}</span>
-              <span className="muted" style={{ fontSize: 12.5 }}>
+              <span className="muted" style={{ fontSize: 14 }}>
                 {g.total_slots > 0
                   ? `${g.enrolled_count}/${g.total_slots} taken \u00b7 ${g.slots_left} left`
                   : 'No sections yet'}
@@ -118,25 +142,148 @@ export default function SystemSettingsPage() {
 
       <div className="card">
         <h2>Required Documents Configuration</h2>
-        <p className="hint" style={{ marginTop: -8 }}>Only the checked documents are requested from parents and listed for walk-in enrollment. Unchecked documents are not offered at all.</p>
-        <div className="field-grid cols-2">
+        <p className="hint">
+          Only the ticked documents are asked of parents and listed for walk-in enrollment.
+          Unticked ones are not offered at all. Ticking is saved with the Save button; adding,
+          renaming and removing take effect straight away.
+        </p>
+        {docError && <div className="alert alert-error">{docError}</div>}
+        <div className="doc-list">
           {docs.map((d) => (
-            <label key={d.id} className="check-row">
-              <input
-                type="checkbox" checked={d.is_required}
-                onChange={(e) => setDocs(docs.map((x) => (x.id === d.id ? { ...x, is_required: e.target.checked } : x)))}
-              />
-              {d.label}
-              <span className={`pill ${d.is_required ? 'pill-needs_revision' : 'pill-disabled'}`} style={{ marginLeft: 'auto' }}>
+            <div key={d.id} className="doc-row">
+              <label className="check-row" style={{ marginBottom: 0, flex: 1 }}>
+                <input
+                  type="checkbox" checked={d.is_required}
+                  onChange={(e) => setDocs(docs.map((x) => (x.id === d.id ? { ...x, is_required: e.target.checked } : x)))}
+                />
+                <span>{d.label}</span>
+              </label>
+              <span className={`pill ${d.is_required ? 'pill-needs_revision' : 'pill-disabled'}`}>
                 {d.is_required ? 'Requested' : 'Not requested'}
               </span>
-            </label>
+              <button type="button" className="btn btn-sm btn-secondary"
+                onClick={() => { setDocError(''); setEditing({ id: d.id, label: d.label }); }}>
+                Rename
+              </button>
+              <button type="button" className="btn btn-sm btn-ghost"
+                onClick={() => { setDocError(''); setRemoving(d); }}>
+                Remove
+              </button>
+            </div>
           ))}
+          {docs.length === 0 && <p className="hint">No documents are set up yet.</p>}
         </div>
-        <button className="btn btn-primary" onClick={handleSaveDocs} disabled={saving === 'docs'} style={{ marginTop: 10 }}>
+
+        <div className="btn-row" style={{ marginTop: 12 }}>
+          <input
+            className="input" style={{ maxWidth: 320 }} maxLength={80}
+            placeholder="Add another document, e.g. Barangay Clearance"
+            aria-label="New document name"
+            value={newDoc} onChange={(e) => { setNewDoc(e.target.value); setDocError(''); }}
+          />
+          <button type="button" className="btn btn-secondary" disabled={saving === 'add' || newDoc.trim().length < 3}
+            onClick={async () => {
+              setSaving('add'); setDocError(''); setMessage('');
+              try {
+                setDocs(await addRequiredDocument(newDoc));
+                setNewDoc('');
+                setMessage('Document added.');
+              } catch (err) {
+                setDocError(err.response?.data?.message || 'Could not add that document.');
+              } finally { setSaving(''); }
+            }}>
+            {saving === 'add' ? 'Adding\u2026' : 'Add document'}
+          </button>
+        </div>
+
+        <button className="btn btn-primary" onClick={() => setConfirming('docs')} disabled={saving === 'docs'} style={{ marginTop: 14 }}>
           {saving === 'docs' ? 'Saving...' : 'Save'}
         </button>
       </div>
+
+      {editing && (
+        <ConfirmDialog
+          title="Rename this document"
+          confirmLabel="Save name"
+          busy={saving === 'rename'}
+          disabled={editing.label.trim().length < 3}
+          onClose={() => setEditing(null)}
+          onConfirm={async () => {
+            setSaving('rename'); setDocError('');
+            try {
+              setDocs(await renameRequiredDocument(editing.id, editing.label));
+              setMessage('Document renamed.');
+              setEditing(null);
+            } catch (err) {
+              setDocError(err.response?.data?.message || 'Could not rename that document.');
+              setEditing(null);
+            } finally { setSaving(''); }
+          }}
+        >
+          <p>Parents see this name on their checklist and on the upload screen.</p>
+          <input
+            className="input" maxLength={80} autoFocus aria-label="Document name"
+            value={editing.label} onChange={(e) => setEditing({ ...editing, label: e.target.value })}
+          />
+        </ConfirmDialog>
+      )}
+
+      {removing && (
+        <ConfirmDialog
+          title={`Remove ${removing.label}?`}
+          confirmLabel="Remove document"
+          tone="danger"
+          busy={saving === 'remove'}
+          onClose={() => setRemoving(null)}
+          onConfirm={async () => {
+            setSaving('remove'); setDocError('');
+            try {
+              setDocs(await removeRequiredDocument(removing.id));
+              setMessage('Document removed.');
+            } catch (err) {
+              setDocError(err.response?.data?.message || 'Could not remove that document.');
+            } finally { setSaving(''); setRemoving(null); }
+          }}
+        >
+          <p>It stops being asked for and disappears from every checklist.</p>
+          <p>
+            A document learners have already submitted cannot be removed &mdash; untick it instead,
+            so the records that mention it stay readable.
+          </p>
+        </ConfirmDialog>
+      )}
+
+      {confirming === 'period' && (
+        <ConfirmDialog
+          title="Save the enrollment period?"
+          confirmLabel="Save period"
+          busy={saving === 'period'}
+          onConfirm={async () => { await handleSavePeriod(); setConfirming(null); }}
+          onClose={() => setConfirming(null)}
+        >
+          <p>
+            Enrollment will be <b>{period.enrollmentOpen ? 'open' : 'closed'}</b>, from{' '}
+            <b>{period.opensAt || 'not set'}</b> to <b>{period.closesAt || 'not set'}</b>.
+          </p>
+          <p>Parents see this on the landing page at once, and the application form follows it.</p>
+        </ConfirmDialog>
+      )}
+
+      {confirming === 'docs' && (
+        <ConfirmDialog
+          title="Save the required documents?"
+          confirmLabel="Save documents"
+          busy={saving === 'docs'}
+          onConfirm={async () => { await handleSaveDocs(); setConfirming(null); }}
+          onClose={() => setConfirming(null)}
+        >
+          <p>Parents and the walk-in desk will be asked for exactly these:</p>
+          <ul>
+            {docs.filter((d) => d.is_required).map((d) => <li key={d.id}>{d.label}</li>)}
+          </ul>
+          {docs.every((d) => !d.is_required) && <p>No document will be requested at all.</p>}
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

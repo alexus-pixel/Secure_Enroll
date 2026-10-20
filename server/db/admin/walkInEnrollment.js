@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const pool = require('../pool');
 const { gradeHasRoom, fullMessage, sectionSeats } = require('../../lib/seats');
+const { checkBirthDateForGrade } = require('../../lib/ageRules');
+const { findStudentByFullName, duplicateNameMessage, activeYearEnrollment, alreadyEnrolledMessage } = require('../students');
 
 // The schema has carried an lrn_hash column ("blind index: SHA-256
 // of the LRN") since the original schema.sql, but nothing in the
@@ -40,11 +42,28 @@ async function findStudentByLrn(lrn) {
      ORDER BY sy.opens_at DESC LIMIT 1`,
     [student.id]
   );
-  return { ...student, last_enrollment: lastApp.rows[0] || null };
+
+  // A learner already enrolled for the year enrollment is running for cannot
+  // be enrolled again, so the lookup says so and the form stays closed.
+  const current = await activeYearEnrollment(student.id);
+  const fullName = `${student.last_name}, ${student.first_name}`;
+  return {
+    ...student,
+    last_enrollment: lastApp.rows[0] || null,
+    already_enrolled: current
+      ? {
+        status: current.status,
+        gradeName: current.grade_name,
+        sectionName: current.section_name || null,
+        schoolYearLabel: current.school_year_label,
+        message: alreadyEnrolledMessage(current, fullName, 'staff'),
+      }
+      : null,
+  };
 }
 
 async function getGradeLevels() {
-  const result = await pool.query('SELECT id, name FROM grade_levels ORDER BY sort_order');
+  const result = await pool.query('SELECT id, name, sort_order AS "sortOrder" FROM grade_levels ORDER BY sort_order');
   return result.rows;
 }
 
@@ -62,6 +81,102 @@ async function getRequiredDocumentTypes() {
     'SELECT code, label, is_required FROM required_document_types WHERE is_required ORDER BY sort_order'
   );
   return result.rows;
+}
+
+/**
+ * Tells the front desk what is already on file for a Gmail address, so the
+ * form can say "this parent already has an account" before anything is typed.
+ *
+ * The staff member is NOT allowed to retype an existing parent's details: the
+ * saved profile is what the parent signs in against and what appears on their
+ * dashboard, so the form shows it read-only and this is where it comes from.
+ * Only staff who may create an enrollment can call this (see the routes).
+ */
+async function findGuardianByEmail(email) {
+  const key = process.env.ENCRYPTION_KEY;
+  const address = String(email || '').trim().toLowerCase();
+  if (!address) return { exists: false };
+
+  const { rows } = await pool.query(
+    `SELECT u.id, u.is_active, r.name AS role_name,
+            g.first_name, g.middle_name, g.last_name, g.valid_id_type,
+            pgp_sym_decrypt(g.contact_number, $2)::text AS contact_number,
+            pgp_sym_decrypt(g.address, $2)::text AS address
+     FROM users u
+     JOIN roles r ON r.id = u.role_id
+     LEFT JOIN guardians g ON g.user_id = u.id
+     WHERE u.email = $1`,
+    [address, key]
+  );
+  const row = rows[0];
+  if (!row) return { exists: false };
+
+  if (row.role_name !== 'parent') {
+    return {
+      exists: true, usable: false, accountType: 'staff', hasProfile: false,
+      reason: 'That email already belongs to a staff account and cannot be used for a parent. Ask the parent for their own Gmail address.',
+    };
+  }
+  if (!row.is_active) {
+    return {
+      exists: true, usable: false, accountType: 'parent', hasProfile: Boolean(row.first_name),
+      reason: 'The parent account for that email is disabled. Re-enable it in User Management before enrolling.',
+    };
+  }
+
+  // How many children this account already has on file. Shown at the desk as
+  // a sanity check that this really is the same parent.
+  const { rows: [counts] } = await pool.query(
+    'SELECT COUNT(*)::int AS children FROM student_guardians WHERE guardian_id = $1',
+    [row.id]
+  );
+
+  return {
+    exists: true,
+    usable: true,
+    accountType: 'parent',
+    hasProfile: Boolean(row.first_name),
+    children: counts ? counts.children : 0,
+    guardian: row.first_name ? {
+      firstName: row.first_name,
+      middleName: row.middle_name || '',
+      lastName: row.last_name,
+      contactNumber: row.contact_number || '',
+      address: row.address || '',
+      validIdType: row.valid_id_type || '',
+    } : null,
+  };
+}
+
+/**
+ * Looks for a learner already on file under the same name, in any grade level.
+ * Used twice: live on the walk-in form while the name is typed, and again
+ * inside the transaction below, because the form can be bypassed. The rule
+ * itself lives in db/students.js, so the parent form and the front desk
+ * cannot drift apart.
+ */
+async function findDuplicateStudent({ firstName, middleName, lastName }, db = pool) {
+  const match = await findStudentByFullName({ firstName, middleName, lastName }, db);
+  if (!match) return null;
+  return {
+    ...match,
+    last_enrollment: match.grade_level_name ? {
+      grade_level_name: match.grade_level_name,
+      section_name: match.section_name,
+      school_year_label: match.school_year_label,
+      status: match.status,
+    } : null,
+  };
+}
+
+/** True when this LRN already belongs to a learner on file. */
+async function lrnAlreadyUsed(lrn, db = pool) {
+  if (!lrn) return null;
+  const { rows } = await db.query(
+    'SELECT id, first_name, last_name FROM students WHERE lrn_hash = $1 LIMIT 1',
+    [hashLrn(lrn)]
+  );
+  return rows[0] || null;
 }
 
 /**
@@ -85,7 +200,6 @@ async function findOrCreateGuardianAccount(db, {
   );
 
   let userId;
-  let tempPassword = null;
   let isNew = false;
 
   if (existingUser.rows.length > 0) {
@@ -106,16 +220,16 @@ async function findOrCreateGuardianAccount(db, {
     userId = existing.id;
   } else {
     isNew = true;
-    // Readable temp password (no ambiguous characters), not a
-    // full random byte string — an admin may need to read this
-    // aloud or write it on a slip of paper for the parent.
-    tempPassword = crypto.randomBytes(12).toString('base64')
-      .replace(/[^A-Za-z0-9]/g, '').slice(0, 10);
-    const passwordHash = await bcrypt.hash(tempPassword, 12);
+    // No temporary password is created, read aloud or written on a slip of
+    // paper. The account is given a random one nobody has ever seen, and is
+    // marked as needing a password: the parent chooses their own from the
+    // link emailed to them, which is also what proves the address is theirs.
+    const placeholder = crypto.randomBytes(32).toString('hex');
+    const passwordHash = await bcrypt.hash(placeholder, 12);
     const role = await db.query("SELECT id FROM roles WHERE name = 'parent'");
     const newUser = await db.query(
-      `INSERT INTO users (email, password_hash, role_id, full_name, is_active)
-       VALUES ($1, $2, $3, $4, TRUE) RETURNING id`,
+      `INSERT INTO users (email, password_hash, role_id, full_name, is_active, must_change_password)
+       VALUES ($1, $2, $3, $4, TRUE, TRUE) RETURNING id`,
       [email, passwordHash, role.rows[0].id, `${firstName} ${lastName}`]
     );
     userId = newUser.rows[0].id;
@@ -134,7 +248,7 @@ async function findOrCreateGuardianAccount(db, {
     );
   }
 
-  return { userId, tempPassword, isNew, email };
+  return { userId, isNew, email };
 }
 
 /**
@@ -151,8 +265,8 @@ async function createWalkInEnrollment({
   isNewStudent, existingStudentId,
   firstName, middleName, lastName, birthDate, sex, lrn,
   guardianEmail, guardianFirstName, guardianLastName, guardianMiddleName,
-  guardianContactNumber, guardianAddress, guardianValidIdType, relationship,
-  gradeLevelId, sectionId, schoolYearId, physicalDocTypes, submittedBy,
+  guardianContactNumber, guardianAddress, guardianValidIdType, relationship, relationshipOther,
+  gradeLevelId, sectionId, gradeQualificationMet, schoolYearId, physicalDocTypes, submittedBy,
 }) {
   const client = await pool.connect();
   try {
@@ -162,8 +276,11 @@ async function createWalkInEnrollment({
     // Check the document codes before creating anything, so a bad
     // code can't leave a half-built account behind and so only real
     // document types are ever recorded.
+    // Every document type the school has, not only the required ones: a parent
+    // may hand over an optional one too, and it should be recorded as received
+    // rather than refused as unknown.
     const docTypes = (await client.query(
-      'SELECT code, label, is_required FROM required_document_types WHERE is_required ORDER BY sort_order'
+      'SELECT code, label, is_required FROM required_document_types ORDER BY sort_order'
     )).rows;
     const validCodes = new Set(docTypes.map((d) => d.code));
     const unknownCode = physicalDocTypes.find((c) => !validCodes.has(c));
@@ -173,24 +290,124 @@ async function createWalkInEnrollment({
       throw err;
     }
 
+    // A walk-in is finished at the counter, so nothing is left outstanding:
+    // every required document has to be in the staff member's hands now. The
+    // form disables the button, and this is the rule behind it.
+    const missing = docTypes.filter((d) => d.is_required && !physicalDocTypes.includes(d.code));
+    if (missing.length) {
+      throw Object.assign(
+        new Error(`${missing.map((d) => d.label).join(', ')} ${missing.length === 1 ? 'is' : 'are'} still missing. Every required document has to be verified before the learner can be enrolled.`),
+        { status: 400, reason: 'documents_required', missingDocuments: missing.map((d) => ({ code: d.code, label: d.label })) }
+      );
+    }
+
     // The grade, section and (for a returning student) the student must
     // really exist -- otherwise the insert would fail halfway with a
     // confusing database error.
     const fail = (status, message) => Object.assign(new Error(message), { status });
-    const { rows: [grade] } = await client.query('SELECT id FROM grade_levels WHERE id = $1', [gradeLevelId]);
+    const { rows: [grade] } = await client.query(
+      'SELECT id, name, sort_order FROM grade_levels WHERE id = $1', [gradeLevelId]
+    );
+    // Age for the grade is counted on the day classes start, which is the age
+    // the learner will actually be sitting in that class.
+    const { rows: [yearRow] } = await client.query(
+      `SELECT COALESCE(classes_start_on, (opens_at AT TIME ZONE 'Asia/Manila')::date)::text AS starts_on
+         FROM school_years WHERE id = $1`,
+      [schoolYearId]
+    );
     if (!grade) throw fail(400, 'Unrecognized grade level.');
-    // The section is chosen later, when the application is approved. A seat in
-    // the grade is held from now on, so a full grade cannot take another walk-in.
+
+    // Everything above the entry grade has a grade level behind it. The desk
+    // confirms the learner finished it before enrolling them into the next.
+    if (grade.sort_order > 0 && gradeQualificationMet !== true) {
+      throw Object.assign(
+        new Error(`Confirm the learner completed the grade level before ${grade.name} (Form 137 or Form 138) before enrolling them.`),
+        { status: 400, reason: 'qualification_required' }
+      );
+    }
+
+    // The section is chosen now, so it has to be a real section of this grade
+    // in this school year, and it has to have a seat left.
+    const { rows: [section] } = await client.query(
+      `SELECT s.id, s.name, s.capacity,
+              (SELECT COUNT(*) FROM enrollment_applications ea
+                WHERE ea.section_id = s.id AND ea.status = 'approved')::int AS taken
+         FROM sections s
+        WHERE s.id = $1 AND s.grade_level_id = $2 AND s.school_year_id = $3`,
+      [sectionId, gradeLevelId, schoolYearId]
+    );
+    if (!section) throw fail(400, 'That section does not belong to the chosen grade level for this school year.');
+    if (section.taken >= section.capacity) {
+      throw Object.assign(
+        new Error(`${section.name} is full (${section.taken} of ${section.capacity}). Choose another section.`),
+        { status: 409, reason: 'section_full' }
+      );
+    }
+    // The section above has room, but the grade as a whole may not: other
+    // sections and the applications waiting online count against it too.
     if (!(await gradeHasRoom(client, schoolYearId, gradeLevelId))) {
       throw fail(409, fullMessage((await client.query('SELECT name FROM grade_levels WHERE id = $1', [gradeLevelId])).rows[0].name));
     }
     if (!isNewStudent) {
-      const { rows: [student] } = await client.query('SELECT id FROM students WHERE id = $1', [existingStudentId]);
+      const { rows: [student] } = await client.query(
+        'SELECT id, first_name, last_name FROM students WHERE id = $1', [existingStudentId]);
       if (!student) throw fail(404, 'That student was not found.');
+      // A transferee or returnee whose LRN is already enrolled for this school
+      // year is already in: enrolling them twice would take a second seat and
+      // put the same learner in two sections.
+      const current = await activeYearEnrollment(student.id, client);
+      if (current) {
+        throw Object.assign(
+          new Error(alreadyEnrolledMessage(current, `${student.last_name}, ${student.first_name}`, 'staff')),
+          { status: 409, reason: 'already_enrolled' }
+        );
+      }
+    }
+
+    if (isNewStudent) {
+      // Anyone entering above the first grade has been enrolled somewhere
+      // before, so DepEd has already issued them an LRN. The parent's own form
+      // applies the same rule; the desk cannot skip it.
+      if (grade.sort_order > 0 && !lrn) {
+        throw Object.assign(
+          new Error(`A learner entering ${grade.name} already has an LRN from their previous school. Enter it, or use Old / Returning Student to find them.`),
+          { status: 400, reason: 'lrn_required' }
+        );
+      }
+
+      // A real birth date, not in the future, and old enough for this grade.
+      // There is no upper limit: an adult finishing elementary school is fine.
+      const dateProblem = checkBirthDateForGrade(
+        birthDate,
+        { sortOrder: grade.sort_order, name: grade.name },
+        yearRow?.starts_on || null
+      );
+      if (dateProblem) throw Object.assign(new Error(dateProblem), { status: 400, reason: 'birth_date_invalid' });
+
+      // No two learners may share a name, whatever grade level they are in.
+      // The form warns while the name is being typed; this is the check that
+      // actually holds, because the form can be skipped and two clerks can be
+      // typing at the same moment.
+      const duplicate = await findStudentByFullName({ firstName, middleName, lastName }, client);
+      if (duplicate) {
+        throw Object.assign(
+          new Error(duplicateNameMessage(duplicate)),
+          { status: 409, reason: 'duplicate_name', studentId: duplicate.id }
+        );
+      }
+      if (lrn) {
+        const owner = await lrnAlreadyUsed(lrn, client);
+        if (owner) {
+          throw Object.assign(
+            new Error(`That LRN is already on file for ${owner.first_name} ${owner.last_name}. Check the LRN on the learner's Form 137.`),
+            { status: 409, reason: 'duplicate_lrn' }
+          );
+        }
+      }
     }
 
     const {
-      userId: guardianUserId, tempPassword, isNew: accountCreated, email: accountEmail,
+      userId: guardianUserId, isNew: accountCreated, email: accountEmail,
     } = await findOrCreateGuardianAccount(client, {
       email: guardianEmail, firstName: guardianFirstName, lastName: guardianLastName,
       middleName: guardianMiddleName, contactNumber: guardianContactNumber,
@@ -213,13 +430,22 @@ async function createWalkInEnrollment({
     await client.query(
       `INSERT INTO student_guardians (student_id, guardian_id, relationship, is_primary)
        VALUES ($1, $2, $3, TRUE) ON CONFLICT (student_id, guardian_id) DO NOTHING`,
-      [studentId, guardianUserId, relationship || 'Guardian']
+      // "Other" is recorded as the word the desk typed, which is what the
+      // master list has to show — "Other" on its own says nothing.
+      [studentId, guardianUserId,
+        (relationship === 'Other' ? String(relationshipOther || '').trim() : relationship) || 'Guardian']
     );
 
+    // A walk-in is a completed enrollment, not a request to be reviewed later:
+    // the staff member has the papers in hand, has confirmed the grade
+    // qualification and has chosen the section, so the learner is placed now.
     const appResult = await client.query(
-      `INSERT INTO enrollment_applications (student_id, school_year_id, grade_level_id, status, submitted_by)
-       VALUES ($1, $2, $3, 'submitted', $4) RETURNING id`,
-      [studentId, schoolYearId, gradeLevelId, submittedBy]
+      `INSERT INTO enrollment_applications
+         (student_id, school_year_id, grade_level_id, section_id, status,
+          grade_qualification, submitted_by, reviewed_by, reviewed_at)
+       VALUES ($1, $2, $3, $4, 'approved', $5, $6, $6, NOW()) RETURNING id`,
+      [studentId, schoolYearId, gradeLevelId, sectionId,
+        grade.sort_order > 0 ? 'met' : null, submittedBy]
     );
     const applicationId = appResult.rows[0].id;
 
@@ -231,18 +457,15 @@ async function createWalkInEnrollment({
       );
     }
 
-    // Required documents the parent did not bring today. They have
-    // no row, so the parent's own dashboard shows them as not yet
-    // uploaded, and the parent can submit them online later. Optional
-    // documents left unchecked are not "missing".
-    const stillNeeded = docTypes
-      .filter((d) => d.is_required && !physicalDocTypes.includes(d.code))
-      .map((d) => d.label);
 
     await client.query('COMMIT');
     return {
       studentId, applicationId, guardianUserId,
-      accountEmail, accountCreated, tempPassword, stillNeeded,
+      accountEmail, accountCreated,
+      // Nothing is outstanding: a walk-in is refused above unless every
+      // required document has been verified at the counter.
+      stillNeeded: [],
+      sectionId, sectionName: section.name, gradeLevelName: grade.name,
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -253,5 +476,7 @@ async function createWalkInEnrollment({
 }
 
 module.exports = {
-  hashLrn, findStudentByLrn, getGradeLevels, getSectionsForGrade, getRequiredDocumentTypes, findOrCreateGuardianAccount, createWalkInEnrollment,
+  hashLrn, findStudentByLrn, getGradeLevels, getSectionsForGrade, getRequiredDocumentTypes,
+  findOrCreateGuardianAccount, createWalkInEnrollment,
+  findGuardianByEmail, findDuplicateStudent, lrnAlreadyUsed,
 };
