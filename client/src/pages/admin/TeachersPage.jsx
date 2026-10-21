@@ -363,24 +363,33 @@ export default function TeachersPage() {
                               : <span className="pill pill-approved">Available</span>}
                     </td>
                     <td>
-                      <button className="link-action" onClick={() => openEdit(t)} style={{ marginRight: 10 }}>Edit</button>
-                      <button
-                        className={`btn btn-sm ${t.is_active ? 'btn-outline-danger' : 'btn-secondary'}`}
-                        style={{ marginRight: 10 }}
-                        onClick={() => { setNotice(''); setStatusTeacher(t); }}
-                      >
-                        {t.is_active ? 'Deactivate' : 'Activate'}
-                      </button>
-                      {/* A teacher who is no longer teaching has no current
-                          schedule to look at, and cannot be given one. */}
-                      {t.is_active && t.status === 'active'
-                        ? <Link to={`/admin/teachers/${t.id}`}>View schedule</Link>
-                        : (
-                          <span className="muted" title="This teacher is not active, so they have no current classes."
-                            style={{ cursor: 'not-allowed', opacity: 0.55 }} aria-disabled="true">
-                            View schedule
-                          </span>
-                        )}
+                      {/* All three sit on one line, in one row, so every row's
+                          buttons line up with the row above instead of
+                          wrapping differently depending on the name beside
+                          them. The two harmless ones read first; Deactivate is
+                          the one that changes something, so it goes last behind
+                          a divider where it cannot be hit while reaching for
+                          "View schedule". */}
+                      <div className="row-actions">
+                        <button className="link-action" onClick={() => openEdit(t)}>Edit</button>
+                        {/* A teacher who is no longer teaching has no current
+                            schedule to look at, and cannot be given one. */}
+                        {t.is_active && t.status === 'active'
+                          ? <Link to={`/admin/teachers/${t.id}`}>View schedule</Link>
+                          : (
+                            <span className="muted" title="This teacher is not active, so they have no current classes."
+                              style={{ cursor: 'not-allowed', opacity: 0.55 }} aria-disabled="true">
+                              View schedule
+                            </span>
+                          )}
+                        <span className="row-actions-divider" aria-hidden="true" />
+                        <button
+                          className={`btn btn-sm ${t.is_active ? 'btn-outline-danger' : 'btn-secondary'}`}
+                          onClick={() => { setNotice(''); setStatusTeacher(t); }}
+                        >
+                          {t.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

@@ -9,11 +9,18 @@ const { schoolYearLabelFor } = require('../../validators/settingsValidators');
 const MANILA_TODAY = "(NOW() AT TIME ZONE 'Asia/Manila')::date";
 const HAS_STARTED = `((opens_at AT TIME ZONE 'Asia/Manila')::date <= ${MANILA_TODAY})`;
 
+// When the ACADEMIC year ends is a different question from when ENROLLMENT
+// closes. opens_at..closes_at is only the enrollment window — a few days by
+// default (see createSchoolYear) — but classes run for most of a year after
+// that, so a year is not "ended" the moment its enrollment window shuts. The
+// year ends about ten months after classes begin (the length the enrollment
+// end used to stand in for, before it became a short window of its own), and
+// that is what decides whether a year is still running, can still be edited,
+// and is due to roll over into the next one.
+const ACADEMIC_END = "((COALESCE(classes_start_on, (opens_at AT TIME ZONE 'Asia/Manila')::date) + INTERVAL '10 months')::date)";
+
 // A Y-M-D date as it would be written in a letter to a parent, for the
 // sentences the administrator reads when a change is refused.
-// Today, as the school in Caloocan would write it.
-const manilaToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
-
 const spellDate = (ymd) => new Intl.DateTimeFormat('en-GB', {
   timeZone: 'UTC', day: 'numeric', month: 'long', year: 'numeric',
 }).format(new Date(`${ymd}T00:00:00Z`));
@@ -22,7 +29,7 @@ async function listSchoolYears() {
   const result = await pool.query(
     `SELECT id, label, opens_at, closes_at, classes_start_on::text AS classes_start_on,
             is_active, enrollment_open, dates_confirmed,
-            (closes_at <= CURRENT_DATE) AS is_ended,
+            (${ACADEMIC_END} <= ${MANILA_TODAY}) AS is_ended,
             ${HAS_STARTED} AS has_started
      FROM school_years ORDER BY opens_at DESC`
   );
@@ -48,14 +55,30 @@ function addMonths(dateStr, months) {
   return `${newYear}-${String(newMonth).padStart(2, '0')}-${String(newDay).padStart(2, '0')}`;
 }
 
+// Same timezone-safe, integer-only approach as addMonths, used for the
+// default enrollment-window length. A Y-M-D string goes in and a Y-M-D string
+// comes out, never through the server process's local clock.
+function addDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const out = new Date(Date.UTC(y, m - 1, d) + days * 86400000);
+  return `${out.getUTCFullYear()}-${String(out.getUTCMonth() + 1).padStart(2, '0')}-${String(out.getUTCDate()).padStart(2, '0')}`;
+}
+
 async function createSchoolYear({ label, opensAt, closesAt }) {
-  // "Automatically stop 10 months after classes began" unless an
-  // admin typed a specific end date.
-  const finalClosesAt = closesAt || addMonths(opensAt, 10);
+  // The enrollment window is three days long unless the administrator types a
+  // different end date. It used to default to ten months, back when this date
+  // stood for the end of the whole school year; now it is only the span during
+  // which applications are accepted, so three days is the sensible default and
+  // the admin lengthens it from the form whenever they need longer.
+  const finalClosesAt = closesAt || addDays(opensAt, 3);
+  // Classes begin on or after the day enrollment closes, and the two-date form
+  // no longer sets that day on its own, so it starts out as the enrollment end
+  // date itself (db/ensureSchema.js keeps the same rule for older rows). The
+  // administrator can push it later if the school wants a gap before classes.
   const result = await pool.query(
-    `INSERT INTO school_years (label, opens_at, closes_at, is_active, enrollment_open)
-     VALUES ($1, $2, $3, FALSE, FALSE)
-     RETURNING id, label, opens_at, closes_at, is_active, enrollment_open`,
+    `INSERT INTO school_years (label, opens_at, closes_at, classes_start_on, is_active, enrollment_open)
+     VALUES ($1, $2, $3::timestamptz, ($3::timestamptz)::date, FALSE, FALSE)
+     RETURNING id, label, opens_at, closes_at, classes_start_on::text AS classes_start_on, is_active, enrollment_open`,
     [label, opensAt, finalClosesAt]
   );
   return result.rows[0];
@@ -63,7 +86,7 @@ async function createSchoolYear({ label, opensAt, closesAt }) {
 
 async function isSchoolYearEditable(schoolYearId) {
   const result = await pool.query(
-    'SELECT (closes_at > CURRENT_DATE) AS editable FROM school_years WHERE id = $1',
+    `SELECT (${ACADEMIC_END} > ${MANILA_TODAY}) AS editable FROM school_years WHERE id = $1`,
     [schoolYearId]
   );
   return result.rows[0]?.editable ?? false;
@@ -136,40 +159,25 @@ async function updateSchoolYearDates(id, { opensAt, closesAt, classesStartOn }) 
     throw err;
   }
 
-  // The first day of classes is its own date: enrollment usually closes before
-  // the children walk in. It has to sit inside the school year, and it cannot
-  // be moved once that day has passed, for the same reason the start date
-  // cannot — it is a matter of record by then.
-  const finalClassesStartOn = classesStartOn || year.classes_start_on || finalOpensAt;
-  // Moving only the end date can still leave the first day of classes outside
-  // the year, so the date that will be stored is what gets checked, not just
-  // the one that was sent.
-  if (finalClassesStartOn && (finalClassesStartOn < finalOpensAt || finalClassesStartOn > closesAt)) {
+  // The first day of classes is its own stored value, and is no longer typed
+  // on the two-date form (it carries enrollment start and end only). Classes
+  // begin on or after the day enrollment closes, so unless a value is supplied
+  // the first day of classes is the enrollment end date itself; a day already
+  // stored on or after the new end date is kept, otherwise it moves up to meet
+  // the end date.
+  const finalClassesStartOn = classesStartOn
+    || (year.classes_start_on && year.classes_start_on >= closesAt ? year.classes_start_on : closesAt);
+  // The enrollment period's end date must not run past the start of classes:
+  // the window has to shut before — or on the very day — the children walk in.
+  if (finalClassesStartOn < closesAt) {
     const err = new Error(
-      `The first day of classes (${spellDate(finalClassesStartOn)}) would fall outside the school year. `
-      + `Move it to a day between ${spellDate(finalOpensAt)} and ${spellDate(closesAt)}.`
+      `The enrollment period cannot end after the first day of classes. Enrollment ends on `
+      + `${spellDate(closesAt)} but classes begin on ${spellDate(finalClassesStartOn)} — pick an `
+      + `enrollment end date on or before ${spellDate(finalClassesStartOn)}.`
     );
     err.status = 400;
-    err.reason = 'classes_outside_year';
+    err.reason = 'enrollment_past_classes_start';
     throw err;
-  }
-  if (classesStartOn && classesStartOn !== year.classes_start_on) {
-    if (year.classes_start_on && year.classes_start_on <= manilaToday()) {
-      const err = new Error(
-        `Classes for ${year.label} began on ${spellDate(year.classes_start_on)}, so that date can no longer be changed.`
-      );
-      err.status = 409;
-      err.reason = 'classes_already_started';
-      throw err;
-    }
-    if (classesStartOn < finalOpensAt || classesStartOn > closesAt) {
-      const err = new Error(
-        `The first day of classes has to fall inside the school year, between ${spellDate(finalOpensAt)} and ${spellDate(closesAt)}.`
-      );
-      err.status = 400;
-      err.reason = 'classes_outside_year';
-      throw err;
-    }
   }
 
   // Every date goes in one statement so a refused set never half-applies, and
@@ -185,7 +193,7 @@ async function updateSchoolYearDates(id, { opensAt, closesAt, classesStartOn }) 
      WHERE id = $1
      RETURNING id, label, opens_at, closes_at, classes_start_on::text AS classes_start_on,
                is_active, enrollment_open, dates_confirmed,
-               (closes_at <= CURRENT_DATE) AS is_ended, ${HAS_STARTED} AS has_started`,
+               (${ACADEMIC_END} <= ${MANILA_TODAY}) AS is_ended, ${HAS_STARTED} AS has_started`,
     [id, finalOpensAt, closesAt, schoolYearLabelFor(finalOpensAt), Boolean(opensAt), finalClassesStartOn]
   );
   return result.rows[0] || null;
@@ -199,6 +207,27 @@ async function setActiveSchoolYear(id) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // A new school year cannot be activated while another one is still
+    // running. "Still running" means it is the active year and its academic
+    // year has not ended yet (its enrollment window may well have closed days
+    // ago — that is not the same as the year being over). The administrator
+    // has to let the current year finish, or end it, before switching the
+    // school over to the next one, so two years are never live at once.
+    const { rows: [ongoing] } = await client.query(
+      `SELECT label FROM school_years
+        WHERE is_active = TRUE AND id <> $1 AND ${ACADEMIC_END} > ${MANILA_TODAY}
+        LIMIT 1`,
+      [id]
+    );
+    if (ongoing) {
+      const err = new Error(
+        `School year ${ongoing.label} is still ongoing, so another school year cannot be made active yet. `
+        + 'End the current school year first, then activate the next one.'
+      );
+      err.status = 409;
+      err.reason = 'school_year_still_ongoing';
+      throw err;
+    }
     await client.query('UPDATE school_years SET is_active = FALSE WHERE is_active = TRUE');
     const result = await client.query(
       `UPDATE school_years SET is_active = TRUE WHERE id = $1

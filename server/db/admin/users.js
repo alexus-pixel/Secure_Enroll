@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const pool = require('../pool');
 
 /**
@@ -103,7 +105,14 @@ async function findUserByEmail(email) {
   return result.rows[0] || null;
 }
 
-async function createStaffUser({ email, firstName, lastName, middleInitial, passwordHash, roleId }) {
+async function createStaffUser({ email, firstName, lastName, middleInitial, roleId }) {
+  // No temporary password is created, read aloud or written on a slip of
+  // paper. The account is given a random one nobody has ever seen, and is
+  // marked as needing a password: the person chooses their own from the link
+  // emailed to them, which is also what proves the address is theirs. This is
+  // the same thing the walk-in parent flow does (db/admin/walkInEnrollment.js).
+  const placeholder = crypto.randomBytes(32).toString('hex');
+  const passwordHash = await bcrypt.hash(placeholder, 12);
   // The name is kept in parts, which is what Edit Profile shows; full_name is
   // written too because the user list and the greeting read it.
   const fullName = [firstName, middleInitial, lastName].map((v) => (v || '').trim()).filter(Boolean).join(' ');

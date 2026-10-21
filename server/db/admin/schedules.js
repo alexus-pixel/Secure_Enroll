@@ -398,6 +398,55 @@ async function findDuplicateSubjectInSection(db, { sectionId, subjectId, schoolY
 }
 
 /**
+ * Does this period run across one the section already has?
+ *
+ * The teacher clash above asks whether one person can be in two places at
+ * once. This asks the other question: a class is one group of children, so
+ * its own timetable cannot run 7:00-8:00 and 7:30-8:30 at the same time
+ * either, whoever is teaching them. A new period has to start where the last
+ * one ended.
+ *
+ * The overlap test is the standard one — new starts before the other ends
+ * AND new ends after the other starts — so two periods that merely touch
+ * (8:00 after a 7:00-8:00) are fine.
+ *
+ * Two things are deliberately NOT treated as overlaps:
+ *
+ *   - the exact same time range, because that IS this period. The grade
+ *     schedule page shows one row per time range and a separate entry per
+ *     day inside it, so filling Tuesday on a 7:00-8:00 row means writing a
+ *     second 7:00-8:00 entry next to Monday's.
+ *   - nothing, when the days do not meet — except that a period with no
+ *     days yet (the blank "+ Add Period" placeholder) stands for the whole
+ *     week on either side of the comparison, since that is the section's
+ *     period slot rather than one day's lesson.
+ */
+async function findSectionPeriodOverlap(db, { sectionId, schoolYearId, days, startTime, endTime, excludeEntryId }) {
+  if (!sectionId || !startTime || !endTime) return null;
+  const result = await db.query(
+    `SELECT se.id, se.days, se.start_time, se.end_time,
+            sub.name AS subject_name,
+            t.first_name AS teacher_first_name, t.last_name AS teacher_last_name
+     FROM schedule_entries se
+     LEFT JOIN subjects sub ON sub.id = se.subject_id
+     LEFT JOIN teachers t ON t.id = se.teacher_id
+     WHERE se.section_id = $1
+       AND se.school_year_id = $2
+       AND se.role_type = 'subject'
+       AND se.start_time IS NOT NULL AND se.end_time IS NOT NULL
+       AND se.start_time < $4::time
+       AND se.end_time > $3::time
+       AND NOT (se.start_time = $3::time AND se.end_time = $4::time)
+       AND (se.days && $5::smallint[] OR se.days = '{}' OR cardinality($5::smallint[]) = 0)
+       AND ($6::bigint IS NULL OR se.id <> $6)
+     ORDER BY se.start_time
+     LIMIT 1`,
+    [sectionId, schoolYearId, startTime, endTime, days || [], excludeEntryId || null]
+  );
+  return result.rows[0] || null;
+}
+
+/**
  * Can this teacher be put on a class at all?
  *
  * A teacher who has been deactivated or retired keeps the classes they already
@@ -560,6 +609,21 @@ async function createScheduleEntry(input) {
     // a real bigint and would error on NULL.
     if (input.teacherId) await client.query('SELECT pg_advisory_xact_lock($1)', [input.teacherId]);
 
+    // The section's own timetable comes first, because it applies to a blank
+    // "+ Add Period" slot as much as to a filled one: an overlapping period
+    // should be refused when it is created, not when somebody later tries to
+    // put a subject in it.
+    if (input.roleType === 'subject') {
+      const sectionOverlap = await findSectionPeriodOverlap(client, {
+        sectionId: input.sectionId, schoolYearId: input.schoolYearId, days: input.days,
+        startTime: input.startTime, endTime: input.endTime,
+      });
+      if (sectionOverlap) {
+        await client.query('ROLLBACK');
+        return { sectionOverlap };
+      }
+    }
+
     if (input.roleType === 'subject' && input.subjectId) {
       const duplicateSubject = await findDuplicateSubjectInSection(client, {
         sectionId: input.sectionId, subjectId: input.subjectId, schoolYearId: input.schoolYearId, days: input.days,
@@ -687,6 +751,19 @@ async function updateScheduleEntry(id, input) {
       await assertSectionInYear(client, input.sectionId, schoolYearId);
     }
 
+    // Judged against the row as it will stand after the change, like the
+    // session/time rule above — an edit that moves a period onto another
+    // one is the same mistake as creating it there.
+    if (roleType === 'subject') {
+      const sectionOverlap = await findSectionPeriodOverlap(client, {
+        sectionId, schoolYearId, days, startTime, endTime, excludeEntryId: id,
+      });
+      if (sectionOverlap) {
+        await client.query('ROLLBACK');
+        return { sectionOverlap };
+      }
+    }
+
     if (roleType === 'subject' && subjectId) {
       const duplicateSubject = await findDuplicateSubjectInSection(client, {
         sectionId, subjectId, schoolYearId, days, excludeEntryId: id,
@@ -773,7 +850,8 @@ async function getTeacherAssignments(teacherId, schoolYearId) {
 module.exports = {
   listGradeScheduleSummary, listSectionsForGrade, listSubjects, listAllSubjects,
   listSubjectsWithUsage, getSubjectSettings, getGradeLevel, setMaxSubjects, getSectionAdviser,
-  createSubject, updateSubject, deleteSubject, getSectionWeeklySchedule, findTeacherConflict, checkDailyCap,
+  createSubject, updateSubject, deleteSubject, getSectionWeeklySchedule, findTeacherConflict,
+  findSectionPeriodOverlap, checkDailyCap,
   getTeacherWeeklyLoad, createScheduleEntry, updateScheduleEntry, deleteScheduleEntry,
   getTeacherAssignments, assertTeacherAssignable,
 };

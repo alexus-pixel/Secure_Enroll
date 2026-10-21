@@ -263,6 +263,32 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
+/* A filter popover hangs below the header row, but .table-wrap scrolls
+   sideways and a scroll container clips what leaves it in BOTH directions.
+   With a full table behind it the rows happened to hold the box open; with no
+   rows — an empty list, or a filter that matched nothing — the popover was cut
+   off a few pixels below the header. Holding the wrapper open to the height of
+   the tallest popover means it is always read in full, however many rows are
+   behind it. */
+.table-wrap-filters { min-height: 280px; }
+
+/* ---------- the row of actions at the end of a table row ----------
+   One line, one order, the same gaps in every row, so the buttons line up
+   down the column instead of wrapping around whatever is in the cells
+   beside them. The destructive one sits last, behind the divider. */
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+.row-actions-divider {
+  width: 1px;
+  min-height: 22px;
+  align-self: stretch;
+  background: var(--border);
+}
+
 .modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
 .modal-panel { background: var(--surface); border-radius: 12px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 24px; }
 .modal-panel.is-wide { max-width: 720px; }

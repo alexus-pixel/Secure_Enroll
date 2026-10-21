@@ -13,6 +13,8 @@ router.get('/counts', ...canManage, usersController.counts);
 // Is this address already somebody's account? Asked while it is typed.
 router.get('/check-email', ...canManage, usersController.checkEmail);
 router.get('/roles', ...canManage, usersController.roles);
+// Takes no password: the account is created without a usable one and the
+// person sets theirs from the verification link emailed to them.
 router.post('/', ...canManage, validate(createStaffUser), usersController.create);
 // Changing someone else's role and resetting someone else's password are
 // deliberately not offered: an administrator cannot do either. An account

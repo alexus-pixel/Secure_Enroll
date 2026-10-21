@@ -12,14 +12,18 @@ const labelFor = (startDate) => {
   const y = Number(String(startDate).slice(0, 4));
   return Number.isFinite(y) && y > 0 ? `${y}-${y + 1}` : '';
 };
-// The end date has to fall in the year after the start date, so the date
-// picker is held to that calendar year. The server refuses anything else
-// either way; this only keeps the picker from offering a date that would be
-// turned down.
+// The end date is the end of the ENROLLMENT window, which is a short period
+// that opens and closes within the same span rather than a year later. The
+// picker is held to the day after the start through one year on; the server
+// has the final say (it defaults a blank end to three days after the start).
 const endDateBounds = (startDate) => {
-  const y = Number(String(startDate).slice(0, 4));
-  if (!Number.isFinite(y) || !startDate) return {};
-  return { min: `${y + 1}-01-01`, max: `${y + 1}-12-31` };
+  if (!startDate) return {};
+  const start = new Date(`${startDate}T00:00:00Z`);
+  if (Number.isNaN(start.getTime())) return {};
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const min = new Date(start.getTime() + 86400000);
+  const max = new Date(Date.UTC(start.getUTCFullYear() + 1, start.getUTCMonth(), start.getUTCDate()));
+  return { min: fmt(min), max: fmt(max) };
 };
 
 export default function SchoolSettingsPage() {
@@ -33,9 +37,6 @@ export default function SchoolSettingsPage() {
   // The school year whose dates are open for editing, and the two drafts. The
   // start date is only in play while that year has not begun.
   const [editingDatesId, setEditingDatesId] = useState(null);
-  // The first day of classes is its own date: enrollment normally closes
-  // before the children actually walk in.
-  const [classStartDraft, setClassStartDraft] = useState('');
   const [startDateDraft, setStartDateDraft] = useState('');
   const [endDateDraft, setEndDateDraft] = useState('');
   const [error, setError] = useState('');
@@ -61,8 +62,15 @@ export default function SchoolSettingsPage() {
   }
 
   async function handleActivate(id) {
-    await activateSchoolYear(id);
-    load();
+    setError('');
+    try {
+      await activateSchoolYear(id);
+      load();
+    } catch (err) {
+      // A new school year cannot be activated while another is still ongoing;
+      // the server names the one that is still open.
+      setError(err.response?.data?.message || 'Could not activate the school year.');
+    }
   }
 
   // Starts the following school year: the sections, subjects and every
@@ -115,7 +123,7 @@ export default function SchoolSettingsPage() {
     }
     try {
       await updateSchoolYearDates(year.id, {
-        opensAt, closesAt: endDateDraft, classesStartOn: classStartDraft || undefined,
+        opensAt, closesAt: endDateDraft,
       });
       setEditingDatesId(null);
       load();
@@ -180,33 +188,27 @@ export default function SchoolSettingsPage() {
               <div className="cell-sub">
                 {editingDatesId === y.id ? (
                   <>
-                    Starts{' '}
-                    {/* A year that has already begun keeps its start date, but
-                        it is still shown first and as a date field so the three
-                        dates always read in the order they happen: the year
-                        starts, the year ends, classes begin. */}
+                    Enrollment starts{' '}
+                    {/* The two pickers are the enrollment window: when it opens
+                        and when it closes. A year that has already begun keeps
+                        its start date (shown but disabled); its end date can
+                        still be moved. The first day of classes is a separate
+                        stored date — it follows the enrollment end — and so is
+                        no longer typed here. */}
                     <input
                       className="input" type="date" style={{ display: 'inline-block', width: 150, padding: '2px 6px' }}
-                      aria-label={`Start date of ${y.label}`} min="2026-01-01"
+                      aria-label={`Enrollment start date of ${y.label}`} min="2026-01-01"
                       disabled={Boolean(y.has_started)}
                       value={y.has_started ? y.opens_at.slice(0, 10) : startDateDraft}
                       onChange={(e) => { setStartDateDraft(e.target.value); setEndDateDraft(''); }}
                     />
-                    {' '}&middot; Ends{' '}
+                    {' '}&middot; Enrollment ends{' '}
                     <input
                       className="input" type="date" style={{ display: 'inline-block', width: 150, padding: '2px 6px' }}
-                      aria-label={`End date of ${y.label}`}
+                      aria-label={`Enrollment end date of ${y.label}`}
                       {...endDateBounds(y.has_started ? y.opens_at.slice(0, 10) : startDateDraft)}
                       disabled={!y.has_started && !startDateDraft}
                       value={endDateDraft} onChange={(e) => setEndDateDraft(e.target.value)}
-                    />
-                    {' '}&middot; Classes start{' '}
-                    <input
-                      className="input" type="date" style={{ display: 'inline-block', width: 150, padding: '2px 6px' }}
-                      aria-label={`First day of classes for ${y.label}`}
-                      min={y.has_started ? y.opens_at.slice(0, 10) : startDateDraft}
-                      max={endDateDraft || undefined}
-                      value={classStartDraft} onChange={(e) => setClassStartDraft(e.target.value)}
                     />
                     {' '}
                     <button className="link-action" onClick={() => setConfirming({ kind: 'dates', year: y })}>Save</button>
@@ -214,15 +216,14 @@ export default function SchoolSettingsPage() {
                     <button className="link-action" onClick={() => setEditingDatesId(null)}>Cancel</button>
                     <p className="hint" style={{ margin: '4px 0 0' }}>
                       {y.has_started
-                        ? 'This school year has already begun, so its start date can no longer be changed. You can still move its end date.'
-                        : 'A school year ends in the year after it starts.'}
-                      {' '}The first day of classes is shown to parents on the home page, and is usually
-                      after enrollment closes.
+                        ? 'This school year has already begun, so its start date can no longer be changed. You can still move its enrollment end date.'
+                        : 'The enrollment period opens and closes within the same span; leave it blank when adding a year to default to three days.'}
+                      {' '}Classes begin on or after the day enrollment closes.
                     </p>
                   </>
                 ) : (
                   <>
-                    Starts {new Date(y.opens_at).toLocaleDateString()} &middot; Ends{' '}
+                    Enrollment {new Date(y.opens_at).toLocaleDateString()} &ndash;{' '}
                     {new Date(y.closes_at).toLocaleDateString()}
                     {y.classes_start_on && (
                       <> &middot; Classes start {new Date(`${y.classes_start_on}T00:00:00`).toLocaleDateString()}</>
@@ -234,7 +235,6 @@ export default function SchoolSettingsPage() {
                         setEditingDatesId(y.id);
                         setStartDateDraft(y.opens_at.slice(0, 10));
                         setEndDateDraft(y.closes_at.slice(0, 10));
-                        setClassStartDraft(y.classes_start_on || y.opens_at.slice(0, 10));
                       }}
                     >
                       Edit dates
@@ -261,14 +261,14 @@ export default function SchoolSettingsPage() {
         {showYearForm && (
           <form onSubmit={(e) => { e.preventDefault(); setConfirming({ kind: 'year' }); }} className="admin-form" style={{ flexWrap: 'wrap' }}>
             <div>
-              <label className="label" style={{ fontSize: 12.5 }}>Start date</label>
+              <label className="label" style={{ fontSize: 12.5 }}>Enrollment start</label>
               <input
                 className="input" type="date" value={newYear.opensAt} min="2026-01-01"
                 onChange={(e) => setNewYear({ ...newYear, opensAt: e.target.value, closesAt: '' })} required
               />
             </div>
             <div>
-              <label className="label" style={{ fontSize: 12.5 }}>End date (optional)</label>
+              <label className="label" style={{ fontSize: 12.5 }}>Enrollment end (optional)</label>
               <input
                 className="input" type="date" value={newYear.closesAt}
                 {...endDateBounds(newYear.opensAt)}
@@ -283,9 +283,10 @@ export default function SchoolSettingsPage() {
             </div>
             <button className="btn btn-primary" type="submit" disabled={!newYear.opensAt}>Save</button>
             <p className="hint" style={{ width: '100%', margin: 0 }}>
-              The name comes from the start date, and the year ends in the year after it starts.
-              Leave the end date blank to have it end automatically 10 months after the start.
-              School years for 2025 or earlier can&rsquo;t be added.
+              The start and end dates are the enrollment period. The name comes from the start date.
+              Leave the end date blank to default the enrollment period to three days after the start;
+              set a later date to run enrollment longer. Classes begin on or after the day enrollment
+              closes. School years for 2025 or earlier can&rsquo;t be added.
             </p>
           </form>
         )}
@@ -328,7 +329,7 @@ export default function SchoolSettingsPage() {
         >
           <p>
             It starts on <b>{newYear.opensAt}</b> and ends on{' '}
-            <b>{newYear.closesAt || '10 months later, automatically'}</b>.
+            <b>{newYear.closesAt || 'three days after it starts, automatically'}</b>.
           </p>
           <p>It is added as an inactive year; nothing changes for parents until you set it as active.</p>
         </ConfirmDialog>
@@ -385,16 +386,16 @@ export default function SchoolSettingsPage() {
                 Enrollment stays closed until you do.
               </p>
               <div className="field">
-                <label className="label" htmlFor="sy_opens">Start date</label>
+                <label className="label" htmlFor="sy_opens">Enrollment start</label>
                 <input id="sy_opens" className="input" type="date" required value={confirmDates.opensAt}
                   onChange={(e) => setConfirmDates({ ...confirmDates, opensAt: e.target.value, closesAt: '' })} />
               </div>
               <div className="field">
-                <label className="label" htmlFor="sy_closes">End date</label>
+                <label className="label" htmlFor="sy_closes">Enrollment end</label>
                 <input id="sy_closes" className="input" type="date" required value={confirmDates.closesAt}
                   {...endDateBounds(confirmDates.opensAt)} disabled={!confirmDates.opensAt}
                   onChange={(e) => setConfirmDates({ ...confirmDates, closesAt: e.target.value })} />
-                <p className="hint">A school year ends in the year after it starts.</p>
+                <p className="hint">These are the enrollment window&rsquo;s start and end. Classes begin on or after the day enrollment closes.</p>
               </div>
               <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setConfirmDates(null)}>Later</button>

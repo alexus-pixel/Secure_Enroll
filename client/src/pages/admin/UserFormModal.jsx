@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import PasswordInput from '../../components/PasswordInput';
 import { checkStaffEmail } from '../../api/admin';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import {
-  validatePassword, validateEmail, validateName, validateInitial, NAME_MAX, INITIAL_MAX,
+  validateEmail, validateName, validateInitial, NAME_MAX, INITIAL_MAX,
 } from '../../utils/validators';
 
 const ROLE_LABELS = { registrar: 'Registrar', admin: 'Administrator' };
@@ -16,9 +15,12 @@ const CREATABLE_ROLES = ['registrar', 'admin'];
  * Adds one staff account. There is no edit mode: an administrator cannot
  * change another account's role or password (see UsersPage).
  *
- * The password typed here is temporary. The account is made to replace it
- * the first time it signs in, which the server enforces — see
- * middleware/auth.js and users.must_change_password.
+ * No password is asked for or set here. The account is created without a
+ * usable one and a verification link is emailed to the address; the person
+ * chooses their own password from that link. That keeps an administrator from
+ * ever knowing somebody else's password, and the email arriving is also the
+ * only real proof the address exists — the same thing the walk-in parent flow
+ * does. See usersController.create and VerifyEmail.jsx.
  */
 export default function UserFormModal({ roles, onClose, onSubmit }) {
   const staffRoles = roles.filter((r) => CREATABLE_ROLES.includes(r.name));
@@ -30,16 +32,20 @@ export default function UserFormModal({ roles, onClose, onSubmit }) {
     lastName: '',
     middleInitial: '',
     email: '',
-    password: '',
     roleId: staffRoles[0]?.id || '',
   });
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  // idle | checking | taken — whether this address is already somebody's
-  // account. Asked when the box is left, not on every keystroke.
+  // idle | checking | rejected — what the server said about this address.
+  // Asked when the box is left, not on every keystroke. It answers two
+  // separate questions: is the address already somebody's account, and can it
+  // receive mail at all. Either one is a reason not to create the account, and
+  // the server's own sentence says which it was, so it is shown as given
+  // rather than flattened into one message.
   const [emailState, setEmailState] = useState('idle');
+  const [emailProblem, setEmailProblem] = useState('');
 
   async function handleEmailBlur() {
     const problem = validateEmail(form.email);
@@ -47,11 +53,14 @@ export default function UserFormModal({ roles, onClose, onSubmit }) {
     setEmailState('checking');
     try {
       const { available, reason } = await checkStaffEmail(form.email.trim());
-      setFieldErrors((prev) => ({ ...prev, email: available ? '' : reason }));
-      setEmailState(available ? 'idle' : 'taken');
+      const sentence = available ? '' : (reason || 'That address cannot be used.');
+      setFieldErrors((prev) => ({ ...prev, email: sentence }));
+      setEmailProblem(sentence);
+      setEmailState(available ? 'idle' : 'rejected');
     } catch {
       // A hiccup here should not block the form; create re-checks anyway.
       setEmailState('idle');
+      setEmailProblem('');
     }
   }
 
@@ -61,12 +70,15 @@ export default function UserFormModal({ roles, onClose, onSubmit }) {
     lastName: validateName(f.lastName, { label: 'Last name' }),
     middleInitial: validateInitial(f.middleInitial),
     email: validateEmail(f.email),
-    password: validatePassword(f.password),
   });
 
   const set = (field) => (e) => {
     const next = { ...form, [field]: e.target.value };
     setForm(next);
+    // A verdict belongs to the address it was asked about. Once the address is
+    // being changed the old answer is no longer about anything, so it is
+    // dropped and asked again when the box is left.
+    if (field === 'email') { setEmailState('idle'); setEmailProblem(''); }
     const found = problems(next)[field];
     const stillEmpty = !String(next[field] || '').trim();
     setFieldErrors((prev) => ({ ...prev, [field]: stillEmpty ? '' : found }));
@@ -82,8 +94,8 @@ export default function UserFormModal({ roles, onClose, onSubmit }) {
       setError('Please correct the highlighted fields.');
       return;
     }
-    if (emailState === 'taken') {
-      setError('That email address already belongs to an account. Use a different one.');
+    if (emailState === 'rejected') {
+      setError(emailProblem || 'That email address cannot be used. Use a different one.');
       return;
     }
     setConfirming(true);
@@ -154,20 +166,20 @@ export default function UserFormModal({ roles, onClose, onSubmit }) {
             />
             {emailState === 'checking' && <p className="hint">Checking this address&hellip;</p>}
             {emailState !== 'checking' && fieldErrors.email && <p className="field-error">{fieldErrors.email}</p>}
+            {emailState === 'idle' && !fieldErrors.email && (
+              <p className="hint">
+                Checked when you leave this box: the address must not already belong to an account, and it
+                must be one that can actually receive mail.
+              </p>
+            )}
           </div>
 
-          <PasswordInput
-            id="user_password"
-            label="Temporary password"
-            value={form.password}
-            onChange={set('password')}
-            error={fieldErrors.password}
-            autoComplete="new-password"
-            showRules
-          />
+          {/* Said plainly, because the admin will be asked “so what is my
+              password?” if it is not. */}
           <p className="hint">
-            Give this to them in person. They will be asked to choose their own password the first time
-            they sign in, and cannot use the system until they do.
+            No password is set here. When this account is created, SecureEnroll emails a verification
+            link to the address above, and the person chooses their own password from that link. They
+            cannot sign in until they do.
           </p>
 
           <div className="field">
@@ -201,8 +213,8 @@ export default function UserFormModal({ roles, onClose, onSubmit }) {
           </p>
           <p>{form.email}</p>
           <p>
-            They sign in with the temporary password you entered and must replace it before they can use
-            anything. The role cannot be changed afterwards.
+            A verification link will be emailed to that address. They set their own password from the
+            link, and cannot sign in before they do. The role cannot be changed afterwards.
           </p>
         </ConfirmDialog>
       )}

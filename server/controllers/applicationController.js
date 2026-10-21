@@ -163,10 +163,13 @@ async function submit(req, res) {
       // belongs to somebody else — a mistyped digit far more often than a
       // learner being entered twice. "Already enrolled" is the answer on the
       // returning-learner path below, where the learner is this parent's own.
+      // The learner that already holds a matching LRN is never named back to
+      // the parent: this form is open to every account, so echoing a name
+      // keyed off an LRN would let one family look up another family's child.
       const lrnOwner = await findStudentByLrn(lrnValue);
       if (lrnOwner) {
         return res.status(409).json({
-          message: `That LRN is already on file for ${lrnOwner.last_name}, ${lrnOwner.first_name}. Check the LRN on your child's Form 137.`,
+          message: `That LRN is already on file. Check the LRN on your child's Form 137, or use "Find Returning Student" to look up a learner who has enrolled here before.`,
           reason: 'duplicate_lrn',
         });
       }
@@ -226,7 +229,7 @@ async function submit(req, res) {
     if (sendDbError(err, res)) return;
     if (err.code === '23505') {
       if (err.constraint === 'students_lrn_hash_key') {
-        return res.status(409).json({ message: 'That LRN is already on file for another student.' });
+        return res.status(409).json({ message: 'That LRN is already on file. Please double-check the number on the Form 137.' });
       }
       return res.status(409).json({ message: 'This student is already enrolled for that school year.' });
     }

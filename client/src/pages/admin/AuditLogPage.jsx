@@ -16,6 +16,7 @@ export default function AuditLogPage() {
   }, [filters]);
 
   const pager = usePagination(logs);
+  const hasFilter = Boolean(filters.action || filters.from || filters.to);
 
   async function handleExport() {
     setExporting(true);
@@ -43,7 +44,7 @@ export default function AuditLogPage() {
       {error && <div className="alert alert-error">{error}</div>}
 
       <div className="card card-flush">
-        <div className="table-wrap">
+        <div className="table-wrap table-wrap-filters">
           <table className="data">
             <thead>
               <tr>
@@ -99,7 +100,14 @@ export default function AuditLogPage() {
                 </tr>
               ))}
               {pager.total === 0 && (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>No activity yet.</td></tr>
+                /* "Nothing has happened yet" and "nothing matches what you
+                    asked for" are different answers, and only the second one
+                    tells the reader to widen the filter. */
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)', padding: '28px 12px' }}>
+                    {hasFilter ? 'No entries match this filter.' : 'No activity yet.'}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>

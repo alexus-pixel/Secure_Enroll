@@ -20,8 +20,12 @@ export default function UsersPage() {
   const [togglingUser, setTogglingUser] = useState(null); // the account being turned on/off
   const [toggleBusy, setToggleBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const alive = useAlive();
   const pager = usePagination(users);
+  // "No users found" and "nothing matches what you asked for" read the same on
+  // an empty table, so the message says which one it is.
+  const hasFilter = Boolean(filters.search || filters.role || filters.status || filters.lastLoginFrom || filters.lastLoginTo);
 
   const load = useCallback(() => {
     getUsers(filters).then((r) => { if (alive.current) setUsers((prev) => keepIfSame(prev, r.users)); })
@@ -39,14 +43,21 @@ export default function UsersPage() {
   useAutoRefresh(load, { paused: addingUser || Boolean(togglingUser) });
 
   async function handleCreate(form) {
-    await createUser(form);
+    const created = await createUser(form);
     setAddingUser(false);
+    // The account exists either way, but it is unusable until its owner opens
+    // the link, so a mail provider that refused the message is not something to
+    // leave the admin to discover from the person it was sent to.
+    setNotice(created?.verificationSent === false
+      ? `Account created, but the verification email to ${form.email} could not be sent. They cannot set a password until it reaches them — try again from Forgot password, or check the mail settings.`
+      : `Account created. A verification link has been emailed to ${form.email}; they set their own password from it.`);
     load();
   }
 
   async function handleToggleActive() {
     setToggleBusy(true);
     setError('');
+    setNotice('');
     try {
       await setUserActive(togglingUser.id, !togglingUser.is_active);
       setTogglingUser(null);
@@ -66,10 +77,13 @@ export default function UsersPage() {
           <h1>User Management</h1>
           <p>All roles &middot; SecureEnroll</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setAddingUser(true)}>+ Add User</button>
+        <button className="btn btn-primary" onClick={() => { setNotice(''); setAddingUser(true); }}>+ Add User</button>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
+      {notice && (
+        <div className="alert" style={{ background: 'var(--success-soft)', color: 'var(--success)' }}>{notice}</div>
+      )}
 
       <div className="admin-stats-row">
         <div className="admin-stat-card"><div className="admin-stat-value">{counts.total}</div><div className="admin-stat-label">Total Users</div></div>
@@ -91,7 +105,7 @@ export default function UsersPage() {
           </div>
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap table-wrap-filters">
           <table className="data">
             <thead>
               <tr>
@@ -124,10 +138,14 @@ export default function UsersPage() {
                         className="admin-filter-input"
                         value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}
                       >
+                        {/* An account is either switched on or switched off, and
+                            that is the only thing an administrator filters by
+                            here. A lockout is temporary and clears itself, so it
+                            is still shown in the Status cell but is not worth a
+                            filter of its own. */}
                         <option value="">All</option>
                         <option value="active">Active</option>
-                        <option value="locked">Locked</option>
-                        <option value="disabled">Disabled</option>
+                        <option value="disabled">Deactivated</option>
                       </select>
                     </ColumnFilterIcon>
                   </span>
@@ -162,7 +180,7 @@ export default function UsersPage() {
                     ) : u.is_active ? (
                       <span className="pill pill-approved">Active</span>
                     ) : (
-                      <span className="pill pill-draft">Disabled</span>
+                      <span className="pill pill-draft">Deactivated</span>
                     )}
                   </td>
                   <td>
@@ -184,7 +202,11 @@ export default function UsersPage() {
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>No users found.</td></tr>
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)', padding: '28px 12px' }}>
+                    {hasFilter ? 'No users match this filter.' : 'No users found.'}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>

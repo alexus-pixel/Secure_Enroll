@@ -296,6 +296,20 @@ function dailyCapMessage(x) {
     + `(${x.current}/${x.cap} periods).`;
 }
 
+// Two periods on one section's timetable running across each other. Said the
+// same way as the teacher clash above: name the period that is in the way,
+// with its days and its hours, so the admin can see what to move around.
+function sectionOverlapMessage(overlap) {
+  const dayNames = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri' };
+  const days = (overlap.days || []).map((d) => dayNames[d]).join('/');
+  const what = overlap.subject_name
+    || (overlap.teacher_last_name ? `${overlap.teacher_last_name}, ${overlap.teacher_first_name}` : 'a period');
+  return `This section already has ${what}${days ? ` on ${days}` : ''}, `
+    + `${overlap.start_time?.slice(0, 5)}–${overlap.end_time?.slice(0, 5)}. `
+    + 'Two periods cannot run across each other, though one may start the '
+    + 'moment the other ends.';
+}
+
 function duplicateSubjectMessage(duplicateSubject) {
   const dayNames = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri' };
   const days = (duplicateSubject.days || []).map((d) => dayNames[d]).join('/');
@@ -328,6 +342,13 @@ async function createEntry(req, res) {
       ...req.body, schoolYearId: activeYear.id, createdBy: req.user.id,
     });
     if (result.sessionMismatch) return sendSessionMismatch(result.sessionMismatch, res);
+    if (result.sectionOverlap) {
+      return res.status(409).json({
+        message: sectionOverlapMessage(result.sectionOverlap),
+        reason: 'section_period_overlap',
+        sectionOverlap: result.sectionOverlap,
+      });
+    }
     if (result.duplicateSubject) {
       return res.status(409).json({ message: duplicateSubjectMessage(result.duplicateSubject) });
     }
@@ -357,6 +378,13 @@ async function updateEntry(req, res) {
     const result = await schedulesDb.updateScheduleEntry(Number(req.params.id), req.body);
     if (result.notFound) return res.status(404).json({ message: 'Schedule entry not found.' });
     if (result.sessionMismatch) return sendSessionMismatch(result.sessionMismatch, res);
+    if (result.sectionOverlap) {
+      return res.status(409).json({
+        message: sectionOverlapMessage(result.sectionOverlap),
+        reason: 'section_period_overlap',
+        sectionOverlap: result.sectionOverlap,
+      });
+    }
     if (result.duplicateSubject) {
       return res.status(409).json({ message: duplicateSubjectMessage(result.duplicateSubject) });
     }

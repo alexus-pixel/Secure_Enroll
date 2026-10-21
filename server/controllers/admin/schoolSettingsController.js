@@ -43,6 +43,13 @@ async function activateSchoolYear(req, res) {
     await logAudit(req.user.id, 'SCHOOL_YEAR_ACTIVATED', 'school_year', year.id, req, { label: year.label });
     res.json(year);
   } catch (err) {
+    // A refusal to activate over a year that is still ongoing comes back as a
+    // 409 with its own sentence, not a generic 500.
+    if (err.status) {
+      return res.status(err.status).json({
+        message: err.message, ...(err.reason ? { reason: err.reason } : {}),
+      });
+    }
     console.error(err);
     res.status(500).json({ message: 'Could not activate school year.' });
   }

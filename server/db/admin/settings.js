@@ -75,7 +75,7 @@ async function updateEnrollmentPeriod(schoolYearId, { enrollmentOpen, opensAt, c
   // of record and every schedule, master list and approved application filed
   // under it depends on the year's name, which comes from that date.
   const { rows: [year] } = await pool.query(
-    `SELECT label,
+    `SELECT label, classes_start_on::text AS classes_start_on,
             (opens_at AT TIME ZONE 'Asia/Manila')::date::text AS opens_at,
             ((opens_at AT TIME ZONE 'Asia/Manila')::date
                <= (NOW() AT TIME ZONE 'Asia/Manila')::date) AS has_started
@@ -94,6 +94,14 @@ async function updateEnrollmentPeriod(schoolYearId, { enrollmentOpen, opensAt, c
     throw Object.assign(
       new Error('The closing date has to be after the opening date.'),
       { status: 400 }
+    );
+  }
+  // The enrollment window cannot be stretched past the first day of classes:
+  // enrollment has to shut on or before the children walk in.
+  if (year.classes_start_on && closesAt > year.classes_start_on) {
+    throw Object.assign(
+      new Error('The enrollment period has to end on or before the first day of classes.'),
+      { status: 400, reason: 'enrollment_past_classes_start' }
     );
   }
   const result = await pool.query(

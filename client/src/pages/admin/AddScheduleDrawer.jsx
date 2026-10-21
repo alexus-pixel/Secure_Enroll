@@ -41,6 +41,23 @@ export function to12Hour(hhmm) {
  * Exported because the "+ Add Period" row on the grade's schedule
  * page — where the hours are actually typed — checks the same thing.
  */
+/**
+ * Which half of the day a period belongs to, read off its start time:
+ * before 12:00 noon is the morning session, 12:00 noon or later is the
+ * afternoon one.
+ *
+ * Nobody is asked for this any more. It used to be a pair of buttons in
+ * this drawer, which only ever gave the admin a way to disagree with the
+ * clock — the time is already being set, so the session follows from it.
+ * The value is still sent and still stored, because the grade schedule
+ * page shows the week as a Morning card and an Afternoon card and needs
+ * something to sort the periods into.
+ */
+export function sessionForTime(startTime) {
+  if (!startTime) return null;
+  return String(startTime).slice(0, 5) >= '12:00' ? 'afternoon' : 'morning';
+}
+
 export function sessionTimeIssue(session, startTime, endTime) {
   const start = startTime ? String(startTime).slice(0, 5) : null;
   const end = endTime ? String(endTime).slice(0, 5) : null;
@@ -72,7 +89,6 @@ export default function AddScheduleDrawer({
 
   const [form, setForm] = useState({
     subjectId: entry?.subject_id || '',
-    session: entry?.session || initialSession || 'morning',
     days: entry?.days || [],
     startTime: entry?.start_time?.slice(0, 5) || initialStartTime || '',
     endTime: entry?.end_time?.slice(0, 5) || initialEndTime || '',
@@ -102,6 +118,12 @@ export default function AddScheduleDrawer({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gradeLevelId, schoolYearId]);
+
+  // The period's session, read off its start time rather than asked for.
+  // The times themselves come from the period row that was clicked (or from
+  // the entry being edited), so this is settled before the drawer opens; the
+  // fallbacks only matter for a row that somehow carries no time at all.
+  const session = sessionForTime(form.startTime) || entry?.session || initialSession || 'morning';
 
   const canCheck = form.teacherId && form.days.length > 0 && form.startTime && form.endTime;
 
@@ -134,12 +156,13 @@ export default function AddScheduleDrawer({
     return row && row.available === false ? row : null;
   }, [form.teacherId, availability]);
 
-  // "A Morning session period must start before 12:00 noon." — shown
-  // under the session buttons, and the save button stays disabled
-  // while it stands.
+  // What is wrong with this period's hours — shown under the time line, and
+  // the save button stays disabled while it stands. The session half of the
+  // rule cannot fail any more now that the session is read off the start
+  // time; school hours and "end after start" still can.
   const sessionIssue = useMemo(
-    () => (isAdviserPeriod ? null : sessionTimeIssue(form.session, form.startTime, form.endTime)),
-    [isAdviserPeriod, form.session, form.startTime, form.endTime],
+    () => (isAdviserPeriod ? null : sessionTimeIssue(session, form.startTime, form.endTime)),
+    [isAdviserPeriod, session, form.startTime, form.endTime],
   );
 
   // A teacher already at their daily cap for one of the picked days
@@ -150,6 +173,17 @@ export default function AddScheduleDrawer({
   function isUnavailable(teacherId) {
     const row = availability.find((a) => a.teacher.id === teacherId);
     return row ? row.available === false : false;
+  }
+
+  // Most periods run every school day, and ticking five chips one at a time
+  // for each of them is the long way round. The box is driven by the chips
+  // rather than kept beside them as its own flag, so the two can never
+  // disagree — and a half-picked week shows as a dash rather than as a tick
+  // that would clear the days it looks like it is already holding.
+  const allWeekdays = DAYS.every((d) => form.days.includes(d.n));
+  const someWeekdays = form.days.length > 0;
+  function toggleWholeWeek(checked) {
+    setForm((f) => ({ ...f, days: checked ? DAYS.map((d) => d.n) : [] }));
   }
 
   function toggleDay(n) {
@@ -169,7 +203,10 @@ export default function AddScheduleDrawer({
     setError('');
     setSaving(true);
     try {
-      const payload = { ...form, sectionId, roleType };
+      // session is derived, not held in form state, so it is added here —
+      // the column is still written, and an older row filed under the wrong
+      // half of the day is corrected on the way past.
+      const payload = { ...form, session, sectionId, roleType };
       if (isAdviserPeriod) payload.subjectId = null;
       const result = entry
         ? await updateScheduleEntry(entry.id, payload)
@@ -239,26 +276,34 @@ export default function AddScheduleDrawer({
           </div>
         )}
 
+        {/* There is no session to pick: the period already has a time, and
+            the half of the day follows from it. What is left is a read-back
+            of that time, plus anywhere the hours themselves are wrong. */}
         <div className="field">
-          <label className="label">Session</label>
-          <div className="btn-row">
-            {['morning', 'afternoon'].map((s) => (
-              <button
-                key={s} type="button"
-                className={`btn btn-sm ${form.session === s ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setForm({ ...form, session: s })}
-              >
-                {SESSION_LABELS[s]}
-              </button>
-            ))}
-          </div>
+          <label className="label">Time</label>
+          <p style={{ margin: 0 }}>
+            {timeRange}{' '}
+            <span className="muted">({SESSION_LABELS[session]} session)</span>
+          </p>
           {sessionIssue
             ? <p className="field-error">{sessionIssue}</p>
-            : <p className="hint">School hours are {SCHOOL_HOURS}. Morning periods run before 12:00 noon; afternoon periods start at 12:00 noon or later.</p>}
+            : <p className="hint">Set on the period itself, on the grade&rsquo;s schedule. School hours are {SCHOOL_HOURS}.</p>}
         </div>
 
         <div className="field">
           <label className="label">Day(s) of week</label>
+          <label className="check-row" style={{ marginBottom: 10 }}>
+            <input
+              type="checkbox"
+              checked={allWeekdays}
+              // indeterminate is not an attribute, only a property, so it is
+              // set on the element itself — this is the dash that says "some
+              // days, not all".
+              ref={(el) => { if (el) el.indeterminate = someWeekdays && !allWeekdays; }}
+              onChange={(e) => toggleWholeWeek(e.target.checked)}
+            />
+            <span>Monday to Friday</span>
+          </label>
           <div className="day-picker">
             {DAYS.map((d) => (
               <button
@@ -323,7 +368,7 @@ export default function AddScheduleDrawer({
           </button>
         </div>
         {conflict && <p className="cell-warn" style={{ marginTop: 8 }}>Resolve the conflict to save.</p>}
-        {sessionIssue && <p className="cell-warn" style={{ marginTop: 8 }}>Fix the session or the time to save.</p>}
+        {sessionIssue && <p className="cell-warn" style={{ marginTop: 8 }}>Fix the period’s time to save.</p>}
       </div>
 
       {/* Saving a period changes what a whole class and a teacher do
@@ -354,7 +399,7 @@ export default function AddScheduleDrawer({
             <li><b>Days:</b> {dayList || '—'}</li>
             <li>
               <b>Time:</b> {timeRange}{' '}
-              <span className="muted">({SESSION_LABELS[form.session] || form.session} session)</span>
+              <span className="muted">({SESSION_LABELS[session] || session} session)</span>
             </li>
             {form.room && <li><b>Room:</b> {form.room}</li>}
           </ul>

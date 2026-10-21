@@ -34,7 +34,7 @@ function daysBetween(fromYmd, toYmd) {
 /**
  * @returns {{
  *   state: 'open' | 'upcoming' | 'closed' | 'none',
- *   reason: 'no_school_year' | 'not_started' | 'ended' | 'paused' | 'full' | 'open',
+ *   reason: 'no_school_year' | 'not_started' | 'classes_started' | 'ended' | 'paused' | 'full' | 'open',
  *   schoolYear: string | null, opensOn: string | null, closesOn: string | null,
  *   daysUntilOpen: number | null, daysLeft: number | null, today: string
  * }}
@@ -51,6 +51,18 @@ function computeEnrollment(year, now = new Date()) {
   // (school_years.enrollment_closed_at — see db/admin/settings.js).
   const closedOn = dateOnly(year.enrollment_closed_at);
   const base = { schoolYear: year.label, opensOn, closesOn, closedOn, today, daysUntilOpen: null, daysLeft: null };
+
+  // Once classes have started, online/parent enrollment is closed for good:
+  // from the first day of classes onward only walk-in enrollment of
+  // transferees continues, and that path (registrar/admin) does not consult
+  // this function, so closing here never touches it. The class-start day
+  // itself counts as started, the same way the enrollment window's own days
+  // are judged inclusive. classes_start_on is absent on callers that do not
+  // select it (e.g. the master-list mailer), and the guard simply skips then.
+  const classesStart = dateOnly(year.classes_start_on);
+  if (classesStart && today >= classesStart) {
+    return { ...base, state: 'closed', reason: 'classes_started' };
+  }
 
   if (opensOn && today < opensOn) {
     return { ...base, state: 'upcoming', reason: 'not_started', daysUntilOpen: daysBetween(today, opensOn) };
@@ -81,6 +93,7 @@ function closedMessage(status) {
   // Where the day it closed is known, it is the day worth printing: a window
   // that was switched off early did not close on the date it was planning to.
   const on = status.closedOn ? ` on ${formatLong(status.closedOn)}` : '';
+  if (status.reason === 'classes_started') return `Online enrollment for School Year ${status.schoolYear} is closed because classes have started. Transferees may still enroll in person at the school office.`;
   if (status.reason === 'full') return `All slots for School Year ${status.schoolYear} are filled, so enrollment closed${on || ''}.`;
   if (status.reason === 'ended') return `Enrollment for School Year ${status.schoolYear} closed on ${formatLong(status.closedOn || status.closesOn)}.`;
   return `Enrollment for School Year ${status.schoolYear} is closed${on}. Please check back or visit the school office.`;

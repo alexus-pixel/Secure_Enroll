@@ -344,6 +344,20 @@ async function ensureSchema() {
     UPDATE school_years
        SET classes_start_on = (opens_at AT TIME ZONE 'Asia/Manila')::date
      WHERE classes_start_on IS NULL`);
+  // The enrollment window is now a short span (a few days by default) that
+  // closes BEFORE classes begin, and the school-year form only edits the
+  // window's start and end — the first day of classes is a separate stored
+  // value. Older rows were backfilled with classes_start_on equal to the day
+  // enrollment opened, which would now read as "classes already started" the
+  // moment enrollment opens and would break the rule that enrollment ends on
+  // or before classes start. Move any such day up to the enrollment END, so
+  // every row satisfies closes_at <= classes_start_on. Idempotent: a row that
+  // already starts classes on or after its close date is left alone.
+  await step('class start on or after enrollment end', `
+    UPDATE school_years
+       SET classes_start_on = (closes_at AT TIME ZONE 'Asia/Manila')::date
+     WHERE classes_start_on IS NULL
+        OR classes_start_on < (closes_at AT TIME ZONE 'Asia/Manila')::date`);
 
   // --- School-wide settings the administrator controls -----------------------
   // One row per setting, because these are a handful of single values with no

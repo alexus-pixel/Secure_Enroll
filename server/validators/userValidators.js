@@ -18,7 +18,10 @@ const createStaffUser = z.object({
       .regex(/^[\p{L}][\p{L}.]?$/u, 'Middle initial should be a letter.').optional()
   ),
   email,
-  password: strongPassword,
+  // No password is accepted here, and none is set. The account is created
+  // without a usable one and a verification link is emailed to the address;
+  // the person chooses their own password from that link, which is also what
+  // proves the address is really theirs. See usersController.create.
   roleId: id('Role'),
 });
 

@@ -48,6 +48,10 @@ export default function useEnrollment() {
     } else if (e.state === 'closed' && e.reason === 'ended') {
       title = 'Enrollment is closed';
       message = `Enrollment for School Year ${year} ended on ${longDate(e.closedOn || e.closesOn)}. The application form is turned off.`;
+    } else if (e.state === 'closed' && e.reason === 'classes_started') {
+      title = 'Online enrollment is closed';
+      message = `Classes for School Year ${year} have started, so online enrollment is closed. `
+        + 'Transferees may still enroll in person at the school office.';
     } else if (e.state === 'closed' && e.reason === 'full') {
       title = 'Enrollment is closed';
       message = `All slots for School Year ${year} are filled, so enrollment closed${e.closedOn ? ` on ${longDate(e.closedOn)}` : ''}.`;

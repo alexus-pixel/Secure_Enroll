@@ -111,9 +111,11 @@ function describe(e) {
   if (e.state === 'closed') {
     const detail = e.reason === 'ended'
       ? `Enrollment closed on ${long(e.closesOn)}.`
-      : e.reason === 'full'
-        ? 'All slots are filled, so enrollment is closed.'
-        : 'Enrollment is temporarily closed. Please check back soon.';
+      : e.reason === 'classes_started'
+        ? 'Online enrollment is closed now that classes have started. Transferees may enroll in person at the school office.'
+        : e.reason === 'full'
+          ? 'All slots are filled, so enrollment is closed.'
+          : 'Enrollment is temporarily closed. Please check back soon.';
     return { tone: 'closed', label: 'Enrollment is closed', year, detail, cta: 'closed' };
   }
   return { tone: 'none', label: 'Dates not announced yet', year: '', detail: 'The school has not set the enrollment period yet.', cta: 'prepare' };

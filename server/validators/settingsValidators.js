@@ -22,9 +22,11 @@ const schoolYearLabelFor = (opensAt) => {
 const createSchoolYear = z.object({
   label: z.string().trim().regex(/^\d{4}-\d{4}$/, 'Use the form 2026-2027.').optional(),
   opensAt: c.isoDate('Opening date'),
-  // Optional: when omitted, the school year automatically ends 10
-  // months after opensAt rather than requiring an admin to type an
-  // end date up front.
+  // This is the enrollment window's END, not the end of the whole school year.
+  // Optional: when omitted the server defaults it to three days after the
+  // opening date (see db/admin/schoolSettings.js), the usual length of an
+  // enrollment period. Being a short window it sits in the same calendar year
+  // as the opening date, so there is no "ends the year after" rule on it.
   closesAt: c.isoDate('Closing date').optional(),
 }).refine((v) => !v.closesAt || v.closesAt > v.opensAt, {
   message: 'Closing date must be after the opening date.',
@@ -32,10 +34,6 @@ const createSchoolYear = z.object({
 }).refine((v) => Number(String(v.opensAt).slice(0, 4)) >= 2026, {
   message: 'School years for 2025 or earlier can\u2019t be added.',
   path: ['opensAt'],
-}).refine((v) => !v.closesAt || Number(String(v.closesAt).slice(0, 4)) === Number(String(v.opensAt).slice(0, 4)) + 1, {
-  // "if the school year is 2026-2027, the system only shows year 2027"
-  message: 'A school year ends in the year after it starts, e.g. starts in 2026 and ends in 2027.',
-  path: ['closesAt'],
 }).refine((v) => !v.label || v.label === schoolYearLabelFor(v.opensAt), {
   message: 'The school year name has to match its start date.',
   path: ['label'],
@@ -83,16 +81,16 @@ const updateSchoolYearDates = z.object({
   // Sent when the start date is being moved too, and when an
   // automatically-created school year has its provisional dates confirmed.
   opensAt: c.isoDate('Opening date').optional(),
-  // The first day of classes, which is its own date: enrollment normally
-  // closes before the children walk in.
+  // The first day of classes, its own stored date, no longer typed on the
+  // two-date form but still accepted from API callers. Enrollment closes on or
+  // before classes begin.
   classesStartOn: c.isoDate('First day of classes').optional(),
 }).refine((v) => !v.opensAt || v.closesAt > v.opensAt, {
   message: 'Closing date must be after the opening date.',
   path: ['closesAt'],
-}).refine((v) => !v.opensAt || Number(String(v.closesAt).slice(0, 4)) === Number(String(v.opensAt).slice(0, 4)) + 1, {
-  // The same rule the add-a-school-year form obeys, so moving the start date
-  // cannot leave a year that runs over three calendar years.
-  message: 'A school year ends in the year after it starts, e.g. starts in 2026 and ends in 2027.',
+}).refine((v) => !v.classesStartOn || v.closesAt <= v.classesStartOn, {
+  // The enrollment period must end on or before the first day of classes.
+  message: 'The enrollment period has to end on or before the first day of classes.',
   path: ['closesAt'],
 });
 
@@ -146,14 +144,7 @@ const rolloverSchoolYear = z.object({
 }).refine((v) => !v.opensAt || !v.closesAt || v.closesAt > v.opensAt, {
   message: 'Closing date must be after the opening date.',
   path: ['closesAt'],
-}).refine(
-  (v) => !v.opensAt || !v.closesAt
-    || Number(String(v.closesAt).slice(0, 4)) === Number(String(v.opensAt).slice(0, 4)) + 1,
-  {
-    message: 'A school year ends in the year after it starts, e.g. starts in 2026 and ends in 2027.',
-    path: ['closesAt'],
-  }
-);
+});
 
 module.exports = {
   addRequiredDocument, updateRequiredDocument, documentIdParam, rolloverSchoolYear,

@@ -11,6 +11,15 @@ import SubjectsPanel from './SubjectsPanel';
 const DAYS = [1, 2, 3, 4, 5];
 const DAY_LABELS = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri' };
 
+// A <input type="time"> box has to hold a whole 12-hour reading — "09:00 AM" —
+// next to the clock button Chrome draws inside it. At 110px it cut off at
+// "09:00 A", so the admin could not read back the time they had just typed.
+// .input's side padding and border take about 24px of the box, leaving
+// around 126px for the reading and the button at 14.5px type — comfortably
+// more than they need, deliberately, since the exact width depends on the
+// font the browser happens to use.
+const TIME_BOX_WIDTH = 150;
+
 export default function GradeSchedulePage() {
   // The registrar portal shows this same page, so links stay inside it.
   const portal = useLocation().pathname.startsWith('/registrar') ? '/registrar' : '/admin';
@@ -215,15 +224,19 @@ export default function GradeSchedulePage() {
               <h2 style={{ textTransform: 'capitalize', margin: 0 }}>{session} session</h2>
               {!isReadOnly && (
                 addingPeriodFor === session ? (
-                  <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  /* Wider time boxes make this row too long for a narrow
+                     window, and .admin-section-header does not wrap on its
+                     own — so the row wraps here instead of pushing the Add
+                     and Cancel buttons off the edge of the card. */
+                  <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     <input
-                      type="time" className="input" style={{ width: 110 }} min={DAY_OPENS} max={DAY_CLOSES}
+                      type="time" className="input" style={{ width: TIME_BOX_WIDTH }} min={DAY_OPENS} max={DAY_CLOSES}
                       aria-label={`Start time of the new ${session} period`}
                       value={newPeriodTimes.startTime} onChange={(e) => setNewPeriodTimes((t) => ({ ...t, startTime: e.target.value }))}
                     />
                     <span className="muted">to</span>
                     <input
-                      type="time" className="input" style={{ width: 110 }} min={DAY_OPENS} max={DAY_CLOSES}
+                      type="time" className="input" style={{ width: TIME_BOX_WIDTH }} min={DAY_OPENS} max={DAY_CLOSES}
                       aria-label={`End time of the new ${session} period`}
                       value={newPeriodTimes.endTime} onChange={(e) => setNewPeriodTimes((t) => ({ ...t, endTime: e.target.value }))}
                     />

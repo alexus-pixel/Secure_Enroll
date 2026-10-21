@@ -150,9 +150,15 @@ async function rolloverIfEnded() {
     if (!lock.ok) return null;
     try {
       const { rows: [active] } = await client.query(
+        // A year rolls over when the ACADEMIC year ends, not when its short
+        // enrollment window (closes_at) shuts. The academic year runs about
+        // ten months from the first day of classes — the span the enrollment
+        // end used to stand in for before it became a window of its own.
         `SELECT id, label, opens_at, closes_at
          FROM school_years
-         WHERE is_active = TRUE AND closes_at <= NOW()
+         WHERE is_active = TRUE
+           AND (COALESCE(classes_start_on, (opens_at AT TIME ZONE 'Asia/Manila')::date)
+                  + INTERVAL '10 months')::date <= (NOW() AT TIME ZONE 'Asia/Manila')::date
          LIMIT 1`
       );
       if (!active) return null;

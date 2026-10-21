@@ -96,10 +96,12 @@ async function findStudentByLrn(lrn, db = pool) {
 async function addLrnIfMissing(studentId, lrn) {
   // Somebody else may already hold it: the column is unique, but a clear
   // sentence beats a constraint violation surfacing as a server error.
+  // The holder is never named in that sentence: a parent could otherwise
+  // type any LRN here and read back whose child it belongs to.
   const owner = await findStudentByLrn(lrn);
   if (owner && String(owner.id) !== String(studentId)) {
     throw Object.assign(
-      new Error(`That LRN is already on file for ${owner.last_name}, ${owner.first_name}. Check the LRN on the learner's Form 137.`),
+      new Error(`That LRN is already on file. Check the LRN on the learner's Form 137.`),
       { status: 409, reason: 'duplicate_lrn' }
     );
   }
