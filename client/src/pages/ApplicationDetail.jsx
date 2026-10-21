@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
 import AppNav from '../components/AppNav';
 import { useScrollToError } from '../hooks/useScrollToError';
+import { FILE_ACCEPT, validateFile } from '../utils/validators';
 
 // What the parent sees for each registrar decision on a document.
 const DOC_STATUS_TEXT = {
@@ -12,11 +13,12 @@ const DOC_STATUS_TEXT = {
   rejected: 'Rejected',
 };
 
-const DOC_TYPES = {
-  birth_certificate: 'Birth Certificate',
-  form_138: 'Form 138 / Report Card',
-  good_moral: 'Certificate of Good Moral Character',
-};
+// Used only if the server does not send the checklist.
+const FALLBACK_TYPES = [
+  { code: 'birth_certificate', label: 'Birth Certificate', required: true },
+  { code: 'form_138', label: 'Form 138 / Report Card', required: true },
+  { code: 'good_moral', label: 'Certificate of Good Moral Character', required: false },
+];
 
 export default function ApplicationDetail() {
   const { id } = useParams();
@@ -38,6 +40,9 @@ export default function ApplicationDetail() {
 
   async function upload(docType, file) {
     if (!file) return;
+    // Only PDF, JPG and PNG, up to 5 MB — the same rule the server enforces.
+    const problem = validateFile(file);
+    if (problem) { setUploadError(problem); return; }
     const fd = new FormData();
     fd.append('file', file);
     fd.append('docType', docType);
@@ -79,7 +84,9 @@ export default function ApplicationDetail() {
   if (!app) return <p style={{ padding: 24 }}>Loading...</p>;
 
   const uploaded = Object.fromEntries(app.documents.map((d) => [d.doc_type, d]));
-  const reachedReview = !['draft', 'submitted'].includes(app.status);
+  // Only the documents the administrator checked in Settings are listed.
+  const rows = app.documentTypes || FALLBACK_TYPES;
+  const reachedReview = !['draft', 'submitted', 'resubmitted'].includes(app.status);
   const finished = ['approved', 'rejected'].includes(app.status);
 
     return (
@@ -96,6 +103,12 @@ export default function ApplicationDetail() {
         </div>
 
         {uploadError && <div className="alert alert-error" role="alert">{uploadError}</div>}
+        {app.lrn?.flaggedAt && (
+          <div className="alert alert-error" role="alert">
+            <b>Action needed:</b> the registrar could not find this learner&rsquo;s LRN in the DepEd system.
+            Please enter the correct one in the Learner Reference Number box below.
+          </div>
+        )}
 
         <div className="card">
           <div className="timeline">
@@ -110,7 +123,7 @@ export default function ApplicationDetail() {
           {app.remarks && <div className="alert alert-note"><b>Registrar remarks:</b> {app.remarks}</div>}
 
           <p className="section-label">Documents</p>
-          {Object.entries(DOC_TYPES).map(([key, label]) => {
+          {rows.map(({ code: key, label }) => {
             const doc = uploaded[key];
             // Gated per document, not per application: a registrar can flag
             // or reject one specific file while the rest of the application
@@ -133,7 +146,7 @@ export default function ApplicationDetail() {
                 )}
                 {needsUpload && (
                   <input className="input doc-upload" type="file" aria-label={`Upload ${label}`}
-                    accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => upload(key, e.target.files[0])} />
+                    accept={FILE_ACCEPT} onChange={(e) => upload(key, e.target.files[0])} />
                 )}
               </div>
             );
@@ -143,17 +156,37 @@ export default function ApplicationDetail() {
         {!app.has_lrn && (
           <div className="card">
             <h3>Learner Reference Number (LRN)</h3>
+            {app.lrn?.flaggedAt && !lrnSaved && (
+              <div className="alert alert-error" role="alert">
+                <b>The registrar could not find this LRN.</b>
+                <div style={{ marginTop: 4 }}>
+                  The number that was on file could not be found in the DepEd Learner Information System,
+                  so it has been removed. Please check the learner&rsquo;s Form 137 or report card and enter
+                  the correct 12-digit LRN below.
+                </div>
+                {app.lrn.note && (
+                  <div style={{ marginTop: 6 }}><b>Note from the registrar:</b> {app.lrn.note}</div>
+                )}
+              </div>
+            )}
             {lrnSaved ? (
               <div className="alert alert-note">LRN saved.</div>
             ) : (
               <form onSubmit={saveLrn}>
-                <p className="hint hint-spaced">
-                  Not on file yet. If the school or DepEd has since assigned one, add it here so it carries
-                  over automatically next school year.
-                </p>
+                {!app.lrn?.flaggedAt && (
+                  <p className="hint hint-spaced">
+                    Not on file yet. If the school or DepEd has since assigned one, add it here so it carries
+                    over automatically next school year.
+                  </p>
+                )}
                 <div className="field" style={{ maxWidth: 280 }}>
-                  <input className={`input${lrnError ? ' input-error' : ''}`} value={lrn}
-                    onChange={(e) => setLrn(e.target.value)} placeholder="12-digit LRN" maxLength={12} />
+                  <input className={`input${lrnError ? ' input-error' : ''}`} value={lrn} aria-label="LRN"
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/\D/g, '').slice(0, 12);
+                      setLrn(v);
+                      setLrnError(v && v.length !== 12 ? 'LRN should be exactly 12 digits.' : '');
+                    }}
+                    inputMode="numeric" placeholder="12-digit LRN" maxLength={12} />
                   {lrnError && <p className="field-error">{lrnError}</p>}
                 </div>
                 <button className="btn btn-secondary" type="submit" disabled={lrnSaving}>

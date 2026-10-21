@@ -18,15 +18,17 @@ const studentRoutes = require('./routes/studentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const pool = require('./db/pool');
 const { securityHeaders, corsConfig } = require('./middleware/security');
-const { adminApiLimiter } = require('./middleware/rateLimit');
+const publicRoutes = require('./routes/publicRoutes');
+const { adminApiLimiter, publicApiLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 
 // Behind Render's (or any) reverse proxy, every request arrives from the
 // proxy's own address unless Express is told to read the real client IP from
-// X-Forwarded-For. Without this, every rate limiter and the audit log would
-// treat ALL visitors as one person. Render sets RENDER=true; TRUST_PROXY
-// overrides (0 = off).
+// X-Forwarded-For. Without this, every rate limiter and the audit log treat ALL
+// visitors as one person (so 8 sign-ups per hour would be shared by everyone).
+// Render sets RENDER=true; set TRUST_PROXY=0 to turn this off, or a number of
+// proxy hops to override.
 const proxyHops = process.env.TRUST_PROXY !== undefined
   ? Number(process.env.TRUST_PROXY)
   : (process.env.RENDER ? 1 : 0);
@@ -53,6 +55,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+app.use('/api/public', publicApiLimiter, publicRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/registrar', registrarRoutes);
@@ -67,4 +70,13 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => console.log(`SecureEnroll API running on port ${PORT}`));
+// Bring an older database up to date (idempotent), then start listening.
+require('./db/ensureSchema').ensureSchema()
+  .catch((err) => console.error('[schema]', err.message))
+  .finally(() => {
+    app.listen(PORT, () => console.log(`SecureEnroll API running on port ${PORT}`));
+    // Emails each section's master list to its adviser once enrollment closes.
+    if (process.env.DISABLE_MAIL_SCHEDULER !== '1') require('./lib/masterListMail').startScheduler();
+    // Starts the next school year by itself once the current one ends.
+    require('./lib/schoolYearRollover').startRolloverScheduler();
+  });

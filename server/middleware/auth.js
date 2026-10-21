@@ -1,6 +1,13 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
 
+// The only requests an account with a temporary password may still make.
+// req.path is the path inside the router this middleware runs in, so both the
+// mounted and the full path are checked.
+const PASSWORD_CHANGE_PATHS = ['/me/password', '/api/auth/me/password', '/me', '/api/auth/me', '/logout', '/api/auth/logout'];
+const PASSWORD_CHANGE_ALLOWED = (req) =>
+  PASSWORD_CHANGE_PATHS.includes(req.path) || PASSWORD_CHANGE_PATHS.includes(req.originalUrl.split('?')[0]);
+
 // Reads the JWT from the Authorization header, verifies it, and
 // attaches the logged-in user's id and role to req.user.
 async function authenticate(req, res, next) {
@@ -23,7 +30,7 @@ async function authenticate(req, res, next) {
   // database, never from the role written inside the token.
   try {
     const result = await pool.query(
-      `SELECT u.is_active, r.name AS role
+      `SELECT u.is_active, u.must_change_password, r.name AS role
        FROM users u JOIN roles r ON r.id = u.role_id
        WHERE u.id = $1`,
       [payload.sub]
@@ -32,7 +39,17 @@ async function authenticate(req, res, next) {
     if (!row || !row.is_active) {
       return res.status(401).json({ message: 'Your session is no longer valid. Please sign in again.' });
     }
-    req.user = { id: payload.sub, role: row.role };
+    // An account an administrator created still has its temporary password.
+    // Until it has been replaced, the only things it can do are read its own
+    // account and set a new password. Everything else is refused here, so the
+    // rule does not depend on the browser following it.
+    if (row.must_change_password && !PASSWORD_CHANGE_ALLOWED(req)) {
+      return res.status(403).json({
+        message: 'Please choose your own password before continuing.',
+        code: 'PASSWORD_CHANGE_REQUIRED',
+      });
+    }
+    req.user = { id: payload.sub, role: row.role, mustChangePassword: Boolean(row.must_change_password) };
     next();
   } catch (err) {
     console.error(err);

@@ -123,7 +123,7 @@ async function gradeLevelCapacityReport(req, res) {
     await logAudit(req.user.id, 'REPORT_EXPORTED', null, null, req, { report: 'grade_level_capacity', rowCount: rows.length });
     sendCsv(res, 'grade-level-capacity', rows, [
       { label: 'Grade Level', value: 'grade_level' }, { label: 'Enrolled', value: 'enrolled' },
-      { label: 'Total Capacity', value: 'total_capacity' },
+      { label: 'Total Capacity', value: 'total_capacity' }, { label: 'Slots Left', value: 'slots_left' },
       { label: 'Utilization %', value: (r) => r.total_capacity > 0 ? Math.round((r.enrolled / r.total_capacity) * 100) : 0 },
     ]);
   } catch (err) {

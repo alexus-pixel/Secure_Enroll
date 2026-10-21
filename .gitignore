@@ -2,4 +2,5 @@ node_modules/
 dist/
 .env
 *.log
-server/uploads/server/q.js
+server/uploads/
+server/q.js

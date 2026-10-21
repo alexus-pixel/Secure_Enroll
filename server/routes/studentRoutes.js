@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 require('../middleware/params').protectParams(router); // reject bad IDs with 400
-const { lookup, addLrn } = require('../controllers/studentController');
+const { lookup, addLrn, nameTaken } = require('../controllers/studentController');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const { rateLimit } = require('../middleware/rateLimit');
 
@@ -10,6 +10,10 @@ const { rateLimit } = require('../middleware/rateLimit');
 // directory search.
 router.get('/lookup', authenticate, requirePermission('application.create'),
   rateLimit({ windowMs: 60 * 1000, max: 20 }), lookup);
+
+// Checked as a parent types the learner's name on the application form.
+router.get('/name-taken', authenticate, requirePermission('application.create'),
+  rateLimit({ windowMs: 60 * 1000, max: 60 }), nameTaken);
 
 router.patch('/:id/lrn', authenticate, requirePermission('application.create'),
   rateLimit({ windowMs: 60 * 1000, max: 10 }), addLrn);

@@ -1,19 +1,71 @@
-const { sendMail, isMailConfigured } = require('../utils/mailer');
+const nodemailer = require('nodemailer');
 
 /**
- * Sends the teachers' PDFs. Unlike registration emails (which fall back to
- * printing in the console for local development), this feature is pointless
- * without real delivery, so it reports "not configured" instead of pretending
- * to succeed. Configure BREVO_API_KEY (recommended when deployed) or
- * SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS.
+ * Reads SMTP settings from env at call time rather than at module
+ * load, so a missing config fails with a clear error exactly when
+ * someone tries to use it, not silently at server startup.
+ *
+ * This intentionally does not hardcode any provider. Fill in
+ * SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS in your .env — for
+ * a school project, a free tier from your existing email provider
+ * or a service like Mailtrap (for testing) both work fine here.
  */
-async function sendPdfsEmail({ to, subject, text, attachments }) {
-  if (!isMailConfigured()) {
-    const err = new Error('Email is not configured. Set BREVO_API_KEY, or SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASS.');
+function getTransport() {
+  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+    const err = new Error('Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS.');
     err.status = 503;
     throw err;
   }
-  await sendMail({ to, subject, text, attachments }); // [{ filename, content: Buffer }]
+  return nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: Number(SMTP_PORT) || 587,
+    secure: Number(SMTP_PORT) === 465,
+    // Gmail App Passwords are shown with spaces; they only work without them.
+    auth: { user: SMTP_USER.trim(), pass: SMTP_PASS.replace(/\s+/g, '') },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
+  });
+}
+
+/**
+ * MAIL_CAPTURE_DIR is for development and automated tests only: when set, the
+ * message and its attachments are written to that folder instead of being
+ * sent, so the whole flow can be exercised without a mail account.
+ */
+async function captureEmail(dir, message) {
+  const fs = require('fs');
+  const path = require('path');
+  fs.mkdirSync(dir, { recursive: true });
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const files = [];
+  for (const a of message.attachments || []) {
+    const name = `${stamp}-${a.filename}`;
+    fs.writeFileSync(path.join(dir, name), a.content);
+    files.push(name);
+  }
+  fs.writeFileSync(path.join(dir, `${stamp}.json`), JSON.stringify({
+    to: message.to, subject: message.subject, text: message.text, hasHtml: Boolean(message.html), attachments: files,
+  }, null, 2));
+}
+
+async function sendPdfsEmail({ to, subject, text, html, attachments }) {
+  const message = {
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to, subject, text, html,
+    attachments, // [{ filename, content: Buffer }]
+  };
+  if (process.env.MAIL_CAPTURE_DIR) return captureEmail(process.env.MAIL_CAPTURE_DIR, message);
+  // Deployed hosts block SMTP, so use Brevo's web API whenever it is set up
+  // (the shared sender falls back to SMTP by itself if Brevo refuses).
+  const shared = require('../utils/mailer');
+  if (shared.brevoReady()) {
+    await shared.sendMail({ to, subject, text, html, attachments });
+    return;
+  }
+  const transport = getTransport();
+  await transport.sendMail(message);
 }
 
 module.exports = { sendPdfsEmail };

@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Search } from 'lucide-react';
-import {
-  getUsers, getUserCounts, getRoles, createUser, updateUserRole, setUserActive, resetUserPassword,
-} from '../../api/admin';
+import { getUsers, getUserCounts, getRoles, createUser, setUserActive } from '../../api/admin';
 import UserFormModal from './UserFormModal';
-import ResetPasswordModal from './ResetPasswordModal';
+import ConfirmDialog from '../../components/ConfirmDialog';
+import Pagination, { usePagination } from '../../components/Pagination';
 import ColumnFilterIcon from './ColumnFilterIcon';
 
 const ROLE_LABELS = { parent: 'Parent / Guardian', registrar: 'Registrar', admin: 'Administrator' };
@@ -14,9 +13,13 @@ export default function UsersPage() {
   const [counts, setCounts] = useState({ total: 0, parent: 0, registrar: 0, admin: 0 });
   const [roles, setRoles] = useState([]);
   const [filters, setFilters] = useState({ search: '', role: '', status: '', lastLoginFrom: '', lastLoginTo: '' });
-  const [editingUser, setEditingUser] = useState(null); // null | 'new' | user object
-  const [resettingUser, setResettingUser] = useState(null);
+  // An administrator may only add an account and turn one on or off.
+  // Changing another account's role or password is not offered at all.
+  const [addingUser, setAddingUser] = useState(false);
+  const [togglingUser, setTogglingUser] = useState(null); // the account being turned on/off
+  const [toggleBusy, setToggleBusy] = useState(false);
   const [error, setError] = useState('');
+  const pager = usePagination(users);
 
   const load = useCallback(() => {
     getUsers(filters).then((r) => setUsers(r.users)).catch((err) => setError(err.response?.data?.message || 'Could not load users.'));
@@ -29,20 +32,23 @@ export default function UsersPage() {
 
   async function handleCreate(form) {
     await createUser(form);
-    setEditingUser(null);
+    setAddingUser(false);
     load();
   }
 
-  async function handleEdit(form) {
-    await updateUserRole(editingUser.id, form.roleId);
-    await setUserActive(editingUser.id, form.isActive);
-    setEditingUser(null);
-    load();
-  }
-
-  async function handleResetPassword(newPassword) {
-    await resetUserPassword(resettingUser.id, newPassword);
-    setResettingUser(null);
+  async function handleToggleActive() {
+    setToggleBusy(true);
+    setError('');
+    try {
+      await setUserActive(togglingUser.id, !togglingUser.is_active);
+      setTogglingUser(null);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not change that account.');
+      setTogglingUser(null);
+    } finally {
+      setToggleBusy(false);
+    }
   }
 
   return (
@@ -52,7 +58,7 @@ export default function UsersPage() {
           <h1>User Management</h1>
           <p>All roles &middot; SecureEnroll</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setEditingUser('new')}>+ Add User</button>
+        <button className="btn btn-primary" onClick={() => setAddingUser(true)}>+ Add User</button>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -135,7 +141,7 @@ export default function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
+              {pager.pageRows.map((u) => (
                 <tr key={u.id}>
                   <td>
                     <b>{u.email}</b>
@@ -160,8 +166,12 @@ export default function UsersPage() {
                     ) : '\u2014'}
                   </td>
                   <td>
-                    <button className="link-action" onClick={() => setEditingUser(u)} style={{ marginRight: 10 }}>Edit</button>
-                    <button className="link-action" onClick={() => setResettingUser(u)}>Reset Password</button>
+                    <button
+                      className="link-action"
+                      onClick={() => setTogglingUser(u)}
+                    >
+                      {u.is_active ? 'Deactivate' : 'Activate'}
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -171,19 +181,32 @@ export default function UsersPage() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={pager.page} totalPages={pager.totalPages} total={pager.total}
+          from={pager.from} to={pager.to} onPage={pager.setPage} label="users"
+        />
       </div>
 
-      {editingUser && (
-        <UserFormModal
-          mode={editingUser === 'new' ? 'create' : 'edit'}
-          user={editingUser === 'new' ? null : editingUser}
-          roles={roles}
-          onClose={() => setEditingUser(null)}
-          onSubmit={editingUser === 'new' ? handleCreate : handleEdit}
-        />
+      {addingUser && (
+        <UserFormModal roles={roles} onClose={() => setAddingUser(false)} onSubmit={handleCreate} />
       )}
-      {resettingUser && (
-        <ResetPasswordModal user={resettingUser} onClose={() => setResettingUser(null)} onSubmit={handleResetPassword} />
+
+      {togglingUser && (
+        <ConfirmDialog
+          title={togglingUser.is_active ? 'Deactivate this account?' : 'Activate this account?'}
+          confirmLabel={togglingUser.is_active ? 'Deactivate account' : 'Activate account'}
+          tone={togglingUser.is_active ? 'danger' : 'primary'}
+          busy={toggleBusy}
+          onConfirm={handleToggleActive}
+          onClose={() => setTogglingUser(null)}
+        >
+          <p><b>{togglingUser.email}</b></p>
+          <p>
+            {togglingUser.is_active
+              ? 'They will be signed out and will not be able to sign in again until the account is activated. Nothing they have already done is removed.'
+              : 'They will be able to sign in again with their existing password.'}
+          </p>
+        </ConfirmDialog>
       )}
     </div>
   );

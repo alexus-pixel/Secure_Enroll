@@ -37,7 +37,7 @@ export default function ResetPassword() {
     setSubmitting(true);
     try {
       await api.post('/auth/reset-password', { token, newPassword: password });
-      navigate('/', { state: { passwordReset: true } });
+      navigate('/login', { state: { passwordReset: true } });
     } catch (err) {
       setFormError(err.response?.data?.message || 'We could not reset your password. Please try again.');
     } finally {
@@ -49,7 +49,7 @@ export default function ResetPassword() {
     <div className="auth-wrap">
       <aside className="auth-panel">
         <div>
-          <Brand />
+          <Brand to="/" />
           <h2>Choose a new password</h2>
           <p>Choose a password that you have not used on this account before.</p>
         </div>
@@ -72,17 +72,32 @@ export default function ResetPassword() {
 
           <PasswordInput
             id="password" label="New password" value={password}
-            onChange={(e) => setPassword(e.target.value)} error={errors.password} showRules
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setErrors((prev) => ({
+                ...prev,
+                password: e.target.value ? validatePassword(e.target.value) : '',
+                confirmPassword: confirmPassword ? validateConfirmPassword(e.target.value, confirmPassword) : prev.confirmPassword,
+              }));
+            }}
+            error={errors.password} showRules
           />
           <PasswordInput
             id="confirmPassword" label="Confirm new password" value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)} error={errors.confirmPassword}
+            onChange={(e) => {
+              setConfirmPassword(e.target.value);
+              setErrors((prev) => ({
+                ...prev,
+                confirmPassword: e.target.value ? validateConfirmPassword(password, e.target.value) : '',
+              }));
+            }}
+            error={errors.confirmPassword}
           />
 
           <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>
             {submitting ? 'Updating\u2026' : 'Update password'}
           </button>
-          <p className="auth-alt"><Link to="/">Back to sign in</Link></p>
+          <p className="auth-alt"><Link to="/login">Back to sign in</Link></p>
         </form>
       </main>
     </div>

@@ -12,4 +12,11 @@ router.get('/registrar-activity', ...canView, reportsController.registrarActivit
 router.get('/duplicate-flags', ...canView, reportsController.duplicateFlagsReport);
 router.get('/grade-level-capacity', ...canView, reportsController.gradeLevelCapacityReport);
 
+// Master list emails: each section's list goes to its adviser when enrollment closes.
+const masterListEmail = require('../../controllers/admin/masterListEmailController');
+const canSend = [authenticate, requirePermission('teacher.manage')];
+router.get('/master-list-emails', ...canView, masterListEmail.overview);
+router.post('/master-list-emails/send', ...canSend, masterListEmail.send);
+router.patch('/master-list-emails/auto', ...canSend, masterListEmail.setAuto);
+
 module.exports = router;

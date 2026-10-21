@@ -10,10 +10,7 @@ export const getUsers = (params) => api.get('/admin/users', { params }).then((r)
 export const getUserCounts = () => api.get('/admin/users/counts').then((r) => r.data);
 export const getRoles = () => api.get('/admin/users/roles').then((r) => r.data);
 export const createUser = (data) => api.post('/admin/users', data).then((r) => r.data);
-export const updateUserRole = (id, roleId) => api.patch(`/admin/users/${id}/role`, { roleId }).then((r) => r.data);
 export const setUserActive = (id, isActive) => api.patch(`/admin/users/${id}/active`, { isActive }).then((r) => r.data);
-export const resetUserPassword = (id, newPassword) =>
-  api.post(`/admin/users/${id}/reset-password`, { newPassword }).then((r) => r.data);
 
 // ---------- Teachers ----------
 export const getTeachers = (search) => api.get('/admin/teachers', { params: { search } }).then((r) => r.data);
@@ -93,17 +90,44 @@ export const getSystemSettings = () => api.get('/admin/settings').then((r) => r.
 export const updateEnrollmentPeriod = (data) => api.patch('/admin/settings/enrollment-period', data).then((r) => r.data);
 export const updateRequiredDocuments = (documents) =>
   api.patch('/admin/settings/required-documents', { documents }).then((r) => r.data);
+// The school decides what it asks for. Each of these returns the whole list back.
+// "Is this address already somebody's account, and can it receive mail?"
+export const checkStaffEmail = (email) =>
+  api.get('/admin/users/check-email', { params: { email } }).then((r) => r.data);
+
+export const addRequiredDocument = (label) =>
+  api.post('/admin/settings/required-documents', { label }).then((r) => r.data);
+export const renameRequiredDocument = (id, label) =>
+  api.patch(`/admin/settings/required-documents/${id}`, { label }).then((r) => r.data);
+export const removeRequiredDocument = (id) =>
+  api.delete(`/admin/settings/required-documents/${id}`).then((r) => r.data);
 
 // ---------- School Settings ----------
 export const getSchoolSettings = () => api.get('/admin/school-settings').then((r) => r.data);
+// The schedule screens are shared with the registrar, who has schedule.manage
+// but not settings.manage or teacher.manage, so they read these instead.
+export const getScheduleSchoolYears = () => api.get('/admin/schedules/school-years').then((r) => r.data);
+export const getScheduleTeachers = () => api.get('/admin/schedules/teachers').then((r) => r.data);
 export const createSchoolYear = (data) => api.post('/admin/school-settings/school-years', data).then((r) => r.data);
 export const activateSchoolYear = (id) =>
   api.patch(`/admin/school-settings/school-years/${id}/activate`).then((r) => r.data);
-export const updateSchoolYearEndDate = (id, closesAt) =>
-  api.patch(`/admin/school-settings/school-years/${id}/end-date`, { closesAt }).then((r) => r.data);
+// Moves a school year's dates. opensAt is left out for a year that has
+// already begun, because its start date is then fixed and the server refuses
+// to move it.
+export const updateSchoolYearDates = (id, { opensAt, closesAt, classesStartOn }) =>
+  api.patch(`/admin/school-settings/school-years/${id}/dates`, {
+    ...(opensAt ? { opensAt } : {}), closesAt,
+    ...(classesStartOn ? { classesStartOn } : {}),
+  }).then((r) => r.data);
 export const createSection = (data) => api.post('/admin/school-settings/sections', data).then((r) => r.data);
 export const updateSectionCapacity = (id, capacity) =>
   api.patch(`/admin/school-settings/sections/${id}/capacity`, { capacity }).then((r) => r.data);
+export const updateSectionName = (id, name) =>
+  api.patch(`/admin/school-settings/sections/${id}/name`, { name }).then((r) => r.data);
+// The learners enrolled in one section: name, sex and the date approved
+// only — never the LRN, birth date or contact details.
+export const getSectionStudents = (id) =>
+  api.get(`/admin/school-settings/sections/${id}/students`).then((r) => r.data);
 export const deleteSection = (id) => api.delete(`/admin/school-settings/sections/${id}`).then((r) => r.data);
 
 // ---------- Walk-in Enrollment ----------
@@ -111,3 +135,12 @@ export const getRequiredDocumentTypes = () => api.get('/admin/walk-in-enrollment
 export const lookupStudentByLrn = (lrn) =>
   api.get('/admin/walk-in-enrollment/lookup-by-lrn', { params: { lrn } }).then((r) => r.data);
 export const createWalkInEnrollment = (data) => api.post('/admin/walk-in-enrollment', data).then((r) => r.data);
+
+// School settings: advisers and starting the next school year.
+export const getAdviserOptions = () => api.get('/admin/school-settings/teachers').then((r) => r.data);
+export const setSectionAdviser = (sectionId, teacherId) =>
+  api.patch(`/admin/school-settings/sections/${sectionId}/adviser`, { teacherId }).then((r) => r.data);
+export const rolloverSchoolYear = (schoolYearId, body = {}) =>
+  api.post(`/admin/school-settings/school-years/${schoolYearId}/rollover`, body).then((r) => r.data);
+export const confirmSchoolYearDates = (schoolYearId, opensAt, closesAt) =>
+  api.patch(`/admin/school-settings/school-years/${schoolYearId}/dates`, { opensAt, closesAt }).then((r) => r.data);

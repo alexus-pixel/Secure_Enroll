@@ -6,7 +6,12 @@ async function list(req, res) {
   try {
     const { action, from, to, page, limit } = req.query;
     const result = await auditDb.listAuditLogs({
-      action, from, to, page: Number(page) || 1, limit: Number(limit) || 25,
+      action, from, to,
+      // A page number or size typed into the URL is still a number with
+      // sensible bounds: a negative page would become a negative OFFSET, and
+      // an enormous size would dump the whole log in one request.
+      page: Math.max(Number(page) || 1, 1),
+      limit: Math.min(Math.max(Number(limit) || 25, 1), 200),
     });
     res.json(result);
   } catch (err) {

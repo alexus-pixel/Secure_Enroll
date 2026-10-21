@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { DOC_ACTIONS, DOC_STATUS_LABEL } from './docMeta';
 
 export function DocStatusBadge({ doc }) {
+  if (doc.status === 'pending' && doc.resubmitted) return <span className="reg-badge reg-badge-resubmitted">Resubmitted</span>;
   if (doc.status === 'awaiting') return <span className="reg-badge reg-badge-awaiting">{DOC_STATUS_LABEL.awaiting}</span>;
   return <span className={`reg-badge reg-badge-${doc.status}`}>{DOC_STATUS_LABEL[doc.status] || doc.status}</span>;
 }
@@ -62,16 +63,28 @@ export function ReasonDialog({ status, docName, onConfirm, onCancel }) {
  * The Verify / Flag / Reject controls shown under the document viewer,
  * so the registrar decides while looking at the file.
  */
-export function ViewerActions({ doc, disabled, onAction }) {
+const MIN_REASON_WORDS = 3;
+const wordCount = (text) => text.trim().split(/\s+/).filter(Boolean).length;
+
+export function ViewerActions({ doc, lockedMessage, onAction }) {
   const [note, setNote] = useState(doc.note || '');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [reasonInvalid, setReasonInvalid] = useState(false);
+  const locked = Boolean(lockedMessage);
+  const needsReason = (status) => status === 'flagged' || status === 'rejected';
+  const reasonText = `Write a reason of at least ${MIN_REASON_WORDS} words. The parent sees it so they know what to fix.`;
 
   async function run(status) {
+    if (needsReason(status) && wordCount(note) < MIN_REASON_WORDS) {
+      setReasonInvalid(true);
+      setError('');
+      return;
+    }
     setBusy(status);
     setError('');
     try {
-      await onAction(status, note);
+      await onAction(status, status === 'verified' ? '' : note);
     } catch (err) {
       setError(err.response?.data?.message || 'Could not save. Please try again.');
       setBusy('');
@@ -80,20 +93,26 @@ export function ViewerActions({ doc, disabled, onAction }) {
 
   return (
     <>
-      <textarea className="dv-reason" value={note} maxLength={500} disabled={disabled || Boolean(busy)}
-        onChange={(e) => setNote(e.target.value)}
+      <textarea className={`dv-reason${reasonInvalid ? ' is-invalid' : ''}`} value={note} maxLength={500}
+        disabled={locked || Boolean(busy)}
+        onChange={(e) => {
+          setNote(e.target.value);
+          if (reasonInvalid && wordCount(e.target.value) >= MIN_REASON_WORDS) setReasonInvalid(false);
+          setError('');
+        }}
         aria-label="Reason for flagging or rejecting"
-        placeholder="Reason for flagging or rejecting (optional, shown to the parent)" />
+        aria-invalid={reasonInvalid}
+        aria-describedby={reasonInvalid ? 'dv-reason-warning' : undefined}
+        placeholder="Reason for flagging or rejecting (at least 3 words, shown to the parent)" />
+      {reasonInvalid && <div id="dv-reason-warning" className="dv-warning" role="alert">{reasonText}</div>}
       {error && <div className="dv-error" role="alert">{error}</div>}
       <div className="dv-foot-row">
-        <span className="dv-hint">
-          {disabled ? 'This application is finalized.' : 'Your decision is saved for this document.'}
-        </span>
+        <span className="dv-hint">{locked ? lockedMessage : 'Your decision is saved for this document.'}</span>
         <div className="reg-actions">
           {Object.entries(DOC_ACTIONS).map(([status, a]) => (
             <button key={status} type="button"
               className={`reg-btn ${a.cls}${doc.status === status ? ' on' : ''}`}
-              disabled={disabled || Boolean(busy)} onClick={() => run(status)} title={a.hint}>
+              disabled={locked || Boolean(busy)} onClick={() => run(status)} title={a.hint}>
               {busy === status ? 'Saving…' : a.label}
             </button>
           ))}

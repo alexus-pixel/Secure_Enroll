@@ -42,6 +42,8 @@ function securityHeaders() {
  * working with no extra setup.
  */
 function corsConfig() {
+  // Spaces and a trailing "/" are easy to type by accident in a hosting
+  // dashboard, and either one makes the browser's origin not match.
   const allowed = (process.env.ALLOWED_ORIGIN || process.env.CLIENT_URL || 'http://localhost:5173')
     .split(',')
     .map((o) => o.trim().replace(/\/+$/, ''))

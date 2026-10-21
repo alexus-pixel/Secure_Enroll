@@ -9,6 +9,9 @@ export function walkInApi(base) {
       api.get(`${base}/sections`, { params: { gradeLevelId } }).then((r) => r.data),
     documentTypes: () => api.get(`${base}/required-documents`).then((r) => r.data),
     lookupByLrn: (lrn) => api.get(`${base}/lookup-by-lrn`, { params: { lrn } }).then((r) => r.data),
+    // Is this Gmail already a parent account? Is this learner already on file?
+    guardianLookup: (email) => api.get(`${base}/guardian-lookup`, { params: { email } }).then((r) => r.data),
+    studentDuplicate: (params) => api.get(`${base}/student-duplicate`, { params }).then((r) => r.data),
     create: (data) => api.post(base, data).then((r) => r.data),
   };
 }

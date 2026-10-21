@@ -1,4 +1,5 @@
 const pool = require('../pool');
+const { gradeSeats } = require('../../lib/seats');
 
 // Every report takes an optional [from, to] date range (submitted_at
 // for application-based reports, created_at for audit-log-based
@@ -58,7 +59,7 @@ async function pendingApplications({ schoolYearId, from, to }) {
      JOIN students s ON s.id = ea.student_id
      JOIN grade_levels gl ON gl.id = ea.grade_level_id
      LEFT JOIN documents d ON d.application_id = ea.id
-     WHERE ea.school_year_id = $1 AND ea.status IN ('submitted', 'under_review', 'needs_revision') ${clause}
+     WHERE ea.school_year_id = $1 AND ea.status IN ('submitted', 'under_review', 'resubmitted', 'needs_revision') ${clause}
      GROUP BY ea.id, s.first_name, s.last_name, gl.name, gl.sort_order, ea.status, ea.submitted_at
      ORDER BY gl.sort_order, ea.submitted_at`,
     params
@@ -119,18 +120,9 @@ async function duplicateFlagsReport({ schoolYearId, from, to }) {
 }
 
 async function gradeLevelCapacityReport(schoolYearId) {
-  const result = await pool.query(
-    `SELECT gl.name AS grade_level,
-            COALESCE(SUM(sec.capacity), 0)::int AS total_capacity,
-            COUNT(ea.id) FILTER (WHERE ea.status = 'approved')::int AS enrolled
-     FROM grade_levels gl
-     LEFT JOIN sections sec ON sec.grade_level_id = gl.id AND sec.school_year_id = $1
-     LEFT JOIN enrollment_applications ea ON ea.grade_level_id = gl.id AND ea.school_year_id = $1 AND ea.status = 'approved'
-     GROUP BY gl.id, gl.name, gl.sort_order
-     ORDER BY gl.sort_order`,
-    [schoolYearId]
-  );
-  return result.rows;
+  // Same seat rule as the settings pages: slots per section vs. seats held (lib/seats.js).
+  const seats = await gradeSeats(pool, schoolYearId);
+  return seats.map((g) => ({ grade_level: g.name, total_capacity: g.capacity, enrolled: g.taken, slots_left: g.left }));
 }
 
 module.exports = {

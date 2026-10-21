@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link, useNavigate, useOutletContext } from 'react-router-dom';
+import { useParams, Link, useOutletContext } from 'react-router-dom';
 import { getTeacher, getTeacherSchedule, sendTeacherPdf } from '../../api/admin';
 
 const DAY_LABELS = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri' };
 
 export default function TeacherSchedulePage() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { setCrumb } = useOutletContext();
   const [teacher, setTeacher] = useState(null);
   const [schedule, setSchedule] = useState({ entries: [], weeklyLoadCap: 24 });
@@ -43,15 +42,19 @@ export default function TeacherSchedulePage() {
       <div className="page-head">
         <div>
           <h1>{teacher.first_name} {teacher.last_name} — Schedule</h1>
-          <p>{teacher.email}</p>
+          <p>{teacher.email || 'No email address on file'}</p>
         </div>
         <div className="btn-row">
           <button className="btn btn-secondary" onClick={handleSendPdf} disabled={sendState === 'sending'}>
             {sendState === 'sending' ? 'Sending...' : 'Send PDF'}
           </button>
-          <button className="btn btn-primary" onClick={() => navigate(`/admin/teachers/${id}/assignments`)}>
-            Assign New Class
-          </button>
+          {/* Classes are not assigned from here. A period belongs to a
+              section's timetable, so it is added in Class Schedules, and the
+              adviser of a section is set in School Settings — one place each,
+              where the conflicts and limits can actually be checked. */}
+          <Link className="btn btn-primary" to="/admin/schedules">
+            Open Class Schedules
+          </Link>
         </div>
       </div>
 
