@@ -149,7 +149,7 @@ export default function UserFormModal({ roles, onClose, onSubmit }) {
             <label className="label" htmlFor="user_email">Email address</label>
             <input
               id="user_email" className={`input${fieldErrors.email ? ' input-error' : ''}`} type="email"
-              placeholder="e.g. r.santos@gmail.com"
+              placeholder="name@gmail.com"
               value={form.email} onChange={set('email')} onBlur={handleEmailBlur} required
             />
             {emailState === 'checking' && <p className="hint">Checking this address&hellip;</p>}

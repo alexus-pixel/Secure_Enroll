@@ -197,21 +197,25 @@ async function ensureSchema() {
     ALTER TABLE school_years
       ADD COLUMN IF NOT EXISTS dates_confirmed BOOLEAN NOT NULL DEFAULT TRUE`);
 
-  // --- A section name is unique across the whole school year ----------------
-  // "Sampaguita" cannot be both a Kinder and a Grade 6 section. Existing data
-  // may already break this rule, so the index is only created when it can be:
-  // the application checks the rule on every save either way.
-  await step('section names unique per school year', `
+  // --- A section name is unique within its grade level ----------------------
+  // Schools number sections per grade, so Kinder and Grade 6 may both have a
+  // section "1". What cannot happen is one grade level holding the name
+  // twice, because "Grade 6 - 1" would then name two classes. An earlier
+  // version of this system made the name unique across the whole year; that
+  // index is dropped here so the looser, correct rule can apply.
+  await step('drop year-wide section name index', `
+    DROP INDEX IF EXISTS idx_sections_name_per_year`);
+  await step('section names unique per grade level', `
     DO $$
     BEGIN
       IF NOT EXISTS (
         SELECT 1 FROM sections
-        GROUP BY school_year_id, lower(btrim(name)) HAVING COUNT(*) > 1
+        GROUP BY school_year_id, grade_level_id, lower(btrim(name)) HAVING COUNT(*) > 1
       ) THEN
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_sections_name_per_year
-          ON sections (school_year_id, lower(btrim(name)));
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sections_name_per_grade
+          ON sections (school_year_id, grade_level_id, lower(btrim(name)));
       ELSE
-        RAISE NOTICE 'sections: duplicate names in one school year already exist, unique index skipped';
+        RAISE NOTICE 'sections: duplicate names in one grade level already exist, unique index skipped';
       END IF;
     END $$`);
 
@@ -340,6 +344,57 @@ async function ensureSchema() {
     UPDATE school_years
        SET classes_start_on = (opens_at AT TIME ZONE 'Asia/Manila')::date
      WHERE classes_start_on IS NULL`);
+
+  // --- School-wide settings the administrator controls -----------------------
+  // One row per setting, because these are a handful of single values with no
+  // relationships to anything — a table with a column per setting would need a
+  // migration every time one is added, and a one-row table needs guarding
+  // against ever becoming two rows.
+  await step('app settings table', `
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  await step('default school hours', `
+    INSERT INTO app_settings (key, value) VALUES ('day_opens_at', '06:00'), ('day_closes_at', '18:00')
+    ON CONFLICT (key) DO NOTHING`);
+
+  // --- Which documents each kind of enrollment needs -------------------------
+  // A first-time Kinder learner and a transferee are asked for different
+  // papers: nobody has a Form 138 before they have been to school, and a
+  // returning learner's birth certificate is already on file. One checklist
+  // for both meant the desk ticking boxes that did not apply.
+  await step('document types audience', `
+    ALTER TABLE required_document_types
+      ADD COLUMN IF NOT EXISTS applies_to TEXT NOT NULL DEFAULT 'all'`);
+  await step('document types audience check', `
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'required_document_types_applies_to_check'
+      ) THEN
+        ALTER TABLE required_document_types
+          ADD CONSTRAINT required_document_types_applies_to_check
+          CHECK (applies_to IN ('all', 'new', 'returning'));
+      END IF;
+    END $$`);
+  // Form 138 is the report card from the grade just finished, so it belongs to
+  // a learner who has been enrolled before and to nobody else.
+  await step('form 138 is for returning learners', `
+    UPDATE required_document_types SET applies_to = 'returning'
+     WHERE code = 'form_138' AND applies_to = 'all'`);
+
+  // --- Who is reviewing an application right now -----------------------------
+  // Two staff opening the same application and deciding it at the same moment
+  // is how one learner gets approved and rejected within a second of each
+  // other. Opening an application claims it; the claim is refreshed while the
+  // page is open and goes stale on its own, so a registrar who closes their
+  // laptop does not hold an application forever.
+  await step('application review claim', `
+    ALTER TABLE enrollment_applications
+      ADD COLUMN IF NOT EXISTS review_claimed_by INTEGER REFERENCES users(id),
+      ADD COLUMN IF NOT EXISTS review_claimed_at TIMESTAMPTZ`);
 
   // --- When enrollment actually closed --------------------------------------
   // The closing date typed in School Settings is a plan. This is the record of

@@ -200,7 +200,7 @@ export default function AddScheduleDrawer({
             )}
             {sectionName && (
               <p className="muted" style={{ margin: '2px 0 0', fontSize: 13.5 }}>
-                {sectionName} &middot; Adviser: {adviserName || 'No adviser yet'}
+                {sectionName} &middot; Adviser: {adviserName || 'No adviser assigned yet'}
               </p>
             )}
           </div>

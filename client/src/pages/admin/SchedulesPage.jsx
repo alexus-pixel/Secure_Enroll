@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { getGradeScheduleSummary, getScheduleSchoolYears } from '../../api/admin';
+import useAutoRefresh, { useAlive, keepIfSame } from '../../hooks/useAutoRefresh';
 
 const EXPECTED_WEEKLY_PERIODS = 40; // rough denominator for the "week filled" bar; adjust per your bell schedule
 
@@ -12,6 +13,7 @@ export default function SchedulesPage() {
   const [selectedYearId, setSelectedYearId] = useState(null);
   const [grades, setGrades] = useState([]);
   const [error, setError] = useState('');
+  const alive = useAlive();
 
   useEffect(() => {
     getScheduleSchoolYears().then((schoolYears) => {
@@ -24,10 +26,20 @@ export default function SchedulesPage() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
+  // Stable so the auto-refresh interval survives a render.
+  const load = useCallback(() => {
     if (!selectedYearId) return;
-    getGradeScheduleSummary(selectedYearId).then(setGrades).catch((err) => setError(err.response?.data?.message || 'Could not load schedules.'));
+    getGradeScheduleSummary(selectedYearId)
+      .then((rows) => { if (alive.current) setGrades((prev) => keepIfSame(prev, rows)); })
+      .catch((err) => { if (alive.current) setError(err.response?.data?.message || 'Could not load schedules.'); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYearId]);
+
+  useEffect(() => { load(); }, [load]);
+  // Period counts here move whenever anyone edits a grade's schedule on the
+  // next screen over, so the cards re-read themselves. Nothing on this page is
+  // typed into, so a refresh cannot interrupt anything.
+  useAutoRefresh(load);
 
   const selectedYear = schoolYears.find((y) => y.id === selectedYearId);
   const isReadOnly = selectedYear ? (selectedYear.is_ended || !selectedYear.is_active) : false;

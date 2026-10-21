@@ -23,17 +23,6 @@ const { adminApiLimiter, publicApiLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 
-// Behind Render's (or any) reverse proxy, every request arrives from the
-// proxy's own address unless Express is told to read the real client IP from
-// X-Forwarded-For. Without this, every rate limiter and the audit log treat ALL
-// visitors as one person (so 8 sign-ups per hour would be shared by everyone).
-// Render sets RENDER=true; set TRUST_PROXY=0 to turn this off, or a number of
-// proxy hops to override.
-const proxyHops = process.env.TRUST_PROXY !== undefined
-  ? Number(process.env.TRUST_PROXY)
-  : (process.env.RENDER ? 1 : 0);
-if (proxyHops) app.set('trust proxy', proxyHops);
-
 // Security headers (helmet + CSP) and a CORS allow-list that only lets the
 // app's own frontend call this API. See middleware/security.js.
 app.use(securityHeaders());
@@ -73,6 +62,11 @@ app.use((err, req, res, next) => {
 // Bring an older database up to date (idempotent), then start listening.
 require('./db/ensureSchema').ensureSchema()
   .catch((err) => console.error('[schema]', err.message))
+  // The school's opening and closing hours are read once into memory: the
+  // schedule validator needs them on every field it checks and cannot wait
+  // on a query (lib/schoolHours.js).
+  .then(() => require('./lib/schoolHours').loadHours())
+  .catch((err) => console.error('[school hours]', err.message))
   .finally(() => {
     app.listen(PORT, () => console.log(`SecureEnroll API running on port ${PORT}`));
     // Emails each section's master list to its adviser once enrollment closes.

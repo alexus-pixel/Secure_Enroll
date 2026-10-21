@@ -34,6 +34,21 @@ api.interceptors.response.use(
         && window.location.pathname !== '/change-password') {
       window.location.assign('/change-password');
     }
+    // An administrator deactivated this account while its owner was still
+    // signed in. Every further request is refused, so there is nothing left to
+    // stay signed in for: the saved token and user go, which also stops the
+    // browser looking half-signed-in, and the sign-in page is asked to explain
+    // what happened rather than leaving a wall of failed requests behind.
+    // The sign-in page gets the same marker back when someone tries to sign in
+    // to a deactivated account, but it says so on the spot, so that one is left
+    // alone rather than reloaded out from under them.
+    const signingIn = String(error.config?.url || '').includes('/auth/login');
+    if (code === 'ACCOUNT_DEACTIVATED' && !signingIn
+        && !window.location.search.includes('deactivated=1')) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.assign('/login?deactivated=1');
+    }
     return Promise.reject(error);
   }
 );

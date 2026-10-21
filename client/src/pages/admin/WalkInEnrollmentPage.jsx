@@ -489,7 +489,7 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
             <div>
               <label className="label" htmlFor="walkin_guardianEmail">Parent&rsquo;s Gmail</label>
               <input
-                {...bind('guardianEmail')} type="email" placeholder="e.g. juandelacruz@gmail.com" autoComplete="off" maxLength={254}
+                {...bind('guardianEmail')} type="email" autoComplete="off" maxLength={254}
               />
               {fieldError('guardianEmail')}
               {/* What the server knows about this address, as it is typed. */}
@@ -519,7 +519,7 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
             <div>
               <label className="label" htmlFor="walkin_confirmEmail">Confirm Gmail</label>
               <input
-                {...bind('confirmEmail')} type="email" placeholder="Re-type it, e.g. juandelacruz@gmail.com" autoComplete="off" maxLength={254}
+                {...bind('confirmEmail')} type="email" autoComplete="off" maxLength={254}
               />
               {fieldError('confirmEmail')}
             </div>
@@ -556,13 +556,13 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
             </div>
             <div className="field-grid cols-3">
               <div><label className="label" htmlFor="walkin_guardianContactNumber">Contact number</label>
-                <input {...bind('guardianContactNumber')} placeholder="09171234567" inputMode="tel" maxLength={13}
+                <input {...bind('guardianContactNumber')} inputMode="tel" maxLength={13}
                   onChange={(e) => bind('guardianContactNumber').onChange({ target: { value: sanitizePhone(e.target.value) } })} />
                 {errors.guardianContactNumber ? fieldError('guardianContactNumber')
                   : <p className="hint">09XXXXXXXXX, or +639XXXXXXXXX</p>}</div>
               <div><label className="label" htmlFor="walkin_guardianAddress">Address</label>
                 <input {...bind('guardianAddress')} maxLength={ADDRESS_MAX}
-                  placeholder="Blk 15 Lot 40, Kingstown Ph. 1, Brgy. 176" />
+                />
                 {errors.guardianAddress ? fieldError('guardianAddress')
                   : <p className="hint">Letters, numbers and , . # - / only.</p>}</div>
             </div>
@@ -595,7 +595,7 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
               <div>
                 <label className="label" htmlFor="walkin_relationshipOther">How is this person related to the learner?</label>
                 <input {...bind('relationshipOther')} maxLength={NAME_MAX}
-                  placeholder="Neighbour, foster parent, ..." />
+                />
                 {fieldError('relationshipOther')}
               </div>
             )}
@@ -650,7 +650,7 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
                 <label className="label" htmlFor="walkin_lrn">
                   LRN{needsQualification ? '' : ' (if already assigned)'}
                 </label>
-                <input {...bind('lrn')} inputMode="numeric" maxLength={12} placeholder="e.g. 136482910573"
+                <input {...bind('lrn')} inputMode="numeric" maxLength={12}
                   onChange={(e) => bind('lrn').onChange({ target: { value: sanitizeLrn(e.target.value) } })} />
                 {fieldError('lrn')}
               </div>
@@ -687,7 +687,7 @@ export default function WalkInEnrollmentPage({ client = adminWalkIn, staffLabel 
             <strong>Search by Learner Reference Number (LRN)</strong>
             <p className="hint">Check the student ID or the Form 137 the parent brought in.</p>
             <div className="btn-row" style={{ marginBottom: 10 }}>
-              <input className="input" style={{ maxWidth: 220 }} placeholder="LRN" value={lrnQuery} inputMode="numeric" maxLength={12}
+              <input className="input" style={{ maxWidth: 220 }} placeholder="1234xxxxxxxx" value={lrnQuery} inputMode="numeric" maxLength={12}
                 aria-label="LRN"
                 onChange={(e) => setLrnQuery(sanitizeLrn(e.target.value))} />
               <button className="btn btn-secondary" type="button" onClick={handleLrnSearch} disabled={lrnSearching}>

@@ -4,7 +4,7 @@ const { authenticate, requirePermission } = require('../../middleware/auth');
 const { validate } = require('../../middleware/validate');
 const settingsController = require('../../controllers/admin/settingsController');
 const {
-  updateEnrollmentPeriod, updateRequiredDocuments,
+  updateEnrollmentPeriod, updateRequiredDocuments, schoolHours,
   addRequiredDocument, updateRequiredDocument, documentIdParam,
 } = require('../../validators/settingsValidators');
 
@@ -12,6 +12,7 @@ const canManage = [authenticate, requirePermission('settings.manage')];
 
 router.get('/', ...canManage, settingsController.overview);
 router.patch('/enrollment-period', ...canManage, validate(updateEnrollmentPeriod), settingsController.updateEnrollmentPeriod);
+router.patch('/school-hours', ...canManage, validate(schoolHours), settingsController.updateSchoolHours);
 router.patch('/required-documents', ...canManage, validate(updateRequiredDocuments), settingsController.updateRequiredDocuments);
 // The school decides what it asks for: a document type can be added, renamed,
 // and removed while nothing has been filed under it.

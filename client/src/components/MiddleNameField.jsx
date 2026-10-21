@@ -14,7 +14,7 @@ import { NAME_MAX } from '../utils/validators';
  */
 export default function MiddleNameField({
   id,
-  label = 'Middle name',
+  label = 'Middle name (optional)',
   value,
   none,
   error,
@@ -22,7 +22,7 @@ export default function MiddleNameField({
   onToggleNone,
   onBlur,
   autoComplete = 'off',
-  placeholder = 'e.g. Bautista',
+  placeholder = 'Middle name (optional)',
   className = 'input',
   errorClassName = 'field-error',
 }) {

@@ -5,6 +5,7 @@ import UserFormModal from './UserFormModal';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import Pagination, { usePagination } from '../../components/Pagination';
 import ColumnFilterIcon from './ColumnFilterIcon';
+import useAutoRefresh, { useAlive, keepIfSame } from '../../hooks/useAutoRefresh';
 
 const ROLE_LABELS = { parent: 'Parent / Guardian', registrar: 'Registrar', admin: 'Administrator' };
 
@@ -19,16 +20,23 @@ export default function UsersPage() {
   const [togglingUser, setTogglingUser] = useState(null); // the account being turned on/off
   const [toggleBusy, setToggleBusy] = useState(false);
   const [error, setError] = useState('');
+  const alive = useAlive();
   const pager = usePagination(users);
 
   const load = useCallback(() => {
-    getUsers(filters).then((r) => setUsers(r.users)).catch((err) => setError(err.response?.data?.message || 'Could not load users.'));
-    getUserCounts().then(setCounts).catch(() => {});
+    getUsers(filters).then((r) => { if (alive.current) setUsers((prev) => keepIfSame(prev, r.users)); })
+      .catch((err) => { if (alive.current) setError(err.response?.data?.message || 'Could not load users.'); });
+    getUserCounts().then((c) => { if (alive.current) setCounts((prev) => keepIfSame(prev, c)); }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.search, filters.role, filters.status, filters.lastLoginFrom, filters.lastLoginTo]);
 
   useEffect(() => { getRoles().then(setRoles).catch(() => {}); }, []);
   useEffect(() => { load(); }, [load]);
+  // Another administrator may add or disable an account while this list is
+  // open, so it re-reads itself rather than waiting for a reload. It holds off
+  // while the Add User form or a confirmation is open: reloading the rows
+  // underneath them would be no help to anyone mid-decision.
+  useAutoRefresh(load, { paused: addingUser || Boolean(togglingUser) });
 
   async function handleCreate(form) {
     await createUser(form);

@@ -76,9 +76,18 @@ async function getSectionsForGrade(gradeLevelId) {
   return seats.map((s) => ({ id: s.id, name: s.name, capacity: s.capacity, taken: s.taken, slots_left: s.left }));
 }
 
-async function getRequiredDocumentTypes() {
+/**
+ * The checklist the front desk ticks off, for the kind of enrollment being
+ * made. A first-time learner and a returning one are asked for different
+ * papers, so the desk is not shown boxes that do not apply (the audience is
+ * set per document in System Settings).
+ */
+async function getRequiredDocumentTypes(kind = null) {
   const result = await pool.query(
-    'SELECT code, label, is_required FROM required_document_types WHERE is_required ORDER BY sort_order'
+    `SELECT code, label, is_required, applies_to FROM required_document_types
+      WHERE is_required AND ($1::text IS NULL OR applies_to = 'all' OR applies_to = $1)
+      ORDER BY sort_order`,
+    [kind]
   );
   return result.rows;
 }
@@ -280,8 +289,13 @@ async function createWalkInEnrollment({
     // may hand over an optional one too, and it should be recorded as received
     // rather than refused as unknown.
     const docTypes = (await client.query(
-      'SELECT code, label, is_required FROM required_document_types ORDER BY sort_order'
+      'SELECT code, label, is_required, applies_to FROM required_document_types ORDER BY sort_order'
     )).rows;
+    // What this learner is actually asked for: a first-time learner has no
+    // report card to bring, a returning one has already filed a birth
+    // certificate. Set per document in System Settings.
+    const enrollmentKind = isNewStudent ? 'new' : 'returning';
+    const appliesHere = (d) => d.applies_to === 'all' || d.applies_to === enrollmentKind;
     const validCodes = new Set(docTypes.map((d) => d.code));
     const unknownCode = physicalDocTypes.find((c) => !validCodes.has(c));
     if (unknownCode) {
@@ -293,7 +307,7 @@ async function createWalkInEnrollment({
     // A walk-in is finished at the counter, so nothing is left outstanding:
     // every required document has to be in the staff member's hands now. The
     // form disables the button, and this is the rule behind it.
-    const missing = docTypes.filter((d) => d.is_required && !physicalDocTypes.includes(d.code));
+    const missing = docTypes.filter((d) => d.is_required && appliesHere(d) && !physicalDocTypes.includes(d.code));
     if (missing.length) {
       throw Object.assign(
         new Error(`${missing.map((d) => d.label).join(', ')} ${missing.length === 1 ? 'is' : 'are'} still missing. Every required document has to be verified before the learner can be enrolled.`),

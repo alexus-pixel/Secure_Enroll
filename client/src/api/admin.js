@@ -88,6 +88,11 @@ export const downloadGradeLevelCapacityReport = (params) => downloadReport('grad
 // ---------- System Settings ----------
 export const getSystemSettings = () => api.get('/admin/settings').then((r) => r.data);
 export const updateEnrollmentPeriod = (data) => api.patch('/admin/settings/enrollment-period', data).then((r) => r.data);
+// The hours the school is open. Every class period has to fit inside them,
+// so saving is refused when periods already sit outside the new window.
+export const updateSchoolHours = ({ opensAt, closesAt }) =>
+  api.patch('/admin/settings/school-hours', { opensAt, closesAt }).then((r) => r.data);
+
 export const updateRequiredDocuments = (documents) =>
   api.patch('/admin/settings/required-documents', { documents }).then((r) => r.data);
 // The school decides what it asks for. Each of these returns the whole list back.

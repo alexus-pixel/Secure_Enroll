@@ -41,14 +41,31 @@ const createSchoolYear = z.object({
   path: ['label'],
 });
 
+// A class of more than 60 is not a class anybody can teach, and DepEd's own
+// ceiling for elementary sections sits in that range, so the form refuses a
+// number that would only ever be a typo.
+const SECTION_MAX = 60;
+const sectionCapacity = () => z.coerce.number()
+  .int('Capacity must be a whole number.')
+  .positive('Capacity must be at least 1.')
+  .max(SECTION_MAX, `A section can hold at most ${SECTION_MAX} learners.`);
+
+// The school's own opening and closing hours. The pair is judged in
+// lib/schoolHours.js, which also refuses hours that would strand periods
+// already on a timetable; this only checks the shape.
+const schoolHours = z.object({
+  opensAt: z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM, for example 06:00.'),
+  closesAt: z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM, for example 18:00.'),
+});
+
 const createSection = z.object({
   name: c.safeText('Section name', 40),
   gradeLevelId: c.id('Grade level'),
-  capacity: z.coerce.number().int('Capacity must be a whole number.').positive('Capacity must be at least 1.').max(500, 'Capacity can be at most 500.'),
+  capacity: sectionCapacity(),
 });
 
 const updateSectionCapacity = z.object({
-  capacity: z.coerce.number().int('Capacity must be a whole number.').positive('Capacity must be at least 1.').max(500, 'Capacity can be at most 500.'),
+  capacity: sectionCapacity(),
 });
 
 // The same name rule the add-a-section form uses, so renaming cannot
@@ -89,6 +106,9 @@ const updateRequiredDocuments = z.object({
     z.object({
       id: c.id('Document'),
       isRequired: z.boolean(),
+      // Who is asked for it: a first-time learner, a returning one, or both.
+      // Left out means "leave it as it is".
+      appliesTo: z.enum(['all', 'new', 'returning']).optional(),
     })
   ).min(1).max(30),
 });
@@ -139,5 +159,5 @@ module.exports = {
   addRequiredDocument, updateRequiredDocument, documentIdParam, rolloverSchoolYear,
   updateEnrollmentPeriod, createSchoolYear, createSection,
   updateSectionCapacity, updateSectionName, updateSchoolYearDates, updateRequiredDocuments,
-  setSectionAdviser, schoolYearLabelFor,
+  setSectionAdviser, schoolYearLabelFor, schoolHours,
 };

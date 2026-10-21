@@ -5,6 +5,7 @@ import {
   ScrollText, School, BarChart3, Menu, X,
 } from 'lucide-react';
 import Logo from './Logo';
+import ConfirmDialog from './ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 
@@ -72,6 +73,7 @@ function nameFromEmail(email) {
 // `crumb="X"` instead and this builds that two-item trail automatically.
 export default function AppNav({ crumb, crumbs }) {
   const { user, logout, updateUser } = useAuth();
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
   const location = useLocation();
   const role = user?.role;
   const navItems = NAV_ITEMS[role] || [];
@@ -180,9 +182,23 @@ export default function AppNav({ crumb, crumbs }) {
         <div className="topbar-right">
           <span className="welcome">Welcome, {displayName}!</span>
           <Link to={profilePath} className="avatar" aria-label="Edit profile" title="Edit profile">{initial}</Link>
-          <button className="btn-ghost" onClick={logout}>Log out</button>
+          {/* Signing out is one click away from half-finished work — a form
+              being typed, an application half reviewed — and nothing warns
+              about it, so it asks first. */}
+          <button className="btn-ghost" onClick={() => setConfirmingLogout(true)}>Log out</button>
         </div>
       </header>
+
+      {confirmingLogout && (
+        <ConfirmDialog
+          title="Log out?"
+          confirmLabel="Log out"
+          onConfirm={() => { setConfirmingLogout(false); logout(); }}
+          onClose={() => setConfirmingLogout(false)}
+        >
+          <p>Anything you have typed but not saved will be lost.</p>
+        </ConfirmDialog>
+      )}
 
       {role === 'parent' && user.emailVerified === false && (
         <div className="verify-banner">

@@ -74,16 +74,98 @@ exports.list = async (req, res) => {
             s.lrn_hash IS NULL AS "missingLrn",
             g.name AS grade,
             COALESCE(gd.first_name || ' ' || gd.last_name, '—') AS guardian,
-            a.submitted_at AS submitted, a.status
+            a.submitted_at AS submitted, a.status,
+            -- Who has it open right now, so the list can say so before
+            -- somebody walks into a page they cannot act on. A claim older
+            -- than the window has lapsed and counts as nobody.
+            CASE WHEN a.review_claimed_at > NOW() - ($1 || ' minutes')::interval
+                 THEN COALESCE(NULLIF(btrim(COALESCE(ru.first_name, '') || ' ' || COALESCE(ru.last_name, '')), ''), ru.email)
+            END AS "reviewedBy",
+            CASE WHEN a.review_claimed_at > NOW() - ($1 || ' minutes')::interval
+                 THEN rr.name END AS "reviewedByRole"
      FROM enrollment_applications a
      JOIN students s ON s.id = a.student_id
      JOIN grade_levels g ON g.id = a.grade_level_id
+     LEFT JOIN users ru ON ru.id = a.review_claimed_by
+     LEFT JOIN roles rr ON rr.id = ru.role_id
      ${GUARDIAN_JOIN}
      WHERE a.school_year_id = ${AY}
-     ORDER BY a.submitted_at DESC`
+     ORDER BY a.submitted_at DESC`,
+    [CLAIM_MINUTES]
   );
   res.json({ stats: stats.rows[0], applications: apps.rows });
 };
+
+/**
+ * How long an open application stays claimed by the person reading it.
+ *
+ * Opening an application claims it, and every reload while the page is open
+ * renews the claim. Nothing releases it explicitly — a browser tab that is
+ * closed, crashes or is left on a train sends no goodbye — so it lapses on
+ * its own, and the next person to open the application takes it over. Long
+ * enough that reading a long application does not lose it; short enough that
+ * nobody waits out a colleague who has gone home.
+ */
+const CLAIM_MINUTES = 10;
+
+// Decided, so there is nothing left to hold or to race over.
+const FINALISED = ['approved', 'rejected'];
+
+/**
+ * Takes or renews the claim on one application and reports who holds it.
+ *
+ * The UPDATE is the whole lock: one statement, so two people pressing at the
+ * same instant cannot both win it — the second one's WHERE no longer matches
+ * and it comes back empty, and the SELECT that follows tells it who did win.
+ */
+async function claimReview(applicationId, userId) {
+  const { rows: [mine] } = await pool.query(
+    `UPDATE enrollment_applications
+        SET review_claimed_by = $2, review_claimed_at = NOW()
+      WHERE id = $1
+        AND (review_claimed_by IS NULL
+             OR review_claimed_by = $2
+             OR review_claimed_at < NOW() - ($3 || ' minutes')::interval)
+      RETURNING review_claimed_by`,
+    [applicationId, userId, CLAIM_MINUTES]
+  );
+  if (mine) return { mine: true, heldBy: null };
+
+  const { rows: [holder] } = await pool.query(
+    `SELECT u.id, r.name AS role,
+            COALESCE(NULLIF(btrim(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), u.email) AS name,
+            a.review_claimed_at AS since
+       FROM enrollment_applications a
+       JOIN users u ON u.id = a.review_claimed_by
+       JOIN roles r ON r.id = u.role_id
+      WHERE a.id = $1`,
+    [applicationId]
+  );
+  if (!holder) return { mine: true, heldBy: null };
+  return { mine: false, heldBy: { id: holder.id, name: holder.name, role: holder.role, since: holder.since } };
+}
+
+/** 409 for a write on an application somebody else is holding, or null. */
+async function blockedByOtherReviewer(applicationId, userId) {
+  const { rows: [row] } = await pool.query(
+    `SELECT u.id, r.name AS role,
+            COALESCE(NULLIF(btrim(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), u.email) AS name
+       FROM enrollment_applications a
+       JOIN users u ON u.id = a.review_claimed_by
+       JOIN roles r ON r.id = u.role_id
+      WHERE a.id = $1
+        AND a.review_claimed_by <> $2
+        AND a.review_claimed_at > NOW() - ($3 || ' minutes')::interval`,
+    [applicationId, userId, CLAIM_MINUTES]
+  );
+  if (!row) return null;
+  return {
+    message: `${row.name} (${row.role}) is reviewing this application right now. `
+      + 'Only one person can review it at a time, so this one is read-only until they are finished.',
+    reason: 'under_review_by_other',
+    reviewer: { name: row.name, role: row.role },
+  };
+}
 
 // ---------- Application view ----------
 exports.get = async (req, res) => {
@@ -137,6 +219,13 @@ exports.get = async (req, res) => {
     ...types.filter((t) => t.isRequired || docs.some((d) => d.doc_type === t.code)).map((t) => shape(t.code, t.label)),
     ...docs.filter((d) => !known.has(d.doc_type)).map((d) => shape(d.doc_type, d.doc_type)),
   ];
+
+  // Opening an application claims it for this reviewer, or says who already
+  // has it. A finished application is nobody's to hold.
+  a.review = FINALISED.includes(a.status)
+    ? { mine: true, heldBy: null }
+    : await claimReview(a.id, req.user.id);
+
   res.json(a);
 };
 
@@ -165,6 +254,8 @@ exports.setDocumentStatus = async (req, res) => {
     'SELECT status FROM enrollment_applications WHERE id = $1', [req.params.id]
   );
   if (!app) return res.status(404).json({ message: 'Application not found.' });
+  const held = await blockedByOtherReviewer(req.params.id, req.user.id);
+  if (held) return res.status(409).json(held);
   if (['approved', 'rejected'].includes(app.status)) {
     return res.status(409).json({ message: 'This application is already finalized.' });
   }
@@ -261,6 +352,8 @@ exports.setQualification = async (req, res) => {
     return res.status(400).json({ message: 'Value must be met or not_met.' });
   }
   if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ message: 'Application not found.' });
+  const held = await blockedByOtherReviewer(req.params.id, req.user.id);
+  if (held) return res.status(409).json(held);
 
   // Kinder is the entry grade: a first-time learner has no previous grades to
   // qualify with, so there is nothing to mark and the step does not exist.
@@ -311,6 +404,8 @@ exports.decide = async (req, res) => {
     [req.params.id]
   );
   if (!a) return res.status(404).json({ message: 'Application not found.' });
+  const held = await blockedByOtherReviewer(req.params.id, req.user.id);
+  if (held) return res.status(409).json(held);
   if (['approved', 'rejected'].includes(a.status)) {
     return res.status(409).json({ message: 'This application is already finalized.' });
   }
@@ -318,14 +413,20 @@ exports.decide = async (req, res) => {
     return res.status(409).json({ message: 'A revision was requested. Review opens again when the parent resubmits.' });
   }
 
-  // No decision (approve, revision or reject) until every file on record has
-  // been reviewed and the grade qualification has been marked.
+  // Approving needs the whole review finished: every file looked at and the
+  // grade qualification marked.
+  //
+  // Returning the application does not, and must not. The qualification is
+  // judged from the report card, so insisting it be marked before an
+  // unreadable report card can be sent back is asking for a decision that
+  // cannot be made. One rejected document is enough to send it back, and
+  // whatever was not reviewed yet will be reviewed when it returns.
   const { rows: latest } = await pool.query(LATEST_DOCS, [req.params.id]);
   const docTypes = await getDocumentTypes();
   const docName = (type) => (docTypes.find((t) => t.code === type) || {}).label || type;
   const unreviewed = latest.filter((d) => (d.file_path || d.physical) && d.status === 'pending').map((d) => docName(d.doc_type));
   const qualificationPending = a.requires_qualification && !a.grade_qualification;
-  if (unreviewed.length || qualificationPending) {
+  if (action !== 'reject' && (unreviewed.length || qualificationPending)) {
     const parts = [];
     if (unreviewed.length) parts.push(`review ${unreviewed.join(', ')}`);
     if (qualificationPending) parts.push('mark the grade qualification');
@@ -349,6 +450,17 @@ exports.decide = async (req, res) => {
     }
   } else if (!remarks.trim()) {
     return res.status(400).json({ message: 'A remark is required.' });
+  } else if (action === 'reject') {
+    // Returning an application is how the parent is told which files to
+    // replace, so there has to be at least one file to name. Without that the
+    // parent is sent away with nothing to act on.
+    const rejected = latest.filter((d) => d.status === 'rejected' || d.status === 'flagged');
+    if (rejected.length === 0) {
+      return res.status(400).json({
+        message: 'Reject the document that is wrong first, so the parent is told what to replace.',
+        reason: 'no_rejected_document',
+      });
+    }
   }
 
   // Approval enrols the learner in one of the grade's sections that still has

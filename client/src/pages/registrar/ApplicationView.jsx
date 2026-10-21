@@ -12,6 +12,28 @@ const fmt = (d) =>
 
 const FINAL = ['approved', 'rejected'];
 
+/**
+ * The remarks the parent is sent when an application is returned, written
+ * from the documents that were actually rejected.
+ *
+ * The registrar already said what was wrong with each file while looking at
+ * it; retyping that into a remarks box was the same sentence a second time,
+ * so it is assembled here instead. It stays editable: a case the per-document
+ * notes do not cover is still the registrar's to explain.
+ */
+function remarksForRejected(docs) {
+  const bad = docs.filter((d) => d.status === 'rejected');
+  if (bad.length === 0) return '';
+  const lines = bad.map((d) => (d.note && d.note.trim()
+    ? `\u2022 ${d.name}: ${d.note.trim()}`
+    : `\u2022 ${d.name}: the copy on file could not be accepted. Please send a clear, complete and readable photo or scan.`));
+  const count = bad.length === 1 ? 'One of the documents' : `${bad.length} of the documents`;
+  return `${count} sent with this application cannot be accepted yet:\n\n${lines.join('\n')}\n\n`
+    + 'Please upload a new copy of the document'
+    + (bad.length === 1 ? '' : 's')
+    + ' listed above and submit again. Everything else on file has already been verified.';
+}
+
 export default function ApplicationView() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -28,6 +50,8 @@ export default function ApplicationView() {
   const [flagSaving, setFlagSaving] = useState(false);
   const [viewing, setViewing] = useState(null); // document type being viewed
   const [deciding, setDeciding] = useState(false);
+  // The remarks dialog shown when the application is returned to the parent.
+  const [rejecting, setRejecting] = useState(false);
   // The section list shown after Approve (or for an approved learner with no section yet).
   const [picker, setPicker] = useState(null);   // { mode: 'approve' | 'assign', sections: [...] }
   const [pickedSection, setPickedSection] = useState('');
@@ -65,7 +89,10 @@ export default function ApplicationView() {
   const finalized = FINAL.includes(app.status);
   // After a revision request nothing can be decided until the parent resubmits.
   const awaitingParent = app.status === 'needs_revision';
-  const locked = finalized || awaitingParent;
+  // Somebody else opened this application first. Everything on the page still
+  // reads normally; nothing on it can be decided.
+  const heldBy = app.review && app.review.mine === false ? app.review.heldBy : null;
+  const locked = finalized || awaitingParent || Boolean(heldBy);
   const docs = app.documents;
   const viewingDoc = docs.find((d) => d.type === viewing);
   // A decision needs every file on record reviewed and the grade qualification
@@ -76,14 +103,36 @@ export default function ApplicationView() {
   const qualificationMarked = !needsQualification || Boolean(app.gradeQualification);
   const reviewDone = toReview.length === 0 && qualificationMarked;
   const problemDocs = docs.filter((d) => d.status === 'flagged' || d.status === 'rejected');
-  const reviewTodoTitle = needsQualification
-    ? 'Review every document and the grade qualification first'
-    : 'Review every document first';
+
+  // Approve is on only when the review is finished and nothing was rejected.
+  // Reject is on only when something was, because the parent cannot be asked
+  // to fix a document nobody marked as wrong.
+  const canApprove = reviewDone && problemDocs.length === 0;
+  // Returning the application needs only one rejected document. It does not
+  // wait for the rest of the review, because the grade qualification is
+  // judged from the report card and cannot be marked when that is the file
+  // being sent back.
+  const canReject = problemDocs.length > 0 && !locked;
+  const approveBlocked = (() => {
+    if (canApprove) return '';
+    // A rejected document is the whole story: approval is off and returning
+    // the application is what to do next, whatever else is still unreviewed.
+    if (problemDocs.length > 0) {
+      return `Approval is off while ${problemDocs.map((d) => d.name).join(', ')} `
+        + `${problemDocs.length === 1 ? 'is' : 'are'} rejected. Reject the application to ask the parent for a new copy; `
+        + 'approval opens again once it is replaced and verified.';
+    }
+    const waiting = [];
+    if (toReview.length > 0) waiting.push(`review ${toReview.map((d) => d.name).join(', ')}`);
+    if (needsQualification && !app.gradeQualification) waiting.push('mark the grade qualification');
+    return waiting.length ? `Still to do before a decision: ${waiting.join(', and ')}.` : '';
+  })();
 
   // Verify, flag or reject one document. Throws on failure so the
   // dialog or viewer that called it can show the error.
   // Why the viewer's Verify / Flag / Reject are off, or '' when they are on.
   function viewerLock(doc) {
+    if (heldBy) return `Under review by ${heldBy.name} (${heldBy.role}).`;
     if (finalized) return 'This application is finalized.';
     if (awaitingParent) return 'Waiting for the parent to resubmit.';
     if (['verified', 'flagged', 'rejected'].includes(doc.status)) {
@@ -161,12 +210,7 @@ export default function ApplicationView() {
 
   async function decide(action, okText, sectionId) {
     if (action !== 'approve' && !remarks.trim()) {
-      setNotice({
-        type: 'error',
-        text: action === 'revision'
-          ? 'Add a remark explaining what needs to be revised.'
-          : 'Add a remark explaining the reason for rejection.',
-      });
+      setNotice({ type: 'error', text: 'Add a remark explaining what the parent has to replace.' });
       return;
     }
     setDeciding(true);
@@ -174,6 +218,7 @@ export default function ApplicationView() {
       await api.post(`/registrar/applications/${id}/decision`, { action, remarks, sectionId });
       setNotice({ type: 'ok', text: okText });
       setPicker(null);
+      setRejecting(false);
       load();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
@@ -316,13 +361,6 @@ export default function ApplicationView() {
       </div>
       )}
 
-      <div className="reg-card">
-        <p className="reg-card-title">Registrar Remarks</p>
-        <textarea className="reg-textarea" value={remarks} disabled={locked}
-          onChange={(e) => setRemarks(e.target.value)}
-          placeholder="Add remarks for the parent or for your records..." />
-      </div>
-
       {picker && (
         <div className="reg-card" id="section-picker">
           <p className="reg-card-title">
@@ -368,36 +406,66 @@ export default function ApplicationView() {
         </div>
       )}
 
+      {/* One reviewer at a time. Whoever opened it first keeps it until they
+          are finished or ten minutes pass with the page closed. */}
+      {heldBy && (
+        <div className="reg-card" role="status" style={{ borderColor: 'var(--warn, #c08a2e)' }}>
+          <p className="reg-card-title" style={{ margin: 0 }}>
+            Under review by {heldBy.name} ({heldBy.role})
+          </p>
+          <p className="reg-help" style={{ marginBottom: 0 }}>
+            Two people deciding the same application at once is how one learner ends up both
+            approved and rejected, so this one is read-only for you. It opens again when they
+            finish, or shortly after they close it.
+          </p>
+        </div>
+      )}
+
+      {/* Two outcomes, and the documents decide which one is available: every
+          document verified means approve, anything rejected means the
+          application goes back to the parent. They are never both on. */}
       <div className="reg-actions">
-        <button className="reg-btn reg-btn-blue" disabled={locked || deciding || !reviewDone || problemDocs.length > 0}
-          title={!reviewDone ? reviewTodoTitle : problemDocs.length ? 'Resolve flagged or rejected documents first' : undefined}
+        <button className="reg-btn reg-btn-blue" disabled={locked || deciding || !canApprove}
+          title={heldBy ? `Under review by ${heldBy.name}` : (approveBlocked || undefined)}
           onClick={() => openSectionPicker('approve')}>
           Approve Application
         </button>
-        <button className="reg-btn reg-btn-orange" disabled={locked || deciding || !reviewDone}
-          title={!reviewDone ? reviewTodoTitle : undefined}
-          onClick={() => decide('revision', 'Revision requested. The parent will see your remarks and any flagged documents.')}>
-          Request Revision
-        </button>
-        <button className="reg-btn reg-btn-red" disabled={locked || deciding || !reviewDone}
-          title={!reviewDone ? reviewTodoTitle : undefined}
-          onClick={() => decide('reject', 'Application rejected.')}>
+        <button className="reg-btn reg-btn-red" disabled={locked || deciding || !canReject}
+          title={heldBy ? `Under review by ${heldBy.name}` : (canReject ? undefined : 'Reject at least one document first, so the parent is told what to replace.')}
+          onClick={() => { setRemarks(remarksForRejected(docs)); setRejecting(true); }}>
           Reject Application
         </button>
       </div>
 
-      {!reviewDone && !locked && (
-        <p className="reg-help" role="status">
-          The decision buttons turn on once every document has been verified, flagged or rejected
-          {toReview.length > 0 && ` (still to review: ${toReview.map((d) => d.name).join(', ')})`}
-          {needsQualification && !app.gradeQualification && (toReview.length > 0 ? ' and the grade qualification is marked' : ', and the grade qualification is marked')}.
+      {!locked && approveBlocked && (
+        <p className="reg-help" role="status" style={problemDocs.length ? { color: 'var(--danger)' } : undefined}>
+          {approveBlocked}
         </p>
       )}
-      {reviewDone && problemDocs.length > 0 && !locked && (
-        <p className="reg-help" role="status" style={{ color: 'var(--danger)' }}>
-          Approve is turned off while a document is flagged or rejected: {problemDocs.map((d) => d.name).join(', ')}.
-          Ask the parent for a new copy with Request Revision. Approval opens again once it is replaced and verified.
-        </p>
+
+      {rejecting && (
+        <div className="dv-overlay" onMouseDown={(e) => e.target === e.currentTarget && !deciding && setRejecting(false)}>
+          <div className="dv-dialog dv-small-dialog" role="dialog" aria-modal="true" aria-label="Send remarks to the parent">
+            <h3>Return this application to the parent?</h3>
+            <p>
+              {app.guardian} will see these remarks and can replace only the documents you rejected.
+              Everything already verified stays as it is.
+            </p>
+            <label className="reg-help" htmlFor="reject-remarks" style={{ margin: 0 }}>
+              Remarks (written from the rejected documents — edit if you need to)
+            </label>
+            <textarea id="reject-remarks" className="reg-textarea" value={remarks} rows={9} maxLength={1000}
+              onChange={(e) => setRemarks(e.target.value)} />
+            <div className="reg-actions" style={{ justifyContent: 'flex-end' }}>
+              <button type="button" className="reg-btn reg-btn-plain" disabled={deciding}
+                onClick={() => setRejecting(false)}>Cancel</button>
+              <button type="button" className="reg-btn reg-btn-red on" disabled={deciding || !remarks.trim()}
+                onClick={() => decide('reject', 'The application was returned to the parent with your remarks.')}>
+                {deciding ? 'Sending…' : 'Send remarks'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {viewingDoc && (

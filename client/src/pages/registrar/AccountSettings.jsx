@@ -5,7 +5,7 @@ import PasswordInput from '../../components/PasswordInput';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import Toast from '../../components/Toast';
 import {
-  validateName, validateInitial, validatePassword, validateConfirmPassword,
+  validateName, validateInitial, validatePassword, validateConfirmPassword, validateEmail,
 } from '../../utils/validators';
 
 const INITIAL_MAX = 2;
@@ -30,7 +30,11 @@ export default function AccountSettings() {
     firstName: user?.firstName || '',
     lastName: user?.lastName || '',
     middleInitial: user?.middleName || '',
+    email: user?.email || '',
   });
+  // The address as it stands on the account, kept apart from the box so the
+  // page can tell whether it is actually being changed.
+  const [emailOnFile, setEmailOnFile] = useState(user?.email || '');
   const [pw, setPw] = useState({ current: '', next: '', confirm: '' });
   const [errors, setErrors] = useState({});
   const [notice, setNotice] = useState(null);
@@ -41,11 +45,15 @@ export default function AccountSettings() {
   // sign-in details in this browser are older than the account.
   useEffect(() => {
     api.get('/auth/me')
-      .then(({ data }) => setProfile({
-        firstName: data.firstName || '',
-        lastName: data.lastName || '',
-        middleInitial: data.middleName || '',
-      }))
+      .then(({ data }) => {
+        setEmailOnFile(data.email || '');
+        setProfile({
+          firstName: data.firstName || '',
+          lastName: data.lastName || '',
+          middleInitial: data.middleName || '',
+          email: data.email || '',
+        });
+      })
       .catch(() => {});
   }, []);
 
@@ -66,6 +74,9 @@ export default function AccountSettings() {
       firstName: validateName(profile.firstName, { label: 'First name' }),
       lastName: validateName(profile.lastName, { label: 'Last name' }),
       middleInitial: validateInitial(profile.middleInitial),
+      // A staff address may sit on the school's own domain, so it is only
+      // checked for shape here; the server has the last word on the domain.
+      email: validateEmail(profile.email),
       ...(changingPassword ? {
         current: pw.current ? '' : 'Enter your current password.',
         next: validatePassword(pw.next) || (pw.next === pw.current ? 'New password must be different from your current password.' : ''),
@@ -77,7 +88,8 @@ export default function AccountSettings() {
       setNotice({ type: 'error', text: 'Please correct the highlighted fields.' });
       return;
     }
-    setConfirming({ changingPassword });
+    const changingEmail = profile.email.trim().toLowerCase() !== emailOnFile.trim().toLowerCase();
+    setConfirming({ changingPassword, changingEmail });
   }
 
   async function saveAll() {
@@ -85,14 +97,30 @@ export default function AccountSettings() {
     setSaving(true);
     const done = [];
     let failed = '';
+    let emailNote = '';
     try {
-      const { data } = await api.patch('/registrar/profile', {
+      // /auth/me saves a staff name to the same columns the registrar's own
+      // profile endpoint did, and it is the one endpoint that also handles the
+      // sign-in address, so the whole card goes through it.
+      const { data } = await api.patch('/auth/me', {
         firstName: profile.firstName.trim(),
         lastName: profile.lastName.trim(),
-        middleInitial: profile.middleInitial.trim(),
+        middleName: profile.middleInitial.trim(),
+        email: profile.email.trim(),
       });
-      updateUser({ firstName: data.firstName, lastName: data.lastName, middleName: data.middleName });
+      updateUser({
+        firstName: data.firstName, lastName: data.lastName, middleName: data.middleName,
+        email: data.email,
+      });
       done.push('Profile');
+      if (data.emailChanged) {
+        setEmailOnFile(data.email || '');
+        // The account is unverified again until the link is opened, and the
+        // link went to the new address, so both have to be said out loud.
+        emailNote = data.verificationSent
+          ? ` A verification link has been emailed to ${data.email}. Please open it to confirm your new email address.`
+          : ` Your email address is now ${data.email}, but the verification link could not be sent just now.`;
+      }
     } catch (err) {
       failed = err.response?.data?.message || 'Could not update your profile.';
     }
@@ -114,7 +142,7 @@ export default function AccountSettings() {
     const what = done.join(' and ');
     // Said twice on purpose: once where the eye is, and once on the page
     // itself for anyone who looks back after the toast has gone.
-    setNotice({ type: 'ok', text: `Saved. ${what} updated.` });
+    setNotice({ type: 'ok', text: `Saved. ${what} updated.${emailNote}` });
     setToast(`${what} updated.`);
   }
 
@@ -127,7 +155,7 @@ export default function AccountSettings() {
     <form className="reg-page reg-narrow" onSubmit={askToSave} noValidate>
       <Toast message={toast} onDone={() => setToast(null)} />
       <h1 className="reg-title">Edit Profile</h1>
-      <p className="reg-subtitle">Update your name and password</p>
+      <p className="reg-subtitle">Update your name, email address and password</p>
 
       <div className="reg-card">
         <p className="reg-card-title">Profile</p>
@@ -153,7 +181,14 @@ export default function AccountSettings() {
         </div>
         <div className="reg-field">
           <label htmlFor="reg-email">Email address</label>
-          <input id="reg-email" className="reg-input" value={user?.email || ''} disabled />
+          <input id="reg-email" {...field('email')} type="email" autoComplete="email" maxLength={254}
+            value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} />
+          {errors.email && <div className="dv-error">{errors.email}</div>}
+          <p className="reg-help">
+            This is the address you sign in with. Change it and a verification link
+            is emailed to the new address; the account counts as unverified until
+            that link is opened.
+          </p>
         </div>
       </div>
 
@@ -198,6 +233,13 @@ export default function AccountSettings() {
           <p>
             Your name will be saved as <b>{[profile.firstName, profile.middleInitial, profile.lastName].filter(Boolean).join(' ')}</b>.
           </p>
+          {confirming.changingEmail && (
+            <p>
+              You are changing the address you sign in with to <b>{profile.email.trim()}</b>.
+              A verification link will be emailed there, and the account stays unverified
+              until it is opened.
+            </p>
+          )}
           <p>
             {confirming.changingPassword
               ? 'Your password will be changed as well. You will need the new one the next time you sign in.'

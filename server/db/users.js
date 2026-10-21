@@ -19,6 +19,27 @@ async function findUserByEmail(email) {
   return result.rows[0];
 }
 
+// Who, if anyone, already holds this address. The unique index is on
+// lower(email), so the lookup has to ignore case too, or a change to the same
+// address in different capitals would get past us and fail in the database.
+async function findUserIdByEmailInsensitive(email) {
+  const result = await pool.query('SELECT id FROM users WHERE lower(email) = lower($1)', [email]);
+  return result.rows[0]?.id;
+}
+
+// Changing the address a person signs in with also un-verifies the account:
+// nobody has proved yet that the new mailbox is theirs, and the verification
+// link that proves it is sent to the new address by the caller.
+async function updateUserEmail(userId, email) {
+  const result = await pool.query(
+    `UPDATE users SET email = $2, email_verified_at = NULL, updated_at = NOW()
+     WHERE id = $1
+     RETURNING id, email`,
+    [userId, email]
+  );
+  return result.rows[0];
+}
+
 async function createUser({ email, passwordHash, roleId }) {
   const result = await pool.query(
     `INSERT INTO users (email, password_hash, role_id)
@@ -71,4 +92,5 @@ async function updateUserPassword(userId, passwordHash) {
 
 module.exports = {
   findRoleIdByName, findUserByEmail, findUserById, createUser, updateUserPassword,
+  findUserIdByEmailInsensitive, updateUserEmail,
 };

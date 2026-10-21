@@ -1,43 +1,43 @@
 /**
- * The example shown in grey inside an empty box.
+ * The masked example shown in grey inside an empty box.
  *
  * A rule stated in a hint is read once; the example is there while the box is
  * being filled in, which is when the format actually matters. Every box on the
  * enrollment forms gets one, so a parent at the desk can see the shape of what
- * is wanted — twelve digits, one leading 09, a name without a title — instead
- * of finding out from a red sentence after pressing Save.
+ * is wanted — twelve characters for an LRN, eleven for a number that starts 09
+ * — instead of finding out from a red sentence after pressing Save.
  *
- * None of these are real people, real addresses or real numbers: an example
- * that happens to be somebody's actual address is the kind of thing that ends
- * up submitted verbatim.
+ * The shape only, never a sample that reads as a real value: everything past
+ * the fixed part of a format is x's, and the rest names what belongs there. A
+ * plausible name, address or number sitting in grey gets copied into the box
+ * and submitted verbatim, and then there is a record nobody can tell from a
+ * real one.
  *
  * Keyed by the field names the forms already use, so a box picks its example
  * up from here by passing nothing.
  */
 const SAMPLE_PLACEHOLDERS = {
   // The learner
-  firstName: 'e.g. Maria Lourdes',
-  middleName: 'e.g. Bautista',
-  lastName: 'e.g. Dela Cruz',
-  lrn: 'e.g. 136482910573',
+  firstName: 'Given name',
+  middleName: 'Middle name (optional)',
+  lastName: 'Family name',
+  lrn: '1234xxxxxxxx',
 
   // The parent or guardian
-  guardianFirstName: 'e.g. Juan',
-  guardianMiddleName: 'e.g. Reyes',
-  guardianLastName: 'e.g. Dela Cruz',
-  guardianEmail: 'e.g. juandelacruz@gmail.com',
-  confirmEmail: 'Re-type it, e.g. juandelacruz@gmail.com',
-  guardianConfirmEmail: 'Re-type it, e.g. juandelacruz@gmail.com',
-  email: 'e.g. juandelacruz@gmail.com',
-  contactNumber: 'e.g. 09171234567',
-  guardianContactNumber: 'e.g. 09171234567',
-  relationshipOther: 'e.g. Aunt, foster parent',
-  guardianRelationshipOther: 'e.g. Aunt, foster parent',
-  // House and street made up on purpose; the barangay and city are the
-  // school's own, which is where every learner here lives.
-  address: 'e.g. Blk 7 Lot 12, Sampaguita St., Brgy. 176, Caloocan City',
-  guardianAddress: 'e.g. Blk 7 Lot 12, Sampaguita St., Brgy. 176, Caloocan City',
-  validIdNumber: 'e.g. 1234-5678-9012',
+  guardianFirstName: 'Given name',
+  guardianMiddleName: 'Middle name (optional)',
+  guardianLastName: 'Family name',
+  guardianEmail: 'name@gmail.com',
+  confirmEmail: 'Re-type name@gmail.com',
+  guardianConfirmEmail: 'Re-type name@gmail.com',
+  email: 'name@gmail.com',
+  contactNumber: '09xxxxxxxxx',
+  guardianContactNumber: '09xxxxxxxxx',
+  relationshipOther: 'Relationship to the learner',
+  guardianRelationshipOther: 'Relationship to the learner',
+  address: 'House/Blk/Lot, Street, Barangay, City',
+  guardianAddress: 'House/Blk/Lot, Street, Barangay, City',
+  validIdNumber: '1234-xxxx-xxxx',
 };
 
 /** The example for one field, or '' when that field has none. */

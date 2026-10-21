@@ -23,10 +23,11 @@ export default function SubjectsPanel({ gradeLevelId, schoolYearId, isReadOnly =
   const [notice, setNotice] = useState('');
 
   const [newName, setNewName] = useState('');
-  const [newIsDomain, setNewIsDomain] = useState(false);
   const [adding, setAdding] = useState(false);
 
-  const [editing, setEditing] = useState(null); // { id, name, isDomain }
+  // The learning-domain flag is no longer editable here: the seed data sets it
+  // on Kinder's domains and nothing else, so the panel only shows it.
+  const [editing, setEditing] = useState(null); // { id, name }
   const [savingEdit, setSavingEdit] = useState(false);
 
   const [removing, setRemoving] = useState(null); // the subject awaiting confirmation
@@ -68,14 +69,13 @@ export default function SubjectsPanel({ gradeLevelId, schoolYearId, isReadOnly =
     setAdding(true);
     setError(''); setNotice('');
     try {
-      const subject = await addSubject({ name, gradeLevelId: Number(gradeLevelId), isDomain: newIsDomain });
+      const subject = await addSubject({ name, gradeLevelId: Number(gradeLevelId) });
       applyList(
         [...subjects, { id: subject.id, name: subject.name, is_domain: subject.is_domain, scheduled_count: 0, teacher_count: 0 }]
           .sort(byDomainThenName),
         subject.maxSubjects,
       );
       setNewName('');
-      setNewIsDomain(false);
       setNotice(`${subject.name} added.`);
     } catch (err) {
       setError(subjectError(err, 'Could not add that subject.'));
@@ -91,7 +91,7 @@ export default function SubjectsPanel({ gradeLevelId, schoolYearId, isReadOnly =
     setSavingEdit(true);
     setError(''); setNotice('');
     try {
-      const saved = await updateSubject(editing.id, { name, isDomain: editing.isDomain });
+      const saved = await updateSubject(editing.id, { name });
       applyList(
         subjects.map((s) => (s.id === saved.id ? { ...s, name: saved.name, is_domain: saved.is_domain } : s))
           .sort(byDomainThenName),
@@ -215,21 +215,12 @@ export default function SubjectsPanel({ gradeLevelId, schoolYearId, isReadOnly =
                   <tr key={s.id}>
                     <td>
                       {isEditing ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <input
-                            className="input" style={{ maxWidth: 220 }} autoFocus
-                            value={editing.name}
-                            onChange={(e) => setEditing((v) => ({ ...v, name: e.target.value }))}
-                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEdit(e); }}
-                          />
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 14 }}>
-                            <input
-                              type="checkbox" checked={editing.isDomain}
-                              onChange={(e) => setEditing((v) => ({ ...v, isDomain: e.target.checked }))}
-                            />
-                            Learning domain
-                          </label>
-                        </div>
+                        <input
+                          className="input" style={{ maxWidth: 220 }} autoFocus
+                          value={editing.name}
+                          onChange={(e) => setEditing((v) => ({ ...v, name: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEdit(e); }}
+                        />
                       ) : (
                         <>
                           <b>{s.name}</b>
@@ -265,7 +256,7 @@ export default function SubjectsPanel({ gradeLevelId, schoolYearId, isReadOnly =
                           <>
                             <button
                               className="link-action" style={{ marginRight: 10 }}
-                              onClick={() => { setNotice(''); setError(''); setEditing({ id: s.id, name: s.name, isDomain: s.is_domain }); }}
+                              onClick={() => { setNotice(''); setError(''); setEditing({ id: s.id, name: s.name }); }}
                             >
                               Edit
                             </button>
@@ -293,13 +284,6 @@ export default function SubjectsPanel({ gradeLevelId, schoolYearId, isReadOnly =
             className="input" style={{ maxWidth: 240 }} placeholder="New subject name"
             value={newName} onChange={(e) => setNewName(e.target.value)} disabled={atLimit}
           />
-          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 14 }}>
-            <input
-              type="checkbox" checked={newIsDomain} disabled={atLimit}
-              onChange={(e) => setNewIsDomain(e.target.checked)}
-            />
-            Learning domain
-          </label>
           <button className="btn btn-sm btn-secondary" type="submit" disabled={adding || atLimit || !newName.trim()}>
             {adding ? 'Adding...' : '+ Add subject'}
           </button>

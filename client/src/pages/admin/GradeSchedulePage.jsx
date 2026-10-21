@@ -64,13 +64,19 @@ export default function GradeSchedulePage() {
   // down with the section list (/admin/schedules/grades/:id/sections),
   // which the registrar can read as well.
   const activeSection = sections.find((s) => s.id === activeSectionId) || null;
-  // Whatever is wrong with the times typed into the "+ Add Period"
-  // row for this session, or null while they are fine.
-  const newPeriodIssue = (session) => (
-    newPeriodTimes.startTime && newPeriodTimes.endTime
-      ? sessionTimeIssue(session, newPeriodTimes.startTime, newPeriodTimes.endTime)
-      : null
-  );
+  // Whatever stands in the way of adding the period typed into the
+  // "+ Add Period" row for this session, or null while nothing does.
+  //
+  // "No time yet" is one of the answers here, not something the save
+  // handler quietly discovers on its own. A part-filled time box hands
+  // back an empty string — the hour can be sitting in the field while
+  // the AM/PM half is still blank — so the row has to say so, instead
+  // of leaving an Add button that looks ready and does nothing.
+  const newPeriodIssue = (session) => {
+    if (!activeSectionId) return 'This grade level has no sections yet \u2014 add one in School Settings first.';
+    if (!newPeriodTimes.startTime || !newPeriodTimes.endTime) return 'Enter a start and an end time (including AM/PM).';
+    return sessionTimeIssue(session, newPeriodTimes.startTime, newPeriodTimes.endTime);
+  };
   const adviserOf = (section) => section?.adviser_name || null;
 
   function reloadEntries() {
@@ -114,11 +120,14 @@ export default function GradeSchedulePage() {
   }
 
   async function handleAddPeriod(session) {
-    if (!newPeriodTimes.startTime || !newPeriodTimes.endTime || !activeSectionId) return;
-    // A period has to sit inside the half of the day its session
-    // names: 9 PM to 10 PM is not a morning period. The server
+    // Every reason not to send this is said out loud, including a
+    // still-blank time: returning here without a word is what made
+    // the Add button look broken.
+    //
+    // A period also has to sit inside the half of the day its session
+    // names — 9 PM to 10 PM is not a morning period. The server
     // refuses it either way; this just says so without a round trip.
-    const issue = sessionTimeIssue(session, newPeriodTimes.startTime, newPeriodTimes.endTime);
+    const issue = newPeriodIssue(session);
     if (issue) {
       setError(issue);
       return;
@@ -154,7 +163,7 @@ export default function GradeSchedulePage() {
                 Adviser:{' '}
                 {adviserOf(activeSection)
                   ? <b>{adviserOf(activeSection)}</b>
-                  : <span className="muted">No adviser yet</span>}
+                  : <span className="muted">No adviser assigned yet</span>}
               </span>
             </p>
           )}
@@ -163,7 +172,7 @@ export default function GradeSchedulePage() {
 
       {isReadOnly && (
         <div className="alert" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-          {yearLabel} has ended \u2014 viewing this schedule as read-only.
+          {yearLabel} has ended &mdash; viewing this schedule as read-only.
         </div>
       )}
       {error && <div className="alert alert-error">{error}</div>}
@@ -174,7 +183,7 @@ export default function GradeSchedulePage() {
             key={s.id}
             className={`btn btn-sm ${activeSectionId === s.id ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => setActiveSectionId(s.id)}
-            title={adviserOf(s) ? `Adviser: ${adviserOf(s)}` : 'No adviser yet'}
+            title={adviserOf(s) ? `Adviser: ${adviserOf(s)}` : 'No adviser assigned yet'}
           >
             {s.name}
             <span style={{ opacity: 0.75, fontWeight: 400 }}>
@@ -196,6 +205,10 @@ export default function GradeSchedulePage() {
 
       {['morning', 'afternoon'].map((session) => {
         const periods = periodsForSession(session);
+        // Why "Add" is greyed out, when it is — shown beside the button
+        // and not only in its tooltip, so the reason is on screen.
+        const addIssue = newPeriodIssue(session);
+        const timesTyped = !!(newPeriodTimes.startTime && newPeriodTimes.endTime);
         return (
           <div key={session} className="card">
             <div className="admin-section-header" style={{ marginBottom: 10 }}>
@@ -205,27 +218,43 @@ export default function GradeSchedulePage() {
                   <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     <input
                       type="time" className="input" style={{ width: 110 }} min={DAY_OPENS} max={DAY_CLOSES}
+                      aria-label={`Start time of the new ${session} period`}
                       value={newPeriodTimes.startTime} onChange={(e) => setNewPeriodTimes((t) => ({ ...t, startTime: e.target.value }))}
                     />
                     <span className="muted">to</span>
                     <input
                       type="time" className="input" style={{ width: 110 }} min={DAY_OPENS} max={DAY_CLOSES}
+                      aria-label={`End time of the new ${session} period`}
                       value={newPeriodTimes.endTime} onChange={(e) => setNewPeriodTimes((t) => ({ ...t, endTime: e.target.value }))}
                     />
                     <button
                       className="btn btn-secondary btn-sm" onClick={() => handleAddPeriod(session)}
-                      disabled={addingPeriod || !!newPeriodIssue(session)}
-                      title={newPeriodIssue(session) || undefined}
+                      disabled={addingPeriod || !!addIssue}
+                      title={addIssue || undefined}
                     >
                       {addingPeriod ? 'Adding...' : 'Add'}
                     </button>
                     <button className="link-action" onClick={() => { setAddingPeriodFor(null); setNewPeriodTimes({ startTime: '', endTime: '' }); }}>Cancel</button>
-                    {newPeriodIssue(session) && (
-                      <span className="field-error" style={{ margin: 0 }}>{newPeriodIssue(session)}</span>
+                    {addIssue && (
+                      <span className={timesTyped ? 'field-error' : 'hint'} style={{ margin: 0 }}>{addIssue}</span>
                     )}
                   </span>
                 ) : (
-                  <button className="btn btn-secondary btn-sm" onClick={() => setAddingPeriodFor(session)}>+ Add Period</button>
+                  /* The row opens blank. The two sessions share one pair
+                     of time boxes, so times left behind by the other
+                     session's row would otherwise arrive already breaking
+                     this session's half of the day — Add greyed out the
+                     moment the row appeared, for no visible reason. */
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      setAddingPeriodFor(session);
+                      setNewPeriodTimes({ startTime: '', endTime: '' });
+                      setError('');
+                    }}
+                  >
+                    + Add Period
+                  </button>
                 )
               )}
             </div>

@@ -187,7 +187,7 @@ export default function Register() {
               <label className="label" htmlFor="email">Gmail Address</label>
               <input id="email" className={`input${errors.email ? ' input-error' : ''}`} type="email"
                 value={form.email} onChange={update('email')} onBlur={handleEmailBlur}
-                placeholder="e.g. juandelacruz@gmail.com" autoComplete="email" maxLength={254} required />
+                placeholder="name@gmail.com" autoComplete="email" maxLength={254} required />
               {emailChecking && <p className="hint">Checking email&hellip;</p>}
               {!emailChecking && errors.email && <p className="field-error">{errors.email}</p>}
               {!emailChecking && !errors.email
@@ -197,7 +197,7 @@ export default function Register() {
               <label className="label" htmlFor="confirmEmail">Confirm Gmail Address</label>
               <input id="confirmEmail" className={`input${errors.confirmEmail ? ' input-error' : ''}`} type="email"
                 value={form.confirmEmail} onChange={update('confirmEmail')} onBlur={handleBlur('confirmEmail')}
-                placeholder="Re-type it, e.g. juandelacruz@gmail.com" autoComplete="off" maxLength={254} required />
+                placeholder="Re-type name@gmail.com" autoComplete="off" maxLength={254} required />
               {errors.confirmEmail && <p className="field-error">{errors.confirmEmail}</p>}
             </div>
           </div>
@@ -206,7 +206,7 @@ export default function Register() {
             <label className="label" htmlFor="contactNumber">Contact/Phone Number</label>
             <input id="contactNumber" className={`input${errors.contactNumber ? ' input-error' : ''}`}
               value={form.contactNumber} onChange={update('contactNumber')} onBlur={handleBlur('contactNumber')}
-              placeholder="09171234567" autoComplete="tel" inputMode="tel" maxLength={13} required />
+              placeholder="09xxxxxxxxx" autoComplete="tel" inputMode="tel" maxLength={13} required />
             {errors.contactNumber ? <p className="field-error">{errors.contactNumber}</p>
               : <p className="hint">Use 09XXXXXXXXX (11 digits) or +639XXXXXXXXX (13 characters).</p>}
           </div>

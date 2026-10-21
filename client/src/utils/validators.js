@@ -37,7 +37,7 @@ export const INITIAL_MAX = 2; // middle initial: "M" or "M."
 export const CONTACT_MAX = 13;
 export const LRN_RE = /^\d{12}$/;
 // An address: letters, digits, spaces and the punctuation a Philippine address
-// actually uses — , . # - /  (Blk 15 Lot 40, Kingstown Ph. 1 / Brgy. 176)
+// actually uses — , . # - /  as in "House/Blk/Lot, Street, Barangay, City"
 export const ADDRESS_RE = /^[\p{L}\p{M}\d ,.#/-]+$/u;
 
 export const RELATIONSHIPS = ['Mother', 'Father', 'Guardian', 'Grandparent', 'Other'];
@@ -115,7 +115,7 @@ export function validateContactNumber(value) {
   }
   if (!/^\d+$/.test(v)) return 'Use digits only (or start with +63).';
   if (!v.startsWith('09')) return 'Start the number with 09 (11 digits) or +63 (13 characters).';
-  if (v.length !== 11) return 'With 09 the number must be exactly 11 digits (e.g. 09171234567).';
+  if (v.length !== 11) return 'With 09 the number must be exactly 11 digits (09xxxxxxxxx).';
   return '';
 }
 

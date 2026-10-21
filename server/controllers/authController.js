@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const {
   findRoleIdByName, findUserByEmail, findUserById, createUser, updateUserPassword,
+  findUserIdByEmailInsensitive, updateUserEmail,
 } = require('../db/users');
 const { createGuardianProfile, getGuardianProfile, updateGuardianProfile } = require('../db/guardians');
 const {
@@ -327,8 +328,18 @@ async function login(req, res) {
       });
     }
 
+    // The password was right, but an administrator has switched this account
+    // off. The marker is what matters: the sign-in page needs to tell this
+    // apart from a wrong password so it can say what actually happened, and it
+    // is read from is_active every time, so switching the account on and off
+    // again behaves the same way on every attempt.
     if (!user.is_active) {
-      return res.status(403).json({ message: 'This account has been disabled.' });
+      await logAudit(user.id, 'LOGIN_BLOCKED_DEACTIVATED', req);
+      return res.status(403).json({
+        code: 'ACCOUNT_DEACTIVATED',
+        reason: 'account_deactivated',
+        message: 'Your account was deactivated by the administrator.',
+      });
     }
 
     // Correct password, but the email address has not been verified yet:
@@ -389,7 +400,7 @@ async function getMe(req, res) {
 
 async function updateProfile(req, res) {
   try {
-    const { firstName, middleName, lastName } = req.body || {};
+    const { firstName, middleName, lastName, email } = req.body || {};
 
     const problems = [];
     if (!isValidName(firstName)) problems.push('First name is required and should contain letters only.');
@@ -397,6 +408,34 @@ async function updateProfile(req, res) {
     // An initial is one letter, so the 2-character minimum for names is wrong here.
     if (!isValidName(middleName, { required: false, min: 1, max: INITIAL_MAX })) problems.push(`M.I. should contain letters only (up to ${INITIAL_MAX} characters).`);
     if (problems.length) return res.status(400).json({ message: problems[0], errors: problems });
+
+    // The address on this page is the account's login and the only way the
+    // school can reach this person, so a new one is held to exactly the same
+    // checks a brand-new account's address is, and nothing is written until it
+    // has passed all of them.
+    const account = await findUserById(req.user.id);
+    if (!account) return res.status(404).json({ message: 'Account not found.' });
+    let newEmail = null;
+    if (email !== undefined) {
+      if (!isText(email) || !email.trim() || email.length > 254) {
+        return res.status(400).json({ message: 'Enter a valid email address.' });
+      }
+      const wanted = normalizeGmail(email);
+      // Changing nothing is not a change: the box arrives filled in with the
+      // current address every time the page is saved.
+      if (wanted !== normalizeGmail(account.email || '')) {
+        // The one gate every email in this system passes (lib/emailGate.js).
+        // A parent signs in with a Gmail; staff addresses sit on whatever
+        // domain the school uses, so only a parent's is held to Gmail.
+        const gate = await checkEmailAcceptable(wanted, { requireGmail: account.role_name === 'parent' });
+        if (!gate.ok) return res.status(400).json({ message: gate.reason });
+        newEmail = gate.email || wanted;
+        const owner = await findUserIdByEmailInsensitive(newEmail);
+        if (owner && String(owner) !== String(req.user.id)) {
+          return res.status(409).json({ message: 'An account with that email address already exists.' });
+        }
+      }
+    }
 
     const names = {
       firstName: firstName.trim(),
@@ -425,10 +464,36 @@ async function updateProfile(req, res) {
     if (!updated) return res.status(404).json({ message: 'Profile not found.' });
 
     await logAudit(req.user.id, 'PROFILE_UPDATED', req);
+
+    // The address goes last, once the names are safely saved. Nobody has
+    // proved yet that the new mailbox belongs to this person, so the account
+    // goes back to unverified and the link that proves it is sent to the NEW
+    // address -- sending it to the old one would prove nothing.
+    let saved = account.email;
+    let emailChanged = false;
+    let verificationSent = false;
+    if (newEmail) {
+      const row = await updateUserEmail(req.user.id, newEmail);
+      saved = row ? row.email : newEmail;
+      emailChanged = true;
+      await logAudit(req.user.id, 'EMAIL_CHANGED', req, { from: account.email, to: saved });
+      const mail = await sendVerificationEmail(req.user.id, saved);
+      verificationSent = mail.ok;
+    }
+
     res.json({
       firstName: updated.first_name, middleName: updated.middle_name, lastName: updated.last_name,
+      email: saved,
+      emailVerified: emailChanged ? false : Boolean(account.email_verified_at),
+      emailChanged,
+      verificationSent,
     });
   } catch (err) {
+    // The unique index on lower(email) is the last word on collisions: two
+    // people saving the same new address at once both get past the check above.
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'An account with that email address already exists.' });
+    }
     console.error(err);
     res.status(500).json({ message: 'We could not update your profile. Please try again.' });
   }

@@ -191,7 +191,7 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
               <label className="label">Email</label>
               <input
                 className="input" type="email" value={form.email}
-                placeholder={mode === 'edit' && !teacher?.email ? 'No email address on file' : 'e.g. m.reyes@gmail.com'}
+                placeholder={mode === 'edit' && !teacher?.email ? 'No email address on file' : 'name@gmail.com'}
                 onChange={(e) => { setForm({ ...form, email: e.target.value }); setEmailCheckState('idle'); }}
                 onBlur={handleEmailBlur}
               />
@@ -204,7 +204,7 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
               )}
             </div>
             <div><label className="label">Contact number</label>
-              <input className="input" placeholder="09171234567 or +639171234567" inputMode="tel" maxLength={13} value={form.contactNumber} onChange={(e) => setForm({ ...form, contactNumber: sanitizePhone(e.target.value) })} required />
+              <input className="input" placeholder="09xxxxxxxxx or +639xxxxxxxxx" inputMode="tel" maxLength={13} value={form.contactNumber} onChange={(e) => setForm({ ...form, contactNumber: sanitizePhone(e.target.value) })} required />
               <p className="hint">09XXXXXXXXX (11 digits) or +63XXXXXXXXXX (13 characters).</p></div>
           </div>
           <p className="hint">The email is also where the master list and schedule PDFs get sent from the Teachers page.</p>
@@ -262,7 +262,7 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
             <div><label className="label">PRC license number</label>
               <input
                 className={`input${prcProblem ? ' input-error' : ''}`}
-                placeholder="7 digits, e.g. 1234567" inputMode="numeric" maxLength={7}
+                placeholder="7 digits, 1234xxx" inputMode="numeric" maxLength={7}
                 value={form.prcLicenseNumber}
                 onChange={(e) => setForm({ ...form, prcLicenseNumber: e.target.value.replace(/\D/g, '').slice(0, 7) })}
               />

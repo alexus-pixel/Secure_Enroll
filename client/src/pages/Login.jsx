@@ -22,7 +22,7 @@ export default function Login() {
   const [error, setError] = useState('');
   useScrollToError(error);
   const [submitting, setSubmitting] = useState(false);
-  const { login } = useAuth();
+  const { login, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const justRegistered = location.state?.registered;
@@ -36,6 +36,20 @@ export default function Login() {
 
   // True for the moment after a lockout runs out, so the page says so.
   const [lockUnlocked, setLockUnlocked] = useState(false);
+
+  // True when an administrator has deactivated the account: either the sign-in
+  // was refused for that reason, or api/client.js sent the browser here after
+  // a session that was already open was cut off mid-use. It is worked out from
+  // the server's answer every time, never remembered, so an account switched
+  // off, back on, and off again says exactly the same thing on every attempt.
+  const [deactivated, setDeactivated] = useState(
+    () => new URLSearchParams(location.search).get('deactivated') === '1'
+  );
+
+  // Nothing of the cut-off session should be left behind in this browser.
+  useEffect(() => {
+    if (deactivated) logout();
+  }, [deactivated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (lockLeft <= 0) return undefined;
@@ -72,7 +86,13 @@ export default function Login() {
       goHome(await login(email, password));
     } catch (err) {
       const data = err.response?.data;
-      if (err.response?.status === 403 && data?.code === 'EMAIL_NOT_VERIFIED' && data.ticket) {
+      if (data?.code === 'ACCOUNT_DEACTIVATED') {
+        // Not a wrong password: the account itself has been switched off, and
+        // saying so plainly saves the person guessing at their password.
+        setLockLeft(0);
+        setError('');
+        setDeactivated(true);
+      } else if (err.response?.status === 403 && data?.code === 'EMAIL_NOT_VERIFIED' && data.ticket) {
         setGate({ ticket: data.ticket, emailSent: data.emailSent, retryAfter: data.retryAfter });
       } else if (err.response?.status === 423 || err.response?.status === 429) {
         // Locked out. The reply carries the exact moment it lifts, which the
@@ -124,6 +144,23 @@ export default function Login() {
       </aside>
 
       <main className="auth-main">
+        {deactivated ? (
+          <div className="auth-form" role="alert">
+            <h1>Account deactivated</h1>
+            <p className="sub">Your account was deactivated by the administrator.</p>
+            <div className="alert alert-error">
+              This account can no longer be used to sign in. Nothing you typed was
+              wrong. If you think this is a mistake, please contact the registrar&rsquo;s
+              office.
+            </div>
+            <button
+              className="btn btn-primary" style={{ width: '100%' }} type="button"
+              onClick={() => navigate('/')}
+            >
+              Back to home page
+            </button>
+          </div>
+        ) : (
         <form className="auth-form" onSubmit={handleSubmit} noValidate>
           <button type="button" className="back-link" id="login-back" onClick={() => navigate('/')}>
             &larr; Back
@@ -156,7 +193,7 @@ export default function Login() {
           <div className="field">
             <label className="label" htmlFor="email">Email Address</label>
             <input id="email" className="input" type="email" value={email}
-              placeholder="e.g. juandelacruz@gmail.com"
+              placeholder="name@gmail.com"
               onChange={(e) => setEmail(e.target.value)} autoComplete="username" required />
           </div>
 
@@ -178,6 +215,7 @@ export default function Login() {
           </button>
           <p className="auth-alt">New parent or guardian? <Link to="/register">Create an account</Link></p>
         </form>
+        )}
       </main>
 
       {gate && (

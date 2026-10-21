@@ -28,8 +28,8 @@ const { checkBirthDateForGrade } = require('../lib/ageRules');
  * The files themselves arrive on the next request, so this checks the list,
  * and each file is then checked for real (type, size, signature) as it lands.
  */
-async function missingRequiredDocuments(declared) {
-  const required = await getRequiredDocumentTypes();
+async function missingRequiredDocuments(declared, kind) {
+  const required = await getRequiredDocumentTypes(undefined, kind);
   const provided = new Set(Array.isArray(declared) ? declared.map(String) : []);
   return required.filter((d) => !provided.has(d.code)).map((d) => ({ code: d.code, label: d.label }));
 }
@@ -183,7 +183,8 @@ async function submit(req, res) {
     }
 
     // Nothing is enrolled with requirements missing.
-    const missingDocs = await missingRequiredDocuments(req.body.providedDocuments);
+    // A learner being enrolled for the first time: the new-learner checklist.
+    const missingDocs = await missingRequiredDocuments(req.body.providedDocuments, 'new');
     if (missingDocs.length) {
       return res.status(400).json({
         message: `Please attach ${missingDocs.map((d) => d.label).join(', ')} before submitting. Every required document has to be in hand to enroll.`,
@@ -291,7 +292,8 @@ async function promote(req, res) {
     }
 
     // Same rule as a first-time application: no enrolling with papers missing.
-    const missingDocs = await missingRequiredDocuments(req.body && req.body.providedDocuments);
+    // A learner moving up a grade: the returning-learner checklist.
+    const missingDocs = await missingRequiredDocuments(req.body && req.body.providedDocuments, 'returning');
     if (missingDocs.length) {
       return res.status(400).json({
         message: `Please attach ${missingDocs.map((d) => d.label).join(', ')} before submitting. Every required document has to be in hand to enroll.`,

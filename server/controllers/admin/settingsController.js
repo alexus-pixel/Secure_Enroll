@@ -1,5 +1,6 @@
 const settingsDb = require('../../db/admin/settings');
 const { logAudit } = require('../../lib/audit');
+const schoolHours = require('../../lib/schoolHours');
 
 async function overview(req, res) {
   try {
@@ -10,10 +11,33 @@ async function overview(req, res) {
       settingsDb.getGradeLevelSlotSummary(activeYear.id),
       settingsDb.getRequiredDocuments(),
     ]);
-    res.json({ schoolYear: activeYear, gradeLevels, requiredDocuments });
+    res.json({
+      schoolYear: activeYear, gradeLevels, requiredDocuments, schoolHours: schoolHours.getHours(),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Could not load system settings.' });
+  }
+}
+
+/**
+ * The hours the school is open, which every class period has to fit inside.
+ * Saving them refuses hours that would strand periods already on a timetable,
+ * so the schedules cannot silently become invalid.
+ */
+async function updateSchoolHours(req, res) {
+  try {
+    const hours = await schoolHours.setHours(req.body || {});
+    await logAudit(req.user.id, 'SCHOOL_HOURS_UPDATED', 'app_settings', null, req, hours);
+    res.json(hours);
+  } catch (err) {
+    if (err.status && err.status < 500) {
+      return res.status(err.status).json({
+        message: err.message, ...(err.reason ? { reason: err.reason } : {}),
+      });
+    }
+    console.error(err);
+    res.status(500).json({ message: 'Could not save the school hours.' });
   }
 }
 
@@ -90,6 +114,6 @@ async function deleteRequiredDocument(req, res) {
 }
 
 module.exports = {
-  overview, updateEnrollmentPeriod, updateRequiredDocuments,
+  overview, updateEnrollmentPeriod, updateSchoolHours, updateRequiredDocuments,
   addRequiredDocument, updateRequiredDocument, deleteRequiredDocument,
 };

@@ -35,11 +35,14 @@ async function uploadDocument(req, res) {
       return res.status(403).json({ message: 'This application is not yours.' });
     }
 
-    // Nothing can be uploaded once the school has made its final decision.
+    // Once a learner is enrolled there is nothing left to send. A rejected
+    // application is different: rejecting it is how the school asks for the
+    // documents to be replaced, so uploading is exactly what the parent is
+    // meant to do next.
     const appRow = await pool.query('SELECT status FROM enrollment_applications WHERE id = $1', [applicationId]);
-    if (['approved', 'rejected'].includes(appRow.rows[0]?.status)) {
+    if (appRow.rows[0]?.status === 'approved') {
       fs.unlinkSync(req.file.path);
-      return res.status(409).json({ message: 'This application is already finalized.' });
+      return res.status(409).json({ message: 'This learner is already enrolled, so there is nothing more to upload.' });
     }
 
     // A document the registrar has already verified is final.
@@ -77,13 +80,16 @@ async function uploadDocument(req, res) {
       checksum: sha256(req.file.path),
     });
 
-    // A replacement for a flagged or rejected document (or an answer to a
-    // revision request) puts the application back in the registrar's queue,
-    // marked 'resubmitted' so it stands out from first-time submissions.
+    // Replacing a rejected document puts the application back in the
+    // registrar's queue, marked 'resubmitted' so it stands out from
+    // first-time submissions. A returned application leaves 'rejected' the
+    // moment the first replacement lands, which is what reopens the review.
     const replacedProblem = ['flagged', 'rejected'].includes(latest.rows[0]?.status);
     await pool.query(
       `UPDATE enrollment_applications SET status = 'resubmitted'
-       WHERE id = $1 AND (status = 'needs_revision' OR ($2::boolean AND status IN ('submitted', 'under_review')))`,
+       WHERE id = $1
+         AND (status IN ('needs_revision', 'rejected')
+              OR ($2::boolean AND status IN ('submitted', 'under_review')))`,
       [applicationId, replacedProblem]
     );
 

@@ -153,7 +153,14 @@ export default function ApplicationDetail() {
           })}
         </div>
 
-        {!app.has_lrn && (
+        {/* The LRN is the school's record to keep, not the parent's to manage:
+            it comes from DepEd, the registrar is the one who can check it
+            against the Learner Information System, and a wrong one typed in
+            good faith has to be unpicked by hand. So the parent is only ever
+            shown this box when the registrar has asked for it — the number was
+            flagged as not findable and removed. Otherwise the whole card is
+            absent, and staff fill the LRN from the registrar's own screens. */}
+        {!app.has_lrn && app.lrn?.flaggedAt && (
           <div className="card">
             <h3>Learner Reference Number (LRN)</h3>
             {app.lrn?.flaggedAt && !lrnSaved && (
@@ -186,7 +193,7 @@ export default function ApplicationDetail() {
                       setLrn(v);
                       setLrnError(v && v.length !== 12 ? 'LRN should be exactly 12 digits.' : '');
                     }}
-                    inputMode="numeric" placeholder="12-digit LRN" maxLength={12} />
+                    inputMode="numeric" placeholder="1234xxxxxxxx" maxLength={12} />
                   {lrnError && <p className="field-error">{lrnError}</p>}
                 </div>
                 <button className="btn btn-secondary" type="submit" disabled={lrnSaving}>

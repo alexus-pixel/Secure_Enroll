@@ -393,7 +393,7 @@ export default function NewApplication() {
               <label className="label" htmlFor="searchLrn">LRN</label>
               <input id="searchLrn" className="input" value={lrn} inputMode="numeric" maxLength={12}
                 onChange={(e) => setLrn(e.target.value.replace(/\D/g, '').slice(0, 12))}
-                placeholder="e.g. 136482910573" />
+                placeholder="1234xxxxxxxx" />
             </div>
             {searchError && <div className="alert alert-error">{searchError}</div>}
             <button className="btn btn-secondary" type="submit" disabled={searching}>
@@ -536,7 +536,7 @@ export default function NewApplication() {
                 Learner Reference Number (LRN){isEntryGrade ? ' \u2014 if already assigned' : ''}
               </label>
               <input {...inputProps('lrn')} onChange={updateLrn} inputMode="numeric" autoComplete="off"
-                placeholder="12-digit LRN" maxLength={12} />
+                maxLength={12} />
               {errors.lrn
                 ? <p className="field-error">{errors.lrn}</p>
                 : <p className="hint hint-spaced">
@@ -554,7 +554,7 @@ export default function NewApplication() {
                 <input {...inputProps('guardianFirstName')} maxLength={NAME_MAX} autoComplete="given-name" />
                 {fieldError('guardianFirstName')}</div>
               <MiddleNameField
-                id="guardianMiddleName" label="Your middle name"
+                id="guardianMiddleName" label="Your middle name (optional)"
                 value={form.guardianMiddleName} none={form.guardianNoMiddleName}
                 error={errors.guardianMiddleName} onChange={update('guardianMiddleName')}
                 onBlur={handleBlur('guardianMiddleName')} autoComplete="additional-name"
@@ -572,7 +572,7 @@ export default function NewApplication() {
                 </select></div>
               <div><label className="label" htmlFor="contactNumber">Contact number</label>
                 <input {...inputProps('contactNumber')} onChange={updatePhone} inputMode="tel" maxLength={13} autoComplete="tel"
-                  placeholder="09171234567" />
+                />
                 {errors.contactNumber ? fieldError('contactNumber')
                   : <p className="hint">09XXXXXXXXX, or +639XXXXXXXXX</p>}</div>
             </div>
@@ -580,14 +580,14 @@ export default function NewApplication() {
               <div className="field">
                 <label className="label" htmlFor="relationshipOther">How are you related to the student?</label>
                 <input {...inputProps('relationshipOther')} maxLength={NAME_MAX} autoComplete="off"
-                  placeholder="Neighbour, foster parent, ..." />
+                />
                 {fieldError('relationshipOther')}
               </div>
             )}
             <div className="field">
               <label className="label" htmlFor="address">Address</label>
               <input {...inputProps('address')} maxLength={ADDRESS_MAX} autoComplete="street-address"
-                placeholder="Blk 15 Lot 40, Kingstown Ph. 1, Brgy. 176" />
+              />
               {errors.address ? fieldError('address')
                 : <p className="hint">House or block, street and barangay. Letters, numbers and , . # - / only.</p>}
             </div>

@@ -71,12 +71,15 @@
 
 /* ---------------------------------------------------------------------- nav */
 .lp-nav { position: sticky; top: 0; z-index: 50; background: rgba(255, 255, 255, .96); border-bottom: 1px solid var(--lp-line); backdrop-filter: blur(8px); }
-.lp-nav-in { display: flex; align-items: center; gap: 28px; min-height: 72px; }
+.lp-nav-in { display: flex; align-items: center; gap: 18px; min-height: 72px; }
 .lp-brand { display: flex; align-items: center; gap: 12px; text-decoration: none; flex: none; }
 .lp-brand-text { display: flex; flex-direction: column; font: 700 20.5px/1.1 'Lexend', sans-serif; color: var(--lp-ink); }
 .lp-brand-text small { font: 500 13px/1.3 'Public Sans', sans-serif; color: var(--lp-muted); margin-top: 3px; letter-spacing: 0; }
-.lp-links { display: flex; gap: 6px; margin-left: auto; }
-.lp-links a { padding: 8px 12px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 17px; color: var(--lp-text); }
+/* The five section links, the brand and both buttons share one row, so the
+   links are tighter and a shade smaller than body text and never break
+   mid-label — the row has no second line to fall to. */
+.lp-links { display: flex; flex-wrap: nowrap; gap: 2px; margin-left: auto; }
+.lp-links a { padding: 7px 9px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 15px; white-space: nowrap; color: var(--lp-text); }
 .lp-links a:hover { background: var(--lp-paper); color: var(--lp-ink); }
 .lp-nav-cta { display: flex; gap: 8px; }
 .lp-nav-cta .lp-btn { min-height: 42px; padding: 0 18px; }
@@ -230,9 +233,13 @@
 .lp-foot-fine span { display: inline-flex; align-items: center; gap: 8px; }
 
 /* -------------------------------------------------------------- responsive */
-@media (max-width: 1020px) {
+/* Below this the row runs out of width before the links run out of label, so
+   they go and the page sections are reached by scrolling. */
+@media (max-width: 1100px) {
   .lp-links { display: none; }
   .lp-nav-cta { margin-left: auto; }
+}
+@media (max-width: 1020px) {
   .lp-hero-in { grid-template-columns: minmax(0, 1fr); gap: 36px; padding-top: 48px; padding-bottom: 56px; }
   .lp-hero-side { padding: 0; }
   .lp-sun { right: -120px; top: -90px; width: 320px; height: 320px; }

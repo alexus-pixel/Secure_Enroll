@@ -64,7 +64,7 @@ export default function ForgotPassword() {
               <div className="field">
                 <label className="label" htmlFor="email">Email Address</label>
                 <input id="email" className={`input${error ? ' input-error' : ''}`} type="email"
-                  placeholder="e.g. juandelacruz@gmail.com"
+                  placeholder="name@gmail.com"
                   value={email}
                   onChange={(e) => {
                     setEmail(e.target.value);

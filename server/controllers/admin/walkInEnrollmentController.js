@@ -7,7 +7,10 @@ const { sendDbError } = require('../../utils/dbErrors');
 
 async function requiredDocuments(req, res) {
   try {
-    res.json(await walkInDb.getRequiredDocumentTypes());
+    // ?kind=new or ?kind=returning narrows the list to what that kind of
+    // enrollment is actually asked for; no kind means every required type.
+    const kind = ['new', 'returning'].includes(req.query.kind) ? req.query.kind : null;
+    res.json(await walkInDb.getRequiredDocumentTypes(kind));
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Could not load required document types.' });

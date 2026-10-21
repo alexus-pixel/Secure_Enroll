@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  getSystemSettings, updateEnrollmentPeriod, updateRequiredDocuments,
+  getSystemSettings, updateEnrollmentPeriod, updateRequiredDocuments, updateSchoolHours,
   addRequiredDocument, renameRequiredDocument, removeRequiredDocument,
 } from '../../api/admin';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -23,6 +23,8 @@ export default function SystemSettingsPage() {
   const [docError, setDocError] = useState('');
   const [editing, setEditing] = useState(null);   // { id, label }
   const [removing, setRemoving] = useState(null); // the document being removed
+  // The hours the school is open, which every class period has to fit inside.
+  const [hours, setHours] = useState({ opensAt: '06:00', closesAt: '18:00' });
   const [saving, setSaving] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -36,6 +38,7 @@ export default function SystemSettingsPage() {
         closesAt: manilaDate(d.schoolYear.closes_at),
       });
       setDocs(d.requiredDocuments);
+      if (d.schoolHours) setHours({ opensAt: d.schoolHours.opensAt, closesAt: d.schoolHours.closesAt });
     }).catch((err) => setError(err.response?.data?.message || 'Could not load system settings.'));
   }
   useEffect(load, []);
@@ -56,10 +59,23 @@ export default function SystemSettingsPage() {
     }
   }
 
+  async function handleSaveHours() {
+    setSaving('hours'); setMessage(''); setError('');
+    try {
+      await updateSchoolHours(hours);
+      setMessage('School hours saved. Class periods are checked against them from now on.');
+      load();
+    } catch (err) {
+      setError(err.response?.data?.errors?.map((x) => x.message).join(' ') || err.response?.data?.message || 'Could not save the school hours.');
+    } finally {
+      setSaving('');
+    }
+  }
+
   async function handleSaveDocs() {
     setSaving('docs'); setMessage(''); setError('');
     try {
-      await updateRequiredDocuments(docs.map((d) => ({ id: d.id, isRequired: d.is_required })));
+      await updateRequiredDocuments(docs.map((d) => ({ id: d.id, isRequired: d.is_required, appliesTo: d.applies_to || 'all' })));
       setMessage('Required documents saved.');
     } catch (err) {
       setError(err.response?.data?.message || 'Could not save.');
@@ -123,6 +139,34 @@ export default function SystemSettingsPage() {
           </form>
         </div>
 
+        {/* The hours the building is open. Every class period on every
+            timetable has to fit inside them, so saving is refused when a
+            period already sits outside the new window. */}
+        <div className="card">
+          <h2>School Hours</h2>
+          <form onSubmit={(e) => { e.preventDefault(); setConfirming('hours'); }}>
+            <div className="field-grid cols-2">
+              <div>
+                <label className="label" htmlFor="hours_open">School opens</label>
+                <input id="hours_open" className="input" type="time" required value={hours.opensAt}
+                  onChange={(e) => setHours({ ...hours, opensAt: e.target.value })} />
+              </div>
+              <div>
+                <label className="label" htmlFor="hours_close">School closes</label>
+                <input id="hours_close" className="input" type="time" required value={hours.closesAt}
+                  onChange={(e) => setHours({ ...hours, closesAt: e.target.value })} />
+              </div>
+            </div>
+            <p className="hint">
+              Class periods can only be scheduled between these two times. Morning periods still
+              run before 12:00 noon and afternoon periods from 12:00 onwards.
+            </p>
+            <button className="btn btn-primary" type="submit" disabled={saving === 'hours'}>
+              {saving === 'hours' ? 'Saving...' : 'Save School Hours'}
+            </button>
+          </form>
+        </div>
+
         <div className="card">
           <h2>Grade Level Configuration</h2>
           <p className="hint" style={{ marginTop: -8 }}>Slots are based on the sections set up for each grade level (School Settings &rarr; Manage).</p>
@@ -144,8 +188,10 @@ export default function SystemSettingsPage() {
         <h2>Required Documents Configuration</h2>
         <p className="hint">
           Only the ticked documents are asked of parents and listed for walk-in enrollment.
-          Unticked ones are not offered at all. Ticking is saved with the Save button; adding,
-          renaming and removing take effect straight away.
+          Unticked ones are not offered at all. The dropdown beside each one says who is asked
+          for it — a learner enrolling for the first time, one returning or transferring in, or
+          both. Ticking and that choice are saved with the Save button; adding, renaming and
+          removing take effect straight away.
         </p>
         {docError && <div className="alert alert-error">{docError}</div>}
         <div className="doc-list">
@@ -158,6 +204,16 @@ export default function SystemSettingsPage() {
                 />
                 <span>{d.label}</span>
               </label>
+              {/* Who is asked for this document. A first-time learner has no
+                  report card to bring; a returning one has already filed a
+                  birth certificate. */}
+              <select className="input" style={{ width: 150 }} value={d.applies_to || 'all'}
+                disabled={!d.is_required} aria-label={`Who is asked for ${d.label}`}
+                onChange={(e) => setDocs(docs.map((x) => (x.id === d.id ? { ...x, applies_to: e.target.value } : x)))}>
+                <option value="all">Everyone</option>
+                <option value="new">New learners only</option>
+                <option value="returning">Returning only</option>
+              </select>
               <span className={`pill ${d.is_required ? 'pill-needs_revision' : 'pill-disabled'}`}>
                 {d.is_required ? 'Requested' : 'Not requested'}
               </span>
@@ -269,6 +325,24 @@ export default function SystemSettingsPage() {
         </ConfirmDialog>
       )}
 
+      {confirming === 'hours' && (
+        <ConfirmDialog
+          title="Save the school hours?"
+          confirmLabel="Save hours"
+          busy={saving === 'hours'}
+          onConfirm={async () => { await handleSaveHours(); setConfirming(null); }}
+          onClose={() => setConfirming(null)}
+        >
+          <p>
+            Class periods will only be allowed between <b>{hours.opensAt}</b> and <b>{hours.closesAt}</b>.
+          </p>
+          <p>
+            Periods already on a timetable outside those hours would be left stranded, so the save
+            is refused if there are any, naming how many.
+          </p>
+        </ConfirmDialog>
+      )}
+
       {confirming === 'docs' && (
         <ConfirmDialog
           title="Save the required documents?"
@@ -279,7 +353,13 @@ export default function SystemSettingsPage() {
         >
           <p>Parents and the walk-in desk will be asked for exactly these:</p>
           <ul>
-            {docs.filter((d) => d.is_required).map((d) => <li key={d.id}>{d.label}</li>)}
+            {docs.filter((d) => d.is_required).map((d) => (
+              <li key={d.id}>
+                {d.label}
+                {d.applies_to === 'new' && ' — new learners only'}
+                {d.applies_to === 'returning' && ' — returning learners only'}
+              </li>
+            ))}
           </ul>
           {docs.every((d) => !d.is_required) && <p>No document will be requested at all.</p>}
         </ConfirmDialog>

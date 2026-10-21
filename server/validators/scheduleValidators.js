@@ -16,16 +16,12 @@ const timeString = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH
 // (schedule_entries.session is a CHECK-constrained
 // 'morning' | 'afternoon', so those are the only two that exist.)
 const NOON = '12:00';
-// The school building is open 6:00 in the morning to 6:00 in the evening, so
-// every period — morning, afternoon, and a blank placeholder waiting to be
-// filled — has to sit inside that window. A 5 AM or an 8 PM period is a typo.
-const DAY_OPENS = '06:00';
-const DAY_CLOSES = '18:00';
-const clock = (hhmm) => {
-  const [h, m] = hhmm.split(':').map(Number);
-  const hour12 = ((h + 11) % 12) + 1;
-  return `${hour12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
-};
+// Every period — morning, afternoon, and a blank placeholder waiting to be
+// filled — has to sit inside the hours the school is open. Those hours are
+// the administrator's to set (System Settings), so they are read from
+// lib/schoolHours.js rather than written here; it keeps them in memory
+// because this function runs on every field of every period.
+const { getHours, clock } = require('../lib/schoolHours');
 const SESSION_LABELS = { morning: 'Morning', afternoon: 'Afternoon' };
 
 /**
@@ -42,17 +38,19 @@ function sessionTimeIssue(session, startTime, endTime) {
 
   // School hours first, because they apply whatever the session says — and
   // even before a session has been picked.
-  if (start && start < DAY_OPENS) {
-    return { field: 'startTime', message: `Classes do not start before ${clock(DAY_OPENS)}. School hours are ${clock(DAY_OPENS)} to ${clock(DAY_CLOSES)}.` };
+  const { opensAt, closesAt } = getHours();
+  const window = `School hours are ${clock(opensAt)} to ${clock(closesAt)}.`;
+  if (start && start < opensAt) {
+    return { field: 'startTime', message: `Classes do not start before ${clock(opensAt)}. ${window}` };
   }
-  if (start && start >= DAY_CLOSES) {
-    return { field: 'startTime', message: `A period cannot start at ${clock(DAY_CLOSES)} or later. School hours are ${clock(DAY_OPENS)} to ${clock(DAY_CLOSES)}.` };
+  if (start && start >= closesAt) {
+    return { field: 'startTime', message: `A period cannot start at ${clock(closesAt)} or later. ${window}` };
   }
-  if (end && end > DAY_CLOSES) {
-    return { field: 'endTime', message: `A period has to end by ${clock(DAY_CLOSES)}. School hours are ${clock(DAY_OPENS)} to ${clock(DAY_CLOSES)}.` };
+  if (end && end > closesAt) {
+    return { field: 'endTime', message: `A period has to end by ${clock(closesAt)}. ${window}` };
   }
-  if (end && end <= DAY_OPENS) {
-    return { field: 'endTime', message: `A period cannot end at or before ${clock(DAY_OPENS)}. School hours are ${clock(DAY_OPENS)} to ${clock(DAY_CLOSES)}.` };
+  if (end && end <= opensAt) {
+    return { field: 'endTime', message: `A period cannot end at or before ${clock(opensAt)}. ${window}` };
   }
 
   if (!session || !SESSION_LABELS[session]) return null;

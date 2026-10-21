@@ -135,22 +135,27 @@ async function getGradeLevelSlotSummary(schoolYearId) {
 
 async function getRequiredDocuments() {
   const result = await pool.query(
-    'SELECT id, code, label, is_required FROM required_document_types ORDER BY sort_order'
+    'SELECT id, code, label, is_required, applies_to FROM required_document_types ORDER BY sort_order'
   );
   return result.rows;
 }
 
 async function updateRequiredDocuments(documents) {
-  // documents: [{ id, isRequired }]. One statement per row inside a
+  // documents: [{ id, isRequired, appliesTo }]. One statement per row inside a
   // transaction, not a loop of independent queries, so a failure
-  // partway through never leaves the checklist half-saved.
+  // partway through never leaves the checklist half-saved. `appliesTo` says
+  // which kind of enrollment asks for the document — a new learner, a
+  // returning one, or both — and is left as it stands when it is not sent.
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     for (const doc of documents) {
       await client.query(
-        'UPDATE required_document_types SET is_required = $2 WHERE id = $1',
-        [doc.id, doc.isRequired]
+        `UPDATE required_document_types
+            SET is_required = $2,
+                applies_to = COALESCE($3, applies_to)
+          WHERE id = $1`,
+        [doc.id, doc.isRequired, ['all', 'new', 'returning'].includes(doc.appliesTo) ? doc.appliesTo : null]
       );
     }
     await client.query('COMMIT');

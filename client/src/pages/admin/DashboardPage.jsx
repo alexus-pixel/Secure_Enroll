@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { getDashboardOverview, getDashboardApplications } from '../../api/admin';
 import Pagination, { usePagination } from '../../components/Pagination';
+import useAutoRefresh, { useAlive, keepIfSame } from '../../hooks/useAutoRefresh';
 
 const STATUS_LABELS = {
   submitted: 'Submitted', under_review: 'Under Review', resubmitted: 'Resubmitted', needs_revision: 'Needs Revision',
@@ -11,20 +12,43 @@ const STATUS_LABELS = {
 export default function DashboardPage() {
   const [overview, setOverview] = useState(null);
   const [applications, setApplications] = useState({ applications: [], total: 0 });
-  const [filters, setFilters] = useState({ status: '', gradeLevelId: '', submittedDate: '' });
+  const [filters, setFilters] = useState({ gradeLevelId: '', submittedDate: '' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const alive = useAlive();
+  const loaded = useRef(false);
 
-  useEffect(() => {
+  // The status filter lives in the address bar, not in state, so the summary
+  // boxes above can be ordinary links into this same list and a narrowed view
+  // survives a bookmark, a reload or the browser Back button.
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Anything not a real status is treated as no filter, so a mistyped link
+  // shows the whole list rather than an empty table.
+  const status = STATUS_LABELS[searchParams.get('status')] ? searchParams.get('status') : '';
+  const setStatus = (value) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set('status', value); else next.delete('status');
+    setSearchParams(next, { replace: true });
+  };
+
+  // Stable so the auto-refresh interval is not torn down on every render.
+  const load = useCallback(() => {
     getDashboardOverview()
-      .then(setOverview)
-      .catch((err) => setError(err.response?.data?.message || 'Could not load the dashboard.'))
-      .finally(() => setLoading(false));
-  }, []);
+      .then((data) => { if (alive.current) { loaded.current = true; setOverview((prev) => keepIfSame(prev, data)); } })
+      // A background refresh that fails leaves the numbers already on screen
+      // alone: only the very first attempt replaces the page with an error.
+      .catch((err) => { if (alive.current && !loaded.current) setError(err.response?.data?.message || 'Could not load the dashboard.'); })
+      .finally(() => { if (alive.current) setLoading(false); });
+    getDashboardApplications({ status, ...filters })
+      .then((data) => { if (alive.current) setApplications((prev) => keepIfSame(prev, data)); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, filters.gradeLevelId, filters.submittedDate]);
 
-  useEffect(() => {
-    getDashboardApplications(filters).then(setApplications).catch(() => {});
-  }, [filters]);
+  useEffect(() => { load(); }, [load]);
+  // Counts and the enrollee list are read-only here, so re-reading them under
+  // the user never loses anything they were in the middle of.
+  useAutoRefresh(load);
 
   const applicationsPager = usePagination(applications.applications);
 
@@ -36,8 +60,21 @@ export default function DashboardPage() {
   const totalStatus = statusBreakdown.reduce((sum, s) => sum + s.count, 0) || 1;
   const gradeLevels = byGrade.map((g) => ({ id: g.id, name: g.name }));
 
+  // Each box opens the enrollee list below, already narrowed to the status it
+  // counts. "New this week" has no status of its own - a week is a date range,
+  // not a state - so it opens the newly submitted applications, which is what
+  // the box is there to chase up.
+  const statCards = [
+    { label: 'New this week', listLabel: 'newly submitted', value: summary.new_this_week, status: 'submitted' },
+    { label: 'Under review', listLabel: 'under review', value: summary.under_review, status: 'under_review' },
+    { label: 'Needs revision', listLabel: 'needs revision', value: summary.needs_revision, status: 'needs_revision' },
+    { label: `Approved (SY ${schoolYear.label})`, listLabel: 'approved', value: summary.approved, status: 'approved' },
+  ];
+
   return (
     <div>
+      {/* These rules belong in admin.css next to .admin-stat-card; they sit here
+          because that stylesheet is being edited elsewhere. */}
       <div className="page-head">
         <div>
           <h1>Dashboard</h1>
@@ -46,22 +83,17 @@ export default function DashboardPage() {
       </div>
 
       <div className="admin-stats-row">
-        <div className="admin-stat-card">
-          <div className="admin-stat-value">{summary.new_this_week}</div>
-          <div className="admin-stat-label">New this week</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-value">{summary.under_review}</div>
-          <div className="admin-stat-label">Under review</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-value">{summary.needs_revision}</div>
-          <div className="admin-stat-label">Needs revision</div>
-        </div>
-        <div className="admin-stat-card">
-          <div className="admin-stat-value">{summary.approved}</div>
-          <div className="admin-stat-label">Approved (SY {schoolYear.label})</div>
-        </div>
+        {statCards.map((c) => (
+          <Link
+            key={c.label}
+            className={`admin-stat-card admin-stat-link${status === c.status ? ' is-current' : ''}`}
+            to={{ search: `?status=${c.status}` }}
+            aria-label={`${c.label}: show the ${c.listLabel} applications below`}
+          >
+            <div className="admin-stat-value">{c.value}</div>
+            <div className="admin-stat-label">{c.label}</div>
+          </Link>
+        ))}
       </div>
 
       <div className="card card-flush">
@@ -71,8 +103,9 @@ export default function DashboardPage() {
         <div className="admin-filters-row" style={{ padding: '0 20px' }}>
           <select
             className="admin-filter-input"
-            value={filters.status}
-            onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+            aria-label="Filter by status"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
           >
             <option value="">All statuses</option>
             {Object.entries(STATUS_LABELS).filter(([value]) => value !== 'draft').map(([value, label]) => (
@@ -87,7 +120,7 @@ export default function DashboardPage() {
             <option value="">All grade levels</option>
             {gradeLevels.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
-          {filters.status === 'submitted' && (
+          {status === 'submitted' && (
             <input
               type="date"
               className="admin-filter-input"

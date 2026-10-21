@@ -6,6 +6,7 @@ import {
   setTeacherActive, getPendingTransfer, getTeacherHandover, handOverTeacher,
 } from '../../api/teachers';
 import TeacherFormModal from './TeacherFormModal';
+import useAutoRefresh, { useAlive, keepIfSame } from '../../hooks/useAutoRefresh';
 
 const NO_EMAIL = 'No email address on file';
 
@@ -260,12 +261,21 @@ export default function TeachersPage() {
   const [statusTeacher, setStatusTeacher] = useState(null); // the row whose Activate/Deactivate was clicked
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const alive = useAlive();
 
   const load = useCallback(() => {
-    getTeachers(search).then(setTeachers).catch((err) => setError(err.response?.data?.message || 'Could not load teachers.'));
+    getTeachers(search)
+      .then((rows) => { if (alive.current) setTeachers((prev) => keepIfSame(prev, rows)); })
+      .catch((err) => { if (alive.current) setError(err.response?.data?.message || 'Could not load teachers.'); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   useEffect(() => { load(); }, [load]);
+  // Weekly loads and availability change as somebody else edits schedules, so
+  // this list keeps itself current. It stops while the teacher form or the
+  // activate/deactivate dialog is open, since those carry half-made choices
+  // the user would lose.
+  useAutoRefresh(load, { paused: Boolean(editingTeacher) || Boolean(statusTeacher) });
 
   async function handleCreate(form) {
     await createTeacher({ ...form, subjectIds: form.subjectIds });

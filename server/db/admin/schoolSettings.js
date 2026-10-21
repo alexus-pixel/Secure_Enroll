@@ -241,31 +241,35 @@ async function listSectionsWithEnrollment(schoolYearId) {
 }
 
 /**
- * A section name belongs to the whole school year, not to one grade level:
- * "Sampaguita" cannot be a Kinder section and a Grade 6 section in the same
- * year, because a master list or a schedule that just says "Sampaguita"
- * would then be ambiguous. The database has a unique index for this; the
- * check here exists so the administrator gets a sentence naming the grade
- * that already uses the name instead of a constraint error.
+ * A section name belongs to its grade level, not to the whole school year.
+ *
+ * Schools here number or name their sections per grade: Kinder may have a
+ * section "1" and so may Grade 6, and both are ordinary. What is never
+ * allowed is two sections with the same name inside ONE grade level, because
+ * then "Grade 6 - 1" names two different classes and a master list cannot say
+ * which. The database has a unique index for this; the check here exists so
+ * the administrator gets a sentence rather than a constraint error.
  */
-async function findSectionNameClash(name, schoolYearId, exceptId = null) {
+async function findSectionNameClash(name, schoolYearId, gradeLevelId, exceptId = null) {
   const { rows } = await pool.query(
     `SELECT s.id, s.name, g.name AS grade_level_name
      FROM sections s JOIN grade_levels g ON g.id = s.grade_level_id
      WHERE s.school_year_id = $1
-       AND lower(btrim(s.name)) = lower(btrim($2))
-       AND ($3::int IS NULL OR s.id <> $3)
+       AND s.grade_level_id = $2
+       AND lower(btrim(s.name)) = lower(btrim($3))
+       AND ($4::int IS NULL OR s.id <> $4)
      LIMIT 1`,
-    [schoolYearId, name, exceptId]
+    [schoolYearId, gradeLevelId, name, exceptId]
   );
   return rows[0] || null;
 }
 
 async function createSection({ name, gradeLevelId, schoolYearId, capacity }) {
-  const clash = await findSectionNameClash(name, schoolYearId);
+  const clash = await findSectionNameClash(name, schoolYearId, gradeLevelId);
   if (clash) {
-    const err = new Error(`${clash.grade_level_name} already has a section called "${clash.name}". A section name has to be unique across the whole school year.`);
+    const err = new Error(`${clash.grade_level_name} already has a section called "${clash.name}". Two sections of the same grade level cannot share a name.`);
     err.status = 409;
+    err.reason = 'duplicate_section_name';
     throw err;
   }
   const result = await pool.query(
@@ -298,21 +302,20 @@ async function updateSectionCapacity(id, capacity) {
 }
 
 /**
- * Renames one section. The name rule is the same one adding a section
- * already obeys: it belongs to the whole school year, so a name another
- * grade level is already using is refused with a sentence naming that
- * grade level rather than a constraint error. The section's own id is
- * excluded, so saving a section under its current name (or only a change
- * of letter case) is not a clash with itself.
+ * Renames one section. The name rule is the one adding a section obeys: it
+ * belongs to the grade level, so another grade may hold the same name, but
+ * this grade may not hold it twice. The section's own id is excluded, so
+ * saving a section under its current name (or only a change of letter case)
+ * is not a clash with itself.
  */
 async function updateSectionName(id, name) {
   const { rows: [section] } = await pool.query(
-    'SELECT id, school_year_id FROM sections WHERE id = $1', [id]
+    'SELECT id, school_year_id, grade_level_id FROM sections WHERE id = $1', [id]
   );
   if (!section) return null;
-  const clash = await findSectionNameClash(name, section.school_year_id, id);
+  const clash = await findSectionNameClash(name, section.school_year_id, section.grade_level_id, id);
   if (clash) {
-    const err = new Error(`${clash.grade_level_name} already has a section called "${clash.name}". A section name has to be unique across the whole school year.`);
+    const err = new Error(`${clash.grade_level_name} already has a section called "${clash.name}". Two sections of the same grade level cannot share a name.`);
     err.status = 409;
     err.reason = 'duplicate_section_name';
     throw err;

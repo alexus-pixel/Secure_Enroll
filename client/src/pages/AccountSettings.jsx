@@ -7,6 +7,7 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import {
   validateName, validateInitial, validatePassword, validateConfirmPassword, INITIAL_MAX, NAME_MAX,
+  validateGmail, validateEmail,
 } from '../utils/validators';
 import { useScrollToError } from '../hooks/useScrollToError';
 
@@ -14,7 +15,10 @@ export default function AccountSettings() {
   const { user, updateUser } = useAuth();
 
   // ---- Profile card ----
-  const [profile, setProfile] = useState({ firstName: '', middleName: '', lastName: '' });
+  const [profile, setProfile] = useState({ firstName: '', middleName: '', lastName: '', email: '' });
+  // The address as it stands on the account, kept apart from the box so the
+  // page can tell whether it is actually being changed.
+  const [emailOnFile, setEmailOnFile] = useState('');
   const [profileErrors, setProfileErrors] = useState({});
   const [profileMessage, setProfileMessage] = useState('');
   const [profileError, setProfileError] = useState('');
@@ -26,8 +30,12 @@ export default function AccountSettings() {
 
   useEffect(() => {
     api.get('/auth/me')
-      .then(({ data }) => setProfile({
+      .then(({ data }) => { setEmailOnFile(data.email || ''); return data; })
+      .then((data) => setProfile({
         firstName: data.firstName || '', middleName: data.middleName || '', lastName: data.lastName || '',
+        // The address on file, not the one saved in this browser, which can be
+        // older than the account.
+        email: data.email || '',
       }))
       .finally(() => setLoading(false));
   }, []);
@@ -56,6 +64,11 @@ export default function AccountSettings() {
       firstName: validateName(profile.firstName, { label: 'First name' }),
       lastName: validateName(profile.lastName, { label: 'Last name' }),
       middleName: validateInitial(profile.middleName),
+      // A parent signs in with a Gmail, which is what the server asks of them
+      // too; any other role's address may sit on the school's own domain.
+      email: user?.role === 'parent'
+        ? validateGmail(profile.email, { label: 'Email address' })
+        : validateEmail(profile.email),
     };
     setProfileErrors(nextErrors);
 
@@ -71,7 +84,8 @@ export default function AccountSettings() {
       setProfileError('Please correct the highlighted fields.');
       return;
     }
-    setConfirming({ changingPassword });
+    const changingEmail = profile.email.trim().toLowerCase() !== emailOnFile.trim().toLowerCase();
+    setConfirming({ changingPassword, changingEmail });
   }
 
   async function saveAll() {
@@ -79,10 +93,21 @@ export default function AccountSettings() {
     setSavingProfile(true);
     if (changingPassword) setSavingPassword(true);
     const done = [];
+    let emailNote = '';
     try {
       const { data } = await api.patch('/auth/me', profile);
       updateUser(data);
       done.push('Profile');
+      if (data.emailChanged) {
+        setEmailOnFile(data.email || '');
+        // Saying this on the page matters: the account is unverified again
+        // until the link in that email is opened, and the parent needs to know
+        // the email went to the new address, not the one they had before.
+        emailNote = data.verificationSent
+          ? ` We have emailed a verification link to ${data.email}. Please open it to confirm your new email address.`
+          : ` Your email address is now ${data.email}, but we could not send the verification link just now.`
+            + ' The banner on your dashboard can send it again in a few minutes.';
+      }
     } catch (err) {
       setProfileError(err.response?.data?.message || 'Could not save your profile.');
     } finally {
@@ -108,7 +133,7 @@ export default function AccountSettings() {
       const what = done.join(' and ');
       // Said twice on purpose: once where the eye is, and once on the page
       // itself for anyone who looks back after the toast has gone.
-      setProfileMessage(`${what} updated. Your changes are saved.`);
+      setProfileMessage(`${what} updated. Your changes are saved.${emailNote}`);
       setToast(`${what} updated.`);
     }
   }
@@ -132,7 +157,7 @@ export default function AccountSettings() {
         <div className="page-head">
           <div>
             <h1>Edit Profile</h1>
-            <p>Update your name and password</p>
+            <p>Update your name, email address and password</p>
           </div>
         </div>
 
@@ -166,7 +191,15 @@ export default function AccountSettings() {
 
               <div className="field">
                 <label className="label" htmlFor="email">Email Address</label>
-                <input id="email" className="input" value={user?.email || ''} disabled />
+                <input id="email" className={`input${profileErrors.email ? ' input-error' : ''}`}
+                  type="email" value={profile.email} onChange={updateProfileField('email')}
+                  autoComplete="email" required />
+                {profileErrors.email && <p className="field-error">{profileErrors.email}</p>}
+                <p className="hint">
+                  This is the address you sign in with. If you change it, we email a
+                  verification link to the new address and your account counts as
+                  unverified until you open it.
+                </p>
               </div>
 
             </>
@@ -217,6 +250,13 @@ export default function AccountSettings() {
             <p>
               Your name will be saved as <b>{[profile.firstName, profile.middleName, profile.lastName].filter(Boolean).join(' ')}</b>.
             </p>
+            {confirming.changingEmail && (
+              <p>
+                You are changing the address you sign in with to <b>{profile.email.trim()}</b>.
+                We will email a verification link there, and your account stays unverified
+                until you open it.
+              </p>
+            )}
             <p>
               {confirming.changingPassword
                 ? 'Your password will be changed as well. You will keep using this session, but you will need the new password the next time you sign in.'

@@ -471,7 +471,8 @@ table.data td {
 }
 table.data tr:last-child td { border-bottom: none; }
 table.data tr.is-selected { background: var(--accent-soft); }
-.cell-sub { font-size: 13px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+/* Subtext sits under the value it qualifies, not against it. */
+.cell-sub { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
 .cell-warn { font-size: 13px; color: var(--danger); margin-top: 2px; }
 
 /* ---------- status pills ---------- */

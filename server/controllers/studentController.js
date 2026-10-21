@@ -41,7 +41,8 @@ async function lookup(req, res) {
     }
 
     const onFile = await getDocumentsOnFileForStudent(student.id);
-    const types = await getRequiredDocumentTypes();   // only what the administrator checked
+    // A returning learner, so the returning-learner checklist.
+    const types = await getRequiredDocumentTypes(undefined, 'returning');
     res.json({
       found: true,
       promotable: true,

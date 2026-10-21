@@ -6,6 +6,10 @@ import {
 import ConfirmDialog from '../../components/ConfirmDialog';
 import SectionStudentsModal from './SectionStudentsModal';
 
+// A class bigger than this is not one a teacher can hold, and the server
+// refuses it too (validators/settingsValidators.js).
+const SECTION_MAX = 60;
+
 export default function ManageSectionsModal({ gradeLevel, sections, allSections = [], onClose, onChanged }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState({ name: '', capacity: '', adviserId: '' });
@@ -20,17 +24,18 @@ export default function ManageSectionsModal({ gradeLevel, sections, allSections 
 
   useEffect(() => { getAdviserOptions().then(setTeachers).catch(() => setTeachers([])); }, []);
 
-  // A section name belongs to the whole school year, so a name already used by
-  // another grade level is caught here before it is even sent. A section being
-  // renamed is not a clash with itself.
-  const nameTaken = (name, exceptId = null) => allSections.find(
+  // A section name belongs to its grade level: Kinder and Grade 6 may both
+  // have a section "1", but one grade level cannot hold the name twice, or
+  // "Grade 6 - 1" names two classes. Only this grade's sections are compared.
+  // A section being renamed is not a clash with itself.
+  const nameTaken = (name, exceptId = null) => sections.find(
     (s) => s.id !== exceptId && s.name.trim().toLowerCase() === name.trim().toLowerCase()
   );
   const clash = newSection.name.trim() ? nameTaken(newSection.name) : null;
   const editClash = editingId && draft.name.trim() ? nameTaken(draft.name, editingId) : null;
 
-  const clashSentence = (hit) => `${hit.grade_level_name} already has a section called “${hit.name}”. `
-    + 'Section names have to be unique across the whole school year.';
+  const clashSentence = (hit) => `${gradeLevel.name} already has a section called “${hit.name}”. `
+    + 'Two sections of the same grade level cannot share a name.';
 
   // A teacher advises at most one section in the school year, so every teacher
   // who already advises one is looked up here by id. The server enforces the
@@ -96,6 +101,10 @@ export default function ManageSectionsModal({ gradeLevel, sections, allSections 
     const capacity = Number(draft.capacity);
     if (!draft.capacity || !Number.isInteger(capacity) || capacity < 1) {
       return setError('Enter a valid number of slots (1 or more).');
+    }
+    // The server holds the same ceiling; this is so the form says it first.
+    if (capacity > SECTION_MAX) {
+      return setError(`A section can hold at most ${SECTION_MAX} learners.`);
     }
     if (capacity < section.enrolled_count) {
       return setError(`${section.name} already has ${section.enrolled_count} enrolled. Capacity can’t go below that.`);
@@ -225,7 +234,7 @@ export default function ManageSectionsModal({ gradeLevel, sections, allSections 
                   <td>
                     {editingId === s.id ? (
                       <input
-                        className="input" style={{ width: 80 }} type="number" min="1"
+                        className="input" style={{ width: 80 }} type="number" min="1" max={SECTION_MAX}
                         aria-label={`Slots for ${s.name}`}
                         value={draft.capacity} onChange={(e) => setDraft({ ...draft, capacity: e.target.value })}
                       />
@@ -287,7 +296,7 @@ export default function ManageSectionsModal({ gradeLevel, sections, allSections 
             aria-label="Section name" maxLength={40}
             onChange={(e) => setNewSection({ ...newSection, name: e.target.value })} required
           />
-          <input className="input" placeholder="Slots" type="number" min="1" style={{ maxWidth: 100 }} aria-label="Slots"
+          <input className="input" placeholder="Slots" type="number" min="1" max={SECTION_MAX} style={{ maxWidth: 100 }} aria-label="Slots"
             value={newSection.capacity} onChange={(e) => setNewSection({ ...newSection, capacity: e.target.value })} required />
           <button className="btn btn-primary" type="submit" disabled={Boolean(clash)}>Save</button>
           {clash ? (

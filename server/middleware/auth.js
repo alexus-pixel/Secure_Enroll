@@ -36,8 +36,21 @@ async function authenticate(req, res, next) {
       [payload.sub]
     );
     const row = result.rows[0];
-    if (!row || !row.is_active) {
+    if (!row) {
       return res.status(401).json({ message: 'Your session is no longer valid. Please sign in again.' });
+    }
+    // An administrator switched the account off while its owner was still
+    // signed in. The token is valid for another few hours, so without this the
+    // session would quietly keep working; the same marker the sign-in page
+    // uses goes out here too, so the browser can say what happened instead of
+    // showing a bare 401. Read from is_active each time, never from a flag, so
+    // it behaves identically however often the account is switched off.
+    if (!row.is_active) {
+      return res.status(401).json({
+        code: 'ACCOUNT_DEACTIVATED',
+        reason: 'account_deactivated',
+        message: 'Your account was deactivated by the administrator.',
+      });
     }
     // An account an administrator created still has its temporary password.
     // Until it has been replaced, the only things it can do are read its own

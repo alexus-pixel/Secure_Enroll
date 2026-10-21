@@ -72,7 +72,10 @@ export function ViewerActions({ doc, lockedMessage, onAction }) {
   const [error, setError] = useState('');
   const [reasonInvalid, setReasonInvalid] = useState(false);
   const locked = Boolean(lockedMessage);
-  const needsReason = (status) => status === 'flagged' || status === 'rejected';
+  // Only a rejection needs words: the parent is being asked to send another
+  // copy and has to be told what was wrong with this one. That sentence is
+  // also what the application's remarks are written from when it is returned.
+  const needsReason = (status) => status === 'rejected';
   const reasonText = `Write a reason of at least ${MIN_REASON_WORDS} words. The parent sees it so they know what to fix.`;
 
   async function run(status) {
@@ -100,10 +103,10 @@ export function ViewerActions({ doc, lockedMessage, onAction }) {
           if (reasonInvalid && wordCount(e.target.value) >= MIN_REASON_WORDS) setReasonInvalid(false);
           setError('');
         }}
-        aria-label="Reason for flagging or rejecting"
+        aria-label="Reason for rejecting"
         aria-invalid={reasonInvalid}
         aria-describedby={reasonInvalid ? 'dv-reason-warning' : undefined}
-        placeholder="Reason for flagging or rejecting (at least 3 words, shown to the parent)" />
+        placeholder="Reason for rejecting (at least 3 words, shown to the parent)" />
       {reasonInvalid && <div id="dv-reason-warning" className="dv-warning" role="alert">{reasonText}</div>}
       {error && <div className="dv-error" role="alert">{error}</div>}
       <div className="dv-foot-row">
