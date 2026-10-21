@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import MasterListEmailsPanel from './MasterListEmailsPanel';
 import {
   downloadMasterEnrollmentList, downloadApplicationStatusReport, downloadPendingApplications,
   downloadRegistrarActivityReport, downloadDuplicateFlagsReport, downloadGradeLevelCapacityReport,
@@ -45,12 +46,12 @@ function ReportCard({ title, description, formats, onExport }) {
       <strong>{title}</strong>
       <p className="cell-sub" style={{ marginTop: 4, marginBottom: 12 }}>{description}</p>
 
-      <label className="label" style={{ fontSize: 11 }}>Date range</label>
+      <label className="label" style={{ fontSize: 12.5 }}>Date range</label>
       <select className="input" value={range} onChange={(e) => setRange(e.target.value)} style={{ marginBottom: 12 }}>
         {RANGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
 
-      {error && <p style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{error}</p>}
+      {error && <p style={{ color: 'var(--danger)', fontSize: 13.5, marginBottom: 8 }}>{error}</p>}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {formats.map((f) => (
@@ -114,6 +115,8 @@ export default function ReportsPage() {
           onExport={(dates) => downloadGradeLevelCapacityReport(dates)}
         />
       </div>
+
+      <MasterListEmailsPanel />
     </div>
   );
 }

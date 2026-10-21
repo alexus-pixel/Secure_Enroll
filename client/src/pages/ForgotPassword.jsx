@@ -36,7 +36,7 @@ export default function ForgotPassword() {
     <div className="auth-wrap">
       <aside className="auth-panel">
         <div>
-          <Brand />
+          <Brand to="/" />
           <h2>Reset your password</h2>
           <p>We will email you a link to choose a new password.</p>
         </div>
@@ -54,7 +54,7 @@ export default function ForgotPassword() {
               <div className="alert alert-note">
                 If an account exists for that email address, we have sent a reset link. The link expires in 1 hour.
               </div>
-              <p className="auth-alt"><Link to="/">Back to sign in</Link></p>
+              <p className="auth-alt"><Link to="/login">Back to sign in</Link></p>
             </>
           ) : (
             <form onSubmit={handleSubmit} noValidate>
@@ -64,14 +64,22 @@ export default function ForgotPassword() {
               <div className="field">
                 <label className="label" htmlFor="email">Email Address</label>
                 <input id="email" className={`input${error ? ' input-error' : ''}`} type="email"
-                  value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
+                  placeholder="e.g. juandelacruz@gmail.com"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    // Only once something is typed, so the box does not turn
+                    // red the moment it is cleared.
+                    setError(e.target.value.trim() ? validateEmail(e.target.value) : '');
+                  }}
+                  autoComplete="email" required />
                 {error && <p className="field-error">{error}</p>}
               </div>
 
               <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>
                 {submitting ? 'Sending\u2026' : 'Send reset link'}
               </button>
-              <p className="auth-alt"><Link to="/">Back to sign in</Link></p>
+              <p className="auth-alt"><Link to="/login">Back to sign in</Link></p>
             </form>
           )}
         </div>

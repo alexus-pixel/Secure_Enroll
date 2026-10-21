@@ -3,10 +3,102 @@ const c = require('./common');
 
 const timeString = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM.');
 
+// A period has to sit inside the half of the day its session names:
+// a "morning" period that runs 21:00-22:00 is a typo, not a late
+// morning. Times are 24-hour HH:MM strings, so a plain string
+// compare against noon is the whole rule.
+//
+//   morning   - starts AND ends before 12:00 noon
+//   afternoon - starts at 12:00 noon or later
+//
+// In both cases the end still has to come after the start.
+//
+// (schedule_entries.session is a CHECK-constrained
+// 'morning' | 'afternoon', so those are the only two that exist.)
+const NOON = '12:00';
+// The school building is open 6:00 in the morning to 6:00 in the evening, so
+// every period — morning, afternoon, and a blank placeholder waiting to be
+// filled — has to sit inside that window. A 5 AM or an 8 PM period is a typo.
+const DAY_OPENS = '06:00';
+const DAY_CLOSES = '18:00';
+const clock = (hhmm) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  const hour12 = ((h + 11) % 12) + 1;
+  return `${hour12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+};
+const SESSION_LABELS = { morning: 'Morning', afternoon: 'Afternoon' };
+
+/**
+ * The one place the session/time rule lives. Returns null when the
+ * times fit the session, or { field, message } naming the first
+ * field that breaks it — used by the zod schemas below AND by the
+ * database layer on the way to the insert, so the rule cannot be
+ * slipped past by a request that omits a field the schema only
+ * checks when it is present.
+ */
+function sessionTimeIssue(session, startTime, endTime) {
+  const start = startTime ? String(startTime).slice(0, 5) : null;
+  const end = endTime ? String(endTime).slice(0, 5) : null;
+
+  // School hours first, because they apply whatever the session says — and
+  // even before a session has been picked.
+  if (start && start < DAY_OPENS) {
+    return { field: 'startTime', message: `Classes do not start before ${clock(DAY_OPENS)}. School hours are ${clock(DAY_OPENS)} to ${clock(DAY_CLOSES)}.` };
+  }
+  if (start && start >= DAY_CLOSES) {
+    return { field: 'startTime', message: `A period cannot start at ${clock(DAY_CLOSES)} or later. School hours are ${clock(DAY_OPENS)} to ${clock(DAY_CLOSES)}.` };
+  }
+  if (end && end > DAY_CLOSES) {
+    return { field: 'endTime', message: `A period has to end by ${clock(DAY_CLOSES)}. School hours are ${clock(DAY_OPENS)} to ${clock(DAY_CLOSES)}.` };
+  }
+  if (end && end <= DAY_OPENS) {
+    return { field: 'endTime', message: `A period cannot end at or before ${clock(DAY_OPENS)}. School hours are ${clock(DAY_OPENS)} to ${clock(DAY_CLOSES)}.` };
+  }
+
+  if (!session || !SESSION_LABELS[session]) return null;
+  if (session === 'morning') {
+    if (start && start >= NOON) {
+      return { field: 'startTime', message: 'A Morning session period must start before 12:00 noon.' };
+    }
+    if (end && end >= NOON) {
+      return { field: 'endTime', message: 'A Morning session period must end before 12:00 noon.' };
+    }
+    return null;
+  }
+  if (start && start < NOON) {
+    return { field: 'startTime', message: 'An Afternoon session period must start at 12:00 noon or later.' };
+  }
+  return null;
+}
+
 const createSubject = z.object({
   name: c.safeText('Subject name', 80),
   gradeLevelId: c.id('Grade level'),
   isDomain: z.boolean().default(false),
+});
+
+// Renaming one subject. Both fields are optional so the panel can
+// send just the new name, or just flip the learning-domain tick,
+// but sending neither is a no-op and almost certainly a bug.
+const updateSubject = z.object({
+  name: c.safeText('Subject name', 80).optional(),
+  isDomain: z.boolean().optional(),
+}).refine((v) => v.name !== undefined || v.isDomain !== undefined, {
+  message: 'Nothing to change.', path: ['name'],
+});
+
+// The per-grade subject ceiling. The same 1-20 range the
+// grade_levels.max_subjects CHECK enforces, so a number outside it
+// comes back as a field error on the form instead of a database
+// error.
+const setMaxSubjects = z.object({
+  maxSubjects: z.preprocess(
+    (v) => (typeof v === 'string' && /^\d{1,3}$/.test(v.trim()) ? Number(v.trim()) : v),
+    z.number({ required_error: 'Subject limit is required.', invalid_type_error: 'Subject limit must be a whole number.' })
+      .int('Subject limit must be a whole number.')
+      .min(1, 'A grade level must allow at least 1 subject.')
+      .max(20, 'A grade level can allow at most 20 subjects.')
+  ),
 });
 
 // One weekly recurring block. days: 1=Mon .. 5=Fri. An "adviser"
@@ -45,18 +137,38 @@ const createScheduleEntry = scheduleEntryBase.superRefine((val, ctx) => {
     if (!val.session) ctx.addIssue({ code: 'custom', path: ['session'], message: 'Session is required.' });
     if (!val.startTime) ctx.addIssue({ code: 'custom', path: ['startTime'], message: 'Start time is required.' });
     if (!val.endTime) ctx.addIssue({ code: 'custom', path: ['endTime'], message: 'End time is required.' });
-    if (val.startTime && val.endTime && val.startTime >= val.endTime) {
-      ctx.addIssue({ code: 'custom', path: ['endTime'], message: 'End time must be after start time.' });
-    }
+  }
+  // Both of these apply to a blank "+ Add Period" placeholder too,
+  // which carries a session and a time but no subject or teacher
+  // yet: 9 PM is just as wrong on an empty morning period as on a
+  // filled one, and the database CHECK would reject end <= start
+  // with a 500 rather than a field error.
+  if (val.roleType === 'subject' && val.startTime && val.endTime && val.startTime >= val.endTime) {
+    ctx.addIssue({ code: 'custom', path: ['endTime'], message: 'End time must be after start time.' });
+  }
+  if (val.roleType === 'subject') {
+    const issue = sessionTimeIssue(val.session, val.startTime, val.endTime);
+    if (issue) ctx.addIssue({ code: 'custom', path: [issue.field], message: issue.message });
   }
 });
 
 // On an update only the fields that are sent are checked, but the two times
 // must still make sense together when both are present.
-const updateScheduleEntry = scheduleEntryBase.partial().refine(
-  (v) => !(v.startTime && v.endTime) || v.startTime < v.endTime,
-  { message: 'End time must be after start time.', path: ['endTime'] },
-);
+// An update may send only some of the fields, so the session/time
+// rule can only be fully judged against the row as it will stand
+// after the change — that merge happens in the database layer,
+// which calls sessionTimeIssue() again with the merged values. What
+// IS visible here (both times, or a session together with a time)
+// is still refused up front so the drawer gets a field error.
+const updateScheduleEntry = scheduleEntryBase.partial().superRefine((v, ctx) => {
+  if (v.startTime && v.endTime && v.startTime >= v.endTime) {
+    ctx.addIssue({ code: 'custom', path: ['endTime'], message: 'End time must be after start time.' });
+  }
+  if (v.roleType !== 'adviser') {
+    const issue = sessionTimeIssue(v.session, v.startTime, v.endTime);
+    if (issue) ctx.addIssue({ code: 'custom', path: [issue.field], message: issue.message });
+  }
+});
 
 const conflictCheckQuery = z.object({
   teacherId: c.id('Teacher'),
@@ -68,4 +180,10 @@ const conflictCheckQuery = z.object({
   message: 'End time must be after start time.', path: ['endTime'],
 });
 
-module.exports = { createSubject, createScheduleEntry, updateScheduleEntry, conflictCheckQuery };
+module.exports = {
+  createSubject, updateSubject, setMaxSubjects,
+  createScheduleEntry, updateScheduleEntry, conflictCheckQuery,
+  // Shared with db/admin/schedules.js, which re-checks the merged
+  // row on the way to the insert/update.
+  sessionTimeIssue, SESSION_LABELS,
+};

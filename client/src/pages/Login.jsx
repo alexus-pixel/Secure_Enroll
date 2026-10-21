@@ -1,10 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Brand } from '../components/AppNav';
 import PasswordInput from '../components/PasswordInput';
 import VerifyEmailOverlay from '../components/VerifyEmailOverlay';
 import { useScrollToError } from '../hooks/useScrollToError';
+
+// "4:05" or "45 seconds" — what is left on a lockout, read aloud correctly.
+function countdownText(seconds) {
+  if (seconds >= 60) {
+    const m = Math.floor(seconds / 60);
+    const s = String(seconds % 60).padStart(2, '0');
+    return `${m}:${s}`;
+  }
+  return `${seconds} ${seconds === 1 ? 'second' : 'seconds'}`;
+}
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -20,8 +30,33 @@ export default function Login() {
   const justVerified = location.state?.verified;
   // Set when the server refuses a sign-in because the email is not verified yet.
   const [gate, setGate] = useState(null);
+  // Seconds left on a lockout, counted down here so the page says exactly when
+  // it lifts and lets the person back in by itself, with nothing to refresh.
+  const [lockLeft, setLockLeft] = useState(0);
+
+  // True for the moment after a lockout runs out, so the page says so.
+  const [lockUnlocked, setLockUnlocked] = useState(false);
+
+  useEffect(() => {
+    if (lockLeft <= 0) return undefined;
+    setLockUnlocked(false);
+    const timer = setInterval(() => {
+      setLockLeft((left) => {
+        if (left <= 1) {
+          setError('');
+          setLockUnlocked(true);
+          return 0;
+        }
+        return left - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lockLeft]);
 
   function goHome(user) {
+    // An account created by an administrator still has a temporary password
+    // and has to replace it before anything else.
+    if (user.mustChangePassword) return navigate('/change-password', { replace: true });
     // Send each role to its own home screen.
     const home = { admin: '/admin/dashboard', registrar: '/registrar' };
     navigate(home[user.role] || '/dashboard');
@@ -29,6 +64,8 @@ export default function Login() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (lockLeft > 0) return;
+    setLockUnlocked(false);
     setError('');
     setSubmitting(true);
     try {
@@ -37,8 +74,22 @@ export default function Login() {
       const data = err.response?.data;
       if (err.response?.status === 403 && data?.code === 'EMAIL_NOT_VERIFIED' && data.ticket) {
         setGate({ ticket: data.ticket, emailSent: data.emailSent, retryAfter: data.retryAfter });
+      } else if (err.response?.status === 423 || err.response?.status === 429) {
+        // Locked out. The reply carries the exact moment it lifts, which the
+        // countdown above runs to.
+        const seconds = Number(data?.retryAfter) || 60;
+        setLockLeft(seconds);
+        setError(data?.message || 'Too many failed sign-in attempts. This account is locked.');
       } else {
-        setError(data?.message || 'We could not sign you in. Please try again.');
+        // The server says how many tries are left before the account locks.
+        const left = data?.attemptsLeft;
+        setLockLeft(0);
+        setError(
+          (data?.message || 'We could not sign you in. Please try again.')
+          + (typeof left === 'number' && left > 0
+            ? ` ${left} ${left === 1 ? 'attempt' : 'attempts'} left before this account is locked.`
+            : '')
+        );
       }
     } finally {
       setSubmitting(false);
@@ -59,7 +110,7 @@ export default function Login() {
     <div className="auth-wrap">
       <aside className="auth-panel">
         <div>
-          <Brand />
+          <Brand to="/" />
           <h2>Enrollment for Caloocan City Elementary School</h2>
           <p>
             Welcome to the online enrollment system of Caloocan City Elementary School,
@@ -74,6 +125,9 @@ export default function Login() {
 
       <main className="auth-main">
         <form className="auth-form" onSubmit={handleSubmit} noValidate>
+          <button type="button" className="back-link" id="login-back" onClick={() => navigate('/')}>
+            &larr; Back
+          </button>
           <h1>Sign in</h1>
           <p className="sub">Sign in with the email address and password for your account.</p>
           {justVerified && !error && (
@@ -85,11 +139,24 @@ export default function Login() {
           {justReset && !error && (
             <div className="alert alert-note">Password updated. Please sign in.</div>
           )}
-          {error && <div className="alert alert-error">{error}</div>}
+          {error && (
+            <div className="alert alert-error" role="alert">
+              {error}
+              {lockLeft > 0 && (
+                <div className="lock-countdown" aria-live="polite">
+                  You can try again in <b>{countdownText(lockLeft)}</b>.
+                </div>
+              )}
+            </div>
+          )}
+          {!error && lockUnlocked && (
+            <div className="alert alert-note" role="status">You can try signing in again now.</div>
+          )}
 
           <div className="field">
             <label className="label" htmlFor="email">Email Address</label>
             <input id="email" className="input" type="email" value={email}
+              placeholder="e.g. juandelacruz@gmail.com"
               onChange={(e) => setEmail(e.target.value)} autoComplete="username" required />
           </div>
 
@@ -102,8 +169,12 @@ export default function Login() {
           />
           <p className="forgot-link"><Link to="/forgot-password">Forgot password?</Link></p>
 
-          <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>
-            {submitting ? 'Signing in\u2026' : 'Sign in'}
+          <button
+            className="btn btn-primary" style={{ width: '100%' }} type="submit"
+            disabled={submitting || lockLeft > 0}
+            title={lockLeft > 0 ? `Locked for another ${countdownText(lockLeft)}` : undefined}
+          >
+            {submitting ? 'Signing in\u2026' : lockLeft > 0 ? `Locked \u2014 ${countdownText(lockLeft)}` : 'Sign in'}
           </button>
           <p className="auth-alt">New parent or guardian? <Link to="/register">Create an account</Link></p>
         </form>

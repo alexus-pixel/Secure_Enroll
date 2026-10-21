@@ -4,19 +4,21 @@ import api from '../api/client';
 import { Brand } from '../components/AppNav';
 import PasswordInput from '../components/PasswordInput';
 import {
-  validateName, validateEmail, validateContactNumber, validatePassword, validateConfirmPassword,
+  validateName, validateInitial, validateGmail, validateConfirmGmail, validateContactNumber,
+  validatePassword, validateConfirmPassword, sanitizePhone, normalizeGmail, INITIAL_MAX, NAME_MAX,
 } from '../utils/validators';
 import VerifyEmailOverlay from '../components/VerifyEmailOverlay';
 import { useScrollToError } from '../hooks/useScrollToError';
 
-const FIELDS = ['lastName', 'firstName', 'middleName', 'email', 'contactNumber', 'password', 'confirmPassword'];
+const FIELDS = ['lastName', 'firstName', 'middleName', 'email', 'confirmEmail', 'contactNumber', 'password', 'confirmPassword'];
 
 function validateField(name, form) {
   switch (name) {
     case 'lastName': return validateName(form.lastName, { label: 'Last name' });
     case 'firstName': return validateName(form.firstName, { label: 'First name' });
-    case 'middleName': return validateName(form.middleName, { required: false, label: 'M.I.' });
-    case 'email': return validateEmail(form.email);
+    case 'middleName': return validateInitial(form.middleName);
+    case 'email': return validateGmail(form.email);
+    case 'confirmEmail': return validateConfirmGmail(form.email, form.confirmEmail);
     case 'contactNumber': return validateContactNumber(form.contactNumber);
     case 'password': return validatePassword(form.password);
     case 'confirmPassword': return validateConfirmPassword(form.password, form.confirmPassword);
@@ -26,7 +28,7 @@ function validateField(name, form) {
 
 export default function Register() {
   const [form, setForm] = useState({
-    lastName: '', firstName: '', middleName: '', email: '', contactNumber: '',
+    lastName: '', firstName: '', middleName: '', email: '', confirmEmail: '', contactNumber: '',
     password: '', confirmPassword: '',
   });
   // Data Privacy Act (RA 10173): the parent must agree before an account is made.
@@ -43,15 +45,21 @@ export default function Register() {
   const [pending, setPending] = useState(null);
 
   const update = (field) => (e) => {
-    const next = { ...form, [field]: e.target.value };
+    const raw = field === 'contactNumber' ? sanitizePhone(e.target.value) : e.target.value;
+    const next = { ...form, [field]: raw };
     setForm(next);
-    // Once a field has been flagged, re-validate live as the user retypes it
-    // instead of waiting for the next blur, so the message clears promptly.
-    if (touched[field]) {
-      setErrors((prev) => ({ ...prev, [field]: validateField(field, next) }));
+    // Warn as it is typed, so a problem is seen while the field is still in
+    // hand; "this is required" waits until the person has left it.
+    {
+      const problem = validateField(field, next);
+      const stillEmpty = !String(next[field] || '').trim();
+      setErrors((prev) => ({ ...prev, [field]: stillEmpty && !touched[field] ? '' : problem }));
     }
-    if (field === 'password' && touched.confirmPassword) {
+    if (field === 'password' && next.confirmPassword) {
       setErrors((prev) => ({ ...prev, confirmPassword: validateConfirmPassword(next.password, next.confirmPassword) }));
+    }
+    if (field === 'email' && (touched.confirmEmail || next.confirmEmail)) {
+      setErrors((prev) => ({ ...prev, confirmEmail: validateConfirmGmail(next.email, next.confirmEmail) }));
     }
   };
 
@@ -66,14 +74,14 @@ export default function Register() {
   // out the rest of the form.
   const handleEmailBlur = async () => {
     setTouched((prev) => ({ ...prev, email: true }));
-    const formatError = validateEmail(form.email);
+    const formatError = validateGmail(form.email);
     if (formatError) {
       setErrors((prev) => ({ ...prev, email: formatError }));
       return;
     }
     setEmailChecking(true);
     try {
-      const { data } = await api.get('/auth/check-email', { params: { email: form.email.trim() } });
+      const { data } = await api.get('/auth/check-email', { params: { email: normalizeGmail(form.email) } });
       setErrors((prev) => ({ ...prev, email: data.valid ? '' : data.reason }));
     } catch {
       // A network hiccup here shouldn't block the user -- register()
@@ -98,7 +106,8 @@ export default function Register() {
     setSubmitting(true);
     try {
       const { data } = await api.post('/auth/register', {
-        email: form.email.trim(),
+        email: normalizeGmail(form.email),
+        confirmEmail: normalizeGmail(form.confirmEmail),
         password: form.password,
         firstName: form.firstName.trim(),
         middleName: form.middleName.trim(),
@@ -111,10 +120,10 @@ export default function Register() {
           ticket: data.verificationTicket,
           emailSent: data.emailSent,
           retryAfter: data.retryAfter,
-          email: form.email.trim(),
+          email: normalizeGmail(form.email),
         });
       } else {
-        navigate('/', { state: { registered: true } });
+        navigate('/login', { state: { registered: true } });
       }
     } catch (err) {
       setFormError(err.response?.data?.message || 'Registration failed. Please try again.');
@@ -127,7 +136,7 @@ export default function Register() {
     <div className="auth-wrap">
       <aside className="auth-panel">
         <div>
-          <Brand />
+          <Brand to="/" />
           <h2>Create your Parent Account</h2>
           <p>One account lets you enroll each of your children and track every application.</p>
         </div>
@@ -139,6 +148,9 @@ export default function Register() {
 
       <main className="auth-main">
         <form className="auth-form" onSubmit={handleSubmit} noValidate>
+          <button type="button" className="back-link" id="register-back" onClick={() => navigate('/')}>
+            &larr; Back
+          </button>
           <h1>Create Account</h1>
           <p className="sub">For parents and guardians who are enrolling a child.</p>
           {formError && <div className="alert alert-error">{formError}</div>}
@@ -150,41 +162,53 @@ export default function Register() {
                 <label className="label" htmlFor="lastName">Last Name</label>
                 <input id="lastName" className={`input${errors.lastName ? ' input-error' : ''}`}
                   value={form.lastName} onChange={update('lastName')} onBlur={handleBlur('lastName')}
-                  autoComplete="family-name" maxLength={60} required />
+                  autoComplete="family-name" maxLength={NAME_MAX} required />
                 {errors.lastName && <p className="field-error">{errors.lastName}</p>}
               </div>
               <div>
                 <label className="label" htmlFor="firstName">First Name</label>
                 <input id="firstName" className={`input${errors.firstName ? ' input-error' : ''}`}
                   value={form.firstName} onChange={update('firstName')} onBlur={handleBlur('firstName')}
-                  autoComplete="given-name" maxLength={60} required />
+                  autoComplete="given-name" maxLength={NAME_MAX} required />
                 {errors.firstName && <p className="field-error">{errors.firstName}</p>}
               </div>
               <div>
-                <label className="label" htmlFor="middleName">M.I</label>
+                <label className="label" htmlFor="middleName">M.I. <span className="muted">(optional)</span></label>
                 <input id="middleName" className={`input${errors.middleName ? ' input-error' : ''}`}
                   value={form.middleName} onChange={update('middleName')} onBlur={handleBlur('middleName')}
-                  autoComplete="additional-name" maxLength={5} />
+                  autoComplete="additional-name" maxLength={INITIAL_MAX} />
                 {errors.middleName && <p className="field-error">{errors.middleName}</p>}
               </div>
             </div>
           </div>
 
-          <div className="field">
-            <label className="label" htmlFor="email">Email Address</label>
-            <input id="email" className={`input${errors.email ? ' input-error' : ''}`} type="email"
-              value={form.email} onChange={update('email')} onBlur={handleEmailBlur}
-              autoComplete="email" maxLength={254} required />
-            {emailChecking && <p className="hint">Checking email&hellip;</p>}
-            {!emailChecking && errors.email && <p className="field-error">{errors.email}</p>}
+          <div className="field-grid cols-2">
+            <div>
+              <label className="label" htmlFor="email">Gmail Address</label>
+              <input id="email" className={`input${errors.email ? ' input-error' : ''}`} type="email"
+                value={form.email} onChange={update('email')} onBlur={handleEmailBlur}
+                placeholder="e.g. juandelacruz@gmail.com" autoComplete="email" maxLength={254} required />
+              {emailChecking && <p className="hint">Checking email&hellip;</p>}
+              {!emailChecking && errors.email && <p className="field-error">{errors.email}</p>}
+              {!emailChecking && !errors.email
+                && <p className="hint">This Gmail becomes your login. The verification link goes here.</p>}
+            </div>
+            <div>
+              <label className="label" htmlFor="confirmEmail">Confirm Gmail Address</label>
+              <input id="confirmEmail" className={`input${errors.confirmEmail ? ' input-error' : ''}`} type="email"
+                value={form.confirmEmail} onChange={update('confirmEmail')} onBlur={handleBlur('confirmEmail')}
+                placeholder="Re-type it, e.g. juandelacruz@gmail.com" autoComplete="off" maxLength={254} required />
+              {errors.confirmEmail && <p className="field-error">{errors.confirmEmail}</p>}
+            </div>
           </div>
 
           <div className="field">
             <label className="label" htmlFor="contactNumber">Contact/Phone Number</label>
             <input id="contactNumber" className={`input${errors.contactNumber ? ' input-error' : ''}`}
               value={form.contactNumber} onChange={update('contactNumber')} onBlur={handleBlur('contactNumber')}
-              placeholder="09171234567" autoComplete="tel" inputMode="numeric" maxLength={11} required />
-            {errors.contactNumber && <p className="field-error">{errors.contactNumber}</p>}
+              placeholder="09171234567" autoComplete="tel" inputMode="tel" maxLength={13} required />
+            {errors.contactNumber ? <p className="field-error">{errors.contactNumber}</p>
+              : <p className="hint">Use 09XXXXXXXXX (11 digits) or +639XXXXXXXXX (13 characters).</p>}
           </div>
 
           <div className="field-grid cols-2">
@@ -224,7 +248,7 @@ export default function Register() {
           <button className="btn btn-primary" style={{ width: '100%' }} type="submit" disabled={submitting}>
             {submitting ? 'Creating account\u2026' : 'Create Account'}
           </button>
-          <p className="auth-alt">Already registered? <Link to="/">Sign in</Link></p>
+          <p className="auth-alt">Already registered? <Link to="/login">Sign in</Link></p>
         </form>
       </main>
 
@@ -235,8 +259,8 @@ export default function Register() {
           emailSent={pending.emailSent}
           retryAfter={pending.retryAfter}
           variant="register"
-          onVerified={() => navigate('/', { state: { verified: true } })}
-          onClose={() => navigate('/', { state: { registered: true } })}
+          onVerified={() => navigate('/login', { state: { verified: true } })}
+          onClose={() => navigate('/login', { state: { registered: true } })}
         />
       )}
     </div>
