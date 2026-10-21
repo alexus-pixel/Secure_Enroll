@@ -49,6 +49,10 @@ const sharedFields = {
   // desk confirms it from the Form 137/138 in front of them; Kinder has
   // nothing to confirm, so the field is ignored there.
   gradeQualificationMet: z.boolean().optional().default(false),
+  // The desk's own confirmation that the paper copies are in hand and were
+  // checked against the originals. Enforced (when the school asks for any
+  // document) in db/admin/walkInEnrollment.js.
+  physicalDocsConfirmed: z.boolean().optional().default(false),
   physicalDocTypes: z.array(docCode).max(12)
     .refine((list) => new Set(list).size === list.length, 'Each document can be listed only once.')
     .default([]),

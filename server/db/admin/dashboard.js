@@ -14,53 +14,6 @@ async function getSummaryCounts(schoolYearId) {
   return result.rows[0];
 }
 
-/**
- * The "submitted" date filter is deliberately bounded to the
- * enrollment period (opens_at/closes_at on the active school
- * year), matching "based only on the start of the enrollment
- * period" in the flow doc — a date outside that window can't
- * match anything, so the UI's date picker min/max should mirror
- * these same two values.
- */
-async function listApplications({ schoolYearId, status, gradeLevelId, submittedDate, page = 1, limit = 20 }) {
-  const clauses = ['ea.school_year_id = $1'];
-  const params = [schoolYearId];
-
-  if (status) {
-    params.push(status);
-    clauses.push(`ea.status = $${params.length}`);
-  }
-  if (gradeLevelId) {
-    params.push(gradeLevelId);
-    clauses.push(`ea.grade_level_id = $${params.length}`);
-  }
-  if (submittedDate) {
-    params.push(submittedDate);
-    clauses.push(`ea.submitted_at::date = $${params.length}::date`);
-  }
-
-  const where = `WHERE ${clauses.join(' AND ')}`;
-  const offset = (page - 1) * limit;
-
-  const countResult = await pool.query(
-    `SELECT COUNT(*)::int AS total FROM enrollment_applications ea ${where}`, params
-  );
-  const rowsResult = await pool.query(
-    `SELECT ea.id, s.first_name, s.last_name, gl.name AS grade_level, ea.status, ea.submitted_at,
-            g.first_name AS guardian_first_name, g.last_name AS guardian_last_name
-     FROM enrollment_applications ea
-     JOIN students s ON s.id = ea.student_id
-     JOIN grade_levels gl ON gl.id = ea.grade_level_id
-     LEFT JOIN student_guardians sg ON sg.student_id = s.id AND sg.is_primary = TRUE
-     LEFT JOIN guardians g ON g.user_id = sg.guardian_id
-     ${where}
-     ORDER BY ea.submitted_at DESC
-     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-    [...params, limit, offset]
-  );
-  return { applications: rowsResult.rows, total: countResult.rows[0].total, page, limit };
-}
-
 async function getEnrollmentByGrade(schoolYearId) {
   // Same seat rule as System Settings and School Settings (lib/seats.js).
   const seats = await gradeSeats(pool, schoolYearId);
@@ -100,4 +53,4 @@ async function getRegistrarActivity(activeWindowMinutes = 15) {
   return result.rows.sort((a, b) => (b.is_active - a.is_active) || (new Date(b.created_at) - new Date(a.created_at)));
 }
 
-module.exports = { getSummaryCounts, listApplications, getEnrollmentByGrade, getStatusBreakdown, getRegistrarActivity };
+module.exports = { getSummaryCounts, getEnrollmentByGrade, getStatusBreakdown, getRegistrarActivity };

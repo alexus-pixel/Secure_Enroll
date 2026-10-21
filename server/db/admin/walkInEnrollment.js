@@ -47,9 +47,14 @@ async function findStudentByLrn(lrn) {
   // be enrolled again, so the lookup says so and the form stays closed.
   const current = await activeYearEnrollment(student.id);
   const fullName = `${student.last_name}, ${student.first_name}`;
+  const completed = await lastCompletedGrade(student.id);
   return {
     ...student,
     last_enrollment: lastApp.rows[0] || null,
+    // Grade levels at or below this one are finished and cannot be picked.
+    last_completed_grade: completed
+      ? { id: completed.id, name: completed.name, sortOrder: completed.sortOrder }
+      : null,
     already_enrolled: current
       ? {
         status: current.status,
@@ -60,6 +65,23 @@ async function findStudentByLrn(lrn) {
       }
       : null,
   };
+}
+
+/**
+ * The highest grade level this learner has already been enrolled and approved
+ * in. A returning learner moves up from there: a grade level at or below it is
+ * one they have already completed and cannot be chosen again.
+ */
+async function lastCompletedGrade(studentId, db = pool) {
+  const { rows: [row] } = await db.query(
+    `SELECT gl.id, gl.name, gl.sort_order AS "sortOrder"
+       FROM enrollment_applications ea
+       JOIN grade_levels gl ON gl.id = ea.grade_level_id
+      WHERE ea.student_id = $1 AND ea.status = 'approved'
+      ORDER BY gl.sort_order DESC LIMIT 1`,
+    [studentId]
+  );
+  return row || null;
 }
 
 async function getGradeLevels() {
@@ -275,7 +297,8 @@ async function createWalkInEnrollment({
   firstName, middleName, lastName, birthDate, sex, lrn,
   guardianEmail, guardianFirstName, guardianLastName, guardianMiddleName,
   guardianContactNumber, guardianAddress, guardianValidIdType, relationship, relationshipOther,
-  gradeLevelId, sectionId, gradeQualificationMet, schoolYearId, physicalDocTypes, submittedBy,
+  gradeLevelId, sectionId, gradeQualificationMet, schoolYearId, physicalDocTypes, physicalDocsConfirmed,
+  submittedBy,
 }) {
   const client = await pool.connect();
   try {
@@ -312,6 +335,17 @@ async function createWalkInEnrollment({
       throw Object.assign(
         new Error(`${missing.map((d) => d.label).join(', ')} ${missing.length === 1 ? 'is' : 'are'} still missing. Every required document has to be verified before the learner can be enrolled.`),
         { status: 400, reason: 'documents_required', missingDocuments: missing.map((d) => ({ code: d.code, label: d.label })) }
+      );
+    }
+
+    // The desk also has to say, in so many words, that the paper copies are in
+    // hand and were checked against the originals. Ticking each document is the
+    // detail; this is the confirmation that the person at the desk stands behind it.
+    const applicable = docTypes.filter((d) => d.is_required && appliesHere(d));
+    if (applicable.length && physicalDocsConfirmed !== true) {
+      throw Object.assign(
+        new Error('Confirm that you received the physical copies of the documents and checked them against the originals.'),
+        { status: 400, reason: 'physical_docs_unconfirmed' }
       );
     }
 
@@ -366,6 +400,15 @@ async function createWalkInEnrollment({
       const { rows: [student] } = await client.query(
         'SELECT id, first_name, last_name FROM students WHERE id = $1', [existingStudentId]);
       if (!student) throw fail(404, 'That student was not found.');
+      // A returning learner moves up. A grade level they have already been
+      // approved in has been completed, so it cannot be chosen again.
+      const completed = await lastCompletedGrade(student.id, client);
+      if (completed && grade.sort_order <= completed.sortOrder) {
+        throw Object.assign(
+          new Error(`${student.first_name} ${student.last_name} has already completed ${completed.name}. Choose a grade level above it.`),
+          { status: 400, reason: 'grade_completed' }
+        );
+      }
       // A transferee or returnee whose LRN is already enrolled for this school
       // year is already in: enrolling them twice would take a second seat and
       // put the same learner in two sections.
@@ -490,7 +533,7 @@ async function createWalkInEnrollment({
 }
 
 module.exports = {
-  hashLrn, findStudentByLrn, getGradeLevels, getSectionsForGrade, getRequiredDocumentTypes,
+  hashLrn, findStudentByLrn, lastCompletedGrade, getGradeLevels, getSectionsForGrade, getRequiredDocumentTypes,
   findOrCreateGuardianAccount, createWalkInEnrollment,
   findGuardianByEmail, findDuplicateStudent, lrnAlreadyUsed,
 };

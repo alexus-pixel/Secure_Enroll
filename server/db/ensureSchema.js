@@ -192,6 +192,20 @@ async function ensureSchema() {
     WHERE r.name = 'registrar' AND p.code = 'schedule.manage'
     ON CONFLICT DO NOTHING`);
 
+  // --- The administrator does not do the registrar's job --------------------
+  // Least privilege (concept paper, FR-RBAC): the administrator runs accounts,
+  // school records, settings and the audit log. Reviewing documents, deciding
+  // an application and enrolling a walk-in belong to the registrar alone, so
+  // one person cannot both create a staff account and act as the registrar.
+  // The original seed gave the admin every permission; this takes those three
+  // back on a database that already has them, every time the API starts.
+  await step('admin loses registrar powers', `
+    DELETE FROM role_permissions rp
+     USING roles r, permissions p
+     WHERE rp.role_id = r.id AND rp.permission_id = p.id
+       AND r.name = 'admin'
+       AND p.code IN ('application.review', 'application.approve', 'document.verify')`);
+
   // --- A school year created automatically needs its dates confirmed --------
   await step('school year dates confirmed', `
     ALTER TABLE school_years

@@ -1,3 +1,4 @@
+const pool = require('../../db/pool');
 const walkInDb = require('../../db/admin/walkInEnrollment');
 const { checkParentEmail } = require('../../lib/parentEmail');
 const { sendVerificationEmail } = require('../authController');
@@ -107,13 +108,23 @@ async function create(req, res) {
     // Sending the link now is also the only real proof the Gmail exists: if
     // nothing arrives, the parent tells the desk and the address is corrected.
     if (result.accountCreated && result.guardianUserId) {
-      const mail = await sendVerificationEmail(result.guardianUserId, result.accountEmail, { setPassword: true });
+      // The link goes out in the registrar's name, and a reply reaches them.
+      const { rows: [staff] } = await pool.query(
+        `SELECT email, COALESCE(NULLIF(BTRIM(CONCAT_WS(' ', first_name, last_name)), ''), NULLIF(full_name, ''), email) AS name
+           FROM users WHERE id = $1`,
+        [req.user.id]
+      );
+      const mail = await sendVerificationEmail(result.guardianUserId, result.accountEmail, {
+        setPassword: true, sentBy: staff || null,
+      });
       result.verificationSent = mail.ok;
     }
 
     await logAudit(req.user.id, 'WALKIN_ENROLLMENT_CREATED', 'enrollment_application', result.applicationId, req, {
       studentId: result.studentId, guardianAccountCreated: result.accountCreated,
       guardianEmail: result.accountEmail, missingRequiredDocuments: result.stillNeeded,
+      physicalDocsConfirmed: req.body.physicalDocsConfirmed === true,
+      physicalDocTypes: req.body.physicalDocTypes,
     });
 
     res.status(201).json(result);

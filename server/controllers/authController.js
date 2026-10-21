@@ -103,13 +103,20 @@ function secondsUntilResend(userId) {
 
 // Returns { ok } instead of hiding the outcome: callers must be able to
 // tell the user whether the email really went out.
-async function sendVerificationEmail(userId, email, { setPassword = false } = {}) {
+async function sendVerificationEmail(userId, email, { setPassword = false, sentBy = null } = {}) {
   try {
     const token = await issueToken(userId, 'email_verify', EMAIL_VERIFY_TTL_MS);
     // Greet the parent by first name when we have it (best effort only).
     const nameRow = await pool.query('SELECT first_name FROM guardians WHERE user_id = $1', [userId]).catch(() => null);
-    const { subject, text, html } = verificationEmail(token, nameRow?.rows[0]?.first_name, { setPassword });
-    await sendVerificationMail({ to: email, subject, text, html });
+    // `sentBy` is the staff member who enrolled the child at the desk: the email
+    // names them and replies go to them, so the parent hears from a person.
+    const { subject, text, html } = verificationEmail(token, nameRow?.rows[0]?.first_name, {
+      setPassword, enrolledBy: sentBy ? sentBy.name : null,
+    });
+    await sendVerificationMail({
+      to: email, subject, text, html,
+      replyTo: sentBy && sentBy.email ? { email: sentBy.email, name: sentBy.name } : undefined,
+    });
     lastVerificationSent.set(String(userId), Date.now());
     return { ok: true };
   } catch (err) {

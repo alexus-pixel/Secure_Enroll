@@ -68,7 +68,7 @@ function brevoReady() {
 }
 
 // Brevo transactional email API. attachments: [{ filename, content: Buffer }]
-async function sendViaBrevo({ to, subject, text, html, attachments }) {
+async function sendViaBrevo({ to, subject, text, html, attachments, replyTo }) {
   const res = await fetch(process.env.BREVO_API_URL || 'https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     signal: AbortSignal.timeout(20000),
@@ -83,6 +83,9 @@ async function sendViaBrevo({ to, subject, text, html, attachments }) {
         email: (process.env.BREVO_SENDER_EMAIL || '').trim(),
       },
       to: [{ email: to }],
+      // A reply goes to the staff member who enrolled the child, not to the
+      // system's no-reply sender.
+      ...(replyTo && replyTo.email ? { replyTo: { email: replyTo.email, ...(replyTo.name ? { name: replyTo.name } : {}) } } : {}),
       subject,
       htmlContent: html,
       textContent: text,
@@ -106,12 +109,15 @@ function printDevEmail({ to, subject, text }, why) {
 }
 
 // SMTP only (or the console when SMTP is not configured). Never uses Brevo.
-async function sendSmtp({ to, subject, text, html, attachments }) {
+async function sendSmtp({ to, subject, text, html, attachments, replyTo }) {
   const t = getTransporter();
   if (!t) return printDevEmail({ to, subject, text }, 'SMTP not configured');
   const smtpUser = (process.env.SMTP_USER || '').trim();
   const from = process.env.SMTP_FROM || `${SCHOOL} <${smtpUser || 'no-reply@secureenroll.local'}>`;
-  await t.sendMail({ from, to, subject, text, html, attachments });
+  await t.sendMail({
+    from, to, subject, text, html, attachments,
+    ...(replyTo && replyTo.email ? { replyTo: replyTo.name ? `${replyTo.name} <${replyTo.email}>` : replyTo.email } : {}),
+  });
 }
 
 // Sends any email: Brevo first when it is set up, then SMTP, then the console.
@@ -132,20 +138,20 @@ async function sendMail(message) {
 // If Brevo is set up but refuses (bad key, unverified sender, blocked IP, outage)
 // and SMTP is configured, the same email is sent through SMTP instead, so a
 // Brevo problem does not stop parents from verifying their account.
-async function sendVerificationMail({ to, subject, text, html }) {
+async function sendVerificationMail({ to, subject, text, html, replyTo }) {
   const brevoKey = (process.env.BREVO_API_KEY || '').trim();
-  if (!brevoKey) return sendSmtp({ to, subject, text, html });
+  if (!brevoKey) return sendSmtp({ to, subject, text, html, replyTo });
   try {
     if (!(process.env.BREVO_SENDER_EMAIL || '').trim()) {
       throw new Error('BREVO_SENDER_EMAIL is not set. Use a sender that is verified in Brevo.');
     }
-    return await sendViaBrevo({ to, subject, text, html });
+    return await sendViaBrevo({ to, subject, text, html, replyTo });
   } catch (brevoErr) {
     if (!(process.env.SMTP_HOST || '').trim()) throw brevoErr;
     console.error('Brevo could not send the verification email, trying SMTP instead.');
     console.error('  Reason:', brevoErr.message);
     console.error('  Fix:   ', describeMailError(brevoErr));
-    return sendSmtp({ to, subject, text, html });
+    return sendSmtp({ to, subject, text, html, replyTo });
   }
 }
 
@@ -156,7 +162,7 @@ async function sendVerificationMail({ to, subject, text, html }) {
  * office: they never chose a password, so the same link is where they set one.
  * Nothing temporary is ever handed over at the counter.
  */
-function verificationEmail(token, firstName, { setPassword = false } = {}) {
+function verificationEmail(token, firstName, { setPassword = false, enrolledBy = null } = {}) {
   const link = `${CLIENT_URL()}/verify-email?token=${encodeURIComponent(token)}`;
   if (setPassword) {
     const { html: h, text: t } = renderEmail({
@@ -164,7 +170,9 @@ function verificationEmail(token, firstName, { setPassword = false } = {}) {
       heading: 'Set your password',
       greeting: firstName ? `Hello ${firstName},` : 'Hello,',
       paragraphs: [
-        `Your child has been enrolled at ${SCHOOL}, and a parent account has been created for you with this email address.`,
+        enrolledBy
+          ? `${enrolledBy} from the registrar's office enrolled your child at ${SCHOOL}, and a parent account has been created for you with this email address.`
+          : `Your child has been enrolled at ${SCHOOL}, and a parent account has been created for you with this email address.`,
         'Open the link below to choose your own password. That also confirms this address is yours, so there is nothing else to do afterwards.',
       ],
       button: { label: 'Set my password', url: link },

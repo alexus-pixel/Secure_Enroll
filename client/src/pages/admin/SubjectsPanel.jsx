@@ -125,8 +125,22 @@ export default function SubjectsPanel({ gradeLevelId, schoolYearId, isReadOnly =
     }
   }
 
+  // The limit can never sit below the subjects the grade already has: it would
+  // leave the grade permanently over its own ceiling. Said as the number is
+  // typed, so the form never offers a value the server is going to refuse.
+  let limitProblem = '';
+  if (limitDraft !== '') {
+    const n = Number(limitDraft);
+    if (!Number.isInteger(n)) limitProblem = 'Enter a whole number.';
+    else if (n > 20) limitProblem = 'A grade level can allow at most 20 subjects.';
+    else if (n < count) {
+      limitProblem = `${gradeName || 'This grade level'} already has ${count} subject${count === 1 ? '' : 's'}, so the limit cannot be lower than ${count}.`;
+    } else if (n < 1) limitProblem = 'A grade level must allow at least 1 subject.';
+  }
+
   async function handleSaveLimit(e) {
     e?.preventDefault();
+    if (limitProblem || limitDraft === '') return;
     setSavingLimit(true);
     setError(''); setNotice('');
     try {
@@ -167,12 +181,14 @@ export default function SubjectsPanel({ gradeLevelId, schoolYearId, isReadOnly =
           </label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <input
-              id="max-subjects" className="input" type="number" min="1" max="20" step="1"
+              id="max-subjects" className={`input${limitProblem ? ' input-error' : ''}`} type="number"
+              min={Math.max(1, count)} max="20" step="1"
+              aria-invalid={limitProblem ? 'true' : undefined}
               style={{ width: 90, margin: 0 }}
               value={limitDraft}
               onChange={(e) => setLimitDraft(e.target.value)}
             />
-            <button className="btn btn-sm" type="submit" disabled={savingLimit || limitDraft === ''}>
+            <button className="btn btn-sm" type="submit" disabled={savingLimit || limitDraft === '' || Boolean(limitProblem)}>
               {savingLimit ? 'Saving...' : 'Save limit'}
             </button>
             <button
@@ -182,9 +198,13 @@ export default function SubjectsPanel({ gradeLevelId, schoolYearId, isReadOnly =
               Cancel
             </button>
           </div>
-          <div className="hint hint-spaced" style={{ margin: '6px 0 0' }}>
-            1 to 20. It cannot go below the {count} subject{count === 1 ? '' : 's'} this grade already has.
-          </div>
+          {limitProblem
+            ? <div className="field-error" role="alert" style={{ margin: '6px 0 0' }}>{limitProblem}</div>
+            : (
+              <div className="hint hint-spaced" style={{ margin: '6px 0 0' }}>
+                {Math.max(1, count)} to 20. It cannot go below the {count} subject{count === 1 ? '' : 's'} this grade already has.
+              </div>
+            )}
         </form>
       )}
 

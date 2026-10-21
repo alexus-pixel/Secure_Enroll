@@ -20,36 +20,4 @@ async function overview(req, res) {
   }
 }
 
-async function applications(req, res) {
-  try {
-    const activeYear = await settingsDb.getActiveSchoolYear();
-    if (!activeYear) return res.status(404).json({ message: 'No active school year is set.' });
-
-    const { status, gradeLevelId, submittedDate, page, limit } = req.query;
-
-    // The date picker is bounded to the enrollment period on the
-    // client, but this is the actual enforcement: a date outside
-    // opens_at/closes_at can never match anything.
-    if (submittedDate) {
-      const d = new Date(submittedDate);
-      if (d < new Date(activeYear.opens_at) || d > new Date(activeYear.closes_at)) {
-        return res.json({ applications: [], total: 0, page: 1, limit: Math.min(Math.max(Number(limit) || 20, 1), 200) });
-      }
-    }
-
-    const result = await dashboardDb.listApplications({
-      schoolYearId: activeYear.id,
-      status, gradeLevelId, submittedDate,
-      // Bounded for the same reason the audit log is: a page size out of a URL
-      // is user input.
-      page: Math.max(Number(page) || 1, 1),
-      limit: Math.min(Math.max(Number(limit) || 20, 1), 200),
-    });
-    res.json(result);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Could not load applications.' });
-  }
-}
-
-module.exports = { overview, applications };
+module.exports = { overview };

@@ -48,7 +48,6 @@ const NAV_ITEMS = {
     { to: '/admin/users', label: 'User Management', icon: Users },
     { to: '/admin/teachers', label: 'Teachers', icon: GraduationCap },
     { to: '/admin/schedules', label: 'Class Schedules', icon: CalendarDays },
-    { to: '/admin/walk-in-enrollment', label: 'Walk-in Enrollment', icon: UserPlus },
     { to: '/admin/audit-log', label: 'Audit Log', icon: ScrollText },
     { to: '/admin/system-settings', label: 'System Settings', icon: Settings },
     { to: '/admin/school-settings', label: 'School Settings', icon: School },

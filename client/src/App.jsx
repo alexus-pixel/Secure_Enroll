@@ -34,7 +34,6 @@ import AuditLogPage from './pages/admin/AuditLogPage';
 import SystemSettingsPage from './pages/admin/SystemSettingsPage';
 import SchoolSettingsPage from './pages/admin/SchoolSettingsPage';
 import ReportsPage from './pages/admin/ReportsPage';
-import WalkInEnrollmentPage from './pages/admin/WalkInEnrollmentPage';
 
 function App() {
   return (
@@ -83,8 +82,6 @@ function App() {
             <Route path="system-settings" element={<SystemSettingsPage />} />
             <Route path="school-settings" element={<SchoolSettingsPage />} />
             <Route path="reports" element={<ReportsPage />} />
-            <Route path="walk-in-enrollment" element={<WalkInEnrollmentPage />} />
-            <Route path="applications/:id" element={<RegistrarApplicationView />} />
           </Route>
         </Routes>
       </BrowserRouter>

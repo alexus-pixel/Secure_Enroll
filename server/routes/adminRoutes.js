@@ -9,6 +9,5 @@ router.use('/audit-logs', require('./admin/auditLogRoutes'));
 router.use('/settings', require('./admin/settingsRoutes'));
 router.use('/school-settings', require('./admin/schoolSettingsRoutes'));
 router.use('/reports', require('./admin/reportsRoutes'));
-router.use('/walk-in-enrollment', require('./admin/walkInEnrollmentRoutes'));
 
 module.exports = router;

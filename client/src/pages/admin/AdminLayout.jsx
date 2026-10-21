@@ -12,7 +12,6 @@ const STATIC_CRUMBS = {
   '/admin/users': 'User Management',
   '/admin/teachers': 'Teachers',
   '/admin/schedules': 'Class Schedules',
-  '/admin/walk-in-enrollment': 'Walk-in Enrollment',
   '/admin/audit-log': 'Audit Log',
   '/admin/system-settings': 'System Settings',
   '/admin/school-settings': 'School Settings',

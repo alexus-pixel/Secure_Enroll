@@ -2,8 +2,6 @@ import api from './client';
 
 // ---------- Dashboard ----------
 export const getDashboardOverview = () => api.get('/admin/dashboard/overview').then((r) => r.data);
-export const getDashboardApplications = (params) =>
-  api.get('/admin/dashboard/applications', { params }).then((r) => r.data);
 
 // ---------- Users ----------
 export const getUsers = (params) => api.get('/admin/users', { params }).then((r) => r.data);
@@ -112,7 +110,9 @@ export const getSchoolSettings = () => api.get('/admin/school-settings').then((r
 // The schedule screens are shared with the registrar, who has schedule.manage
 // but not settings.manage or teacher.manage, so they read these instead.
 export const getScheduleSchoolYears = () => api.get('/admin/schedules/school-years').then((r) => r.data);
-export const getScheduleTeachers = () => api.get('/admin/schedules/teachers').then((r) => r.data);
+// With a subjectId, only the teachers assigned to teach that subject.
+export const getScheduleTeachers = (subjectId) =>
+  api.get('/admin/schedules/teachers', { params: subjectId ? { subjectId } : {} }).then((r) => r.data);
 export const createSchoolYear = (data) => api.post('/admin/school-settings/school-years', data).then((r) => r.data);
 export const activateSchoolYear = (id) =>
   api.patch(`/admin/school-settings/school-years/${id}/activate`).then((r) => r.data);
@@ -134,12 +134,6 @@ export const updateSectionName = (id, name) =>
 export const getSectionStudents = (id) =>
   api.get(`/admin/school-settings/sections/${id}/students`).then((r) => r.data);
 export const deleteSection = (id) => api.delete(`/admin/school-settings/sections/${id}`).then((r) => r.data);
-
-// ---------- Walk-in Enrollment ----------
-export const getRequiredDocumentTypes = () => api.get('/admin/walk-in-enrollment/required-documents').then((r) => r.data);
-export const lookupStudentByLrn = (lrn) =>
-  api.get('/admin/walk-in-enrollment/lookup-by-lrn', { params: { lrn } }).then((r) => r.data);
-export const createWalkInEnrollment = (data) => api.post('/admin/walk-in-enrollment', data).then((r) => r.data);
 
 // School settings: advisers and starting the next school year.
 export const getAdviserOptions = () => api.get('/admin/school-settings/teachers').then((r) => r.data);

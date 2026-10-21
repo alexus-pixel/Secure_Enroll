@@ -38,11 +38,21 @@ async function scheduleSchoolYears(req, res) {
 
 async function scheduleTeachers(req, res) {
   try {
+    // ?subjectId= narrows the list to the teachers assigned to that subject:
+    // the schedule form offers nobody else for it.
+    const raw = req.query.subjectId;
+    if (raw !== undefined && raw !== '' && !/^\d{1,9}$/.test(String(raw))) {
+      return res.status(400).json({ message: 'Unrecognized subject.' });
+    }
+    const subjectId = raw ? Number(raw) : null;
     const { rows } = await pool.query(
-      `SELECT id, first_name, last_name, middle_name, is_active, status, max_periods_per_day
-       FROM teachers
-       WHERE is_active AND status = 'active'
-       ORDER BY last_name, first_name`
+      `SELECT t.id, t.first_name, t.last_name, t.middle_name, t.is_active, t.status, t.max_periods_per_day
+         FROM teachers t
+        WHERE t.is_active AND t.status = 'active'
+          AND ($1::int IS NULL OR EXISTS (
+                SELECT 1 FROM teacher_subjects ts WHERE ts.teacher_id = t.id AND ts.subject_id = $1))
+        ORDER BY t.last_name, t.first_name`,
+      [subjectId]
     );
     res.json(rows);
   } catch (err) {
@@ -251,6 +261,21 @@ async function checkConflict(req, res) {
     const activeYear = await settingsDb.getActiveSchoolYear();
     if (!activeYear) return res.status(404).json({ message: 'No active school year is set.' });
     const days = req.query.days.split(',').map(Number);
+
+    // Room question: is that room already in use during these hours?
+    if (req.query.room) {
+      const roomConflict = await schedulesDb.findRoomConflict(pool, {
+        room: req.query.room, schoolYearId: activeYear.id, days,
+        startTime: req.query.startTime, endTime: req.query.endTime,
+        excludeEntryId: req.query.excludeEntryId,
+      });
+      if (roomConflict) {
+        return res.json({ available: false, reason: 'room_conflict', roomConflict, message: roomConflictMessage(roomConflict) });
+      }
+    }
+    // Only a room was asked about: it is free.
+    if (!req.query.teacherId) return res.json({ available: true });
+
     const conflict = await schedulesDb.findTeacherConflict(pool, {
       teacherId: req.query.teacherId,
       schoolYearId: activeYear.id,
@@ -282,6 +307,20 @@ function conflictMessage(conflict) {
   return `Already teaching ${conflict.grade_level_name} · ${conflict.section_name} `
     + `(${conflict.subject_name || 'a class'}) on ${days}, `
     + `${conflict.start_time?.slice(0, 5)}\u2013${conflict.end_time?.slice(0, 5)}.`;
+}
+
+function roomConflictMessage(x) {
+  const dayNames = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri' };
+  const days = (x.days || []).map((d) => dayNames[d]).join('/');
+  return `Room ${x.room} is already in use by ${x.grade_level_name} \u00b7 ${x.section_name}`
+    + `${x.subject_name ? ` (${x.subject_name})` : ''} on ${days}, `
+    + `${x.start_time?.slice(0, 5)}\u2013${x.end_time?.slice(0, 5)}. A room can only hold one class at a time.`;
+}
+
+function teacherSubjectMessage(x) {
+  const who = `${x.first_name} ${x.last_name}`.trim() || 'That teacher';
+  return `${who} is not assigned to teach ${x.subject_name || 'that subject'}. `
+    + 'Add the subject to the teacher\u2019s record first, or choose a teacher who teaches it.';
 }
 
 function dailyCapMessage(x) {
@@ -342,6 +381,16 @@ async function createEntry(req, res) {
       ...req.body, schoolYearId: activeYear.id, createdBy: req.user.id,
     });
     if (result.sessionMismatch) return sendSessionMismatch(result.sessionMismatch, res);
+    if (result.teacherSubjectMismatch) {
+      return res.status(409).json({
+        message: teacherSubjectMessage(result.teacherSubjectMismatch), reason: 'teacher_subject_mismatch',
+      });
+    }
+    if (result.roomConflict) {
+      return res.status(409).json({
+        message: roomConflictMessage(result.roomConflict), reason: 'room_in_use', roomConflict: result.roomConflict,
+      });
+    }
     if (result.sectionOverlap) {
       return res.status(409).json({
         message: sectionOverlapMessage(result.sectionOverlap),
@@ -378,6 +427,16 @@ async function updateEntry(req, res) {
     const result = await schedulesDb.updateScheduleEntry(Number(req.params.id), req.body);
     if (result.notFound) return res.status(404).json({ message: 'Schedule entry not found.' });
     if (result.sessionMismatch) return sendSessionMismatch(result.sessionMismatch, res);
+    if (result.teacherSubjectMismatch) {
+      return res.status(409).json({
+        message: teacherSubjectMessage(result.teacherSubjectMismatch), reason: 'teacher_subject_mismatch',
+      });
+    }
+    if (result.roomConflict) {
+      return res.status(409).json({
+        message: roomConflictMessage(result.roomConflict), reason: 'room_in_use', roomConflict: result.roomConflict,
+      });
+    }
     if (result.sectionOverlap) {
       return res.status(409).json({
         message: sectionOverlapMessage(result.sectionOverlap),

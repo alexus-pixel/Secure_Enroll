@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { checkScheduleConflict, createScheduleEntry, updateScheduleEntry } from '../../api/admin';
+import { checkScheduleConflict, createScheduleEntry, updateScheduleEntry, getScheduleTeachers } from '../../api/admin';
 import { getGradeSubjects } from '../../api/subjects';
 import ConfirmDialog from '../../components/ConfirmDialog';
 
@@ -28,35 +28,41 @@ export function to12Hour(hhmm) {
   return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
 }
 
+// Each session has its own window, and the two share the hour from noon to
+// 1:00 PM. Kept in step with SESSION_WINDOWS in
+// server/validators/scheduleValidators.js, which is the one that decides.
+export const SESSION_WINDOWS = {
+  morning: { from: '06:00', to: '13:00' },
+  afternoon: { from: '12:00', to: '18:00' },
+};
+
 /**
  * The same session/time rule the server enforces (see
  * server/validators/scheduleValidators.js), so a 9 PM "morning"
  * period is refused here before the request is ever sent — and with
  * the same wording when the server refuses it anyway.
  *
- *   morning   - starts AND ends before 12:00 noon
- *   afternoon - starts at 12:00 noon or later
+ *   morning   - 6:00 AM to 1:00 PM
+ *   afternoon - 12:00 PM to 6:00 PM
  *
  * Returns null when the times fit, or a sentence naming the session.
  * Exported because the "+ Add Period" row on the grade's schedule
  * page — where the hours are actually typed — checks the same thing.
  */
 /**
- * Which half of the day a period belongs to, read off its start time:
- * before 12:00 noon is the morning session, 12:00 noon or later is the
- * afternoon one.
- *
- * Nobody is asked for this any more. It used to be a pair of buttons in
- * this drawer, which only ever gave the admin a way to disagree with the
- * clock — the time is already being set, so the session follows from it.
- * The value is still sent and still stored, because the grade schedule
- * page shows the week as a Morning card and an Afternoon card and needs
- * something to sort the periods into.
+ * A guess at the session for a period that has none yet, read off its start
+ * time: before 12:00 noon is the morning session, 12:00 noon or later the
+ * afternoon one. Only a fallback now: a period keeps the session it was
+ * created under (the Morning or Afternoon card it sits in), because the two
+ * sessions share the hour from noon to 1:00 PM and a time alone cannot say
+ * which of them a period between noon and 1 belongs to.
  */
 export function sessionForTime(startTime) {
   if (!startTime) return null;
   return String(startTime).slice(0, 5) >= '12:00' ? 'afternoon' : 'morning';
 }
+
+function article(word) { return /^[aeiou]/i.test(word) ? 'An' : 'A'; }
 
 export function sessionTimeIssue(session, startTime, endTime) {
   const start = startTime ? String(startTime).slice(0, 5) : null;
@@ -68,18 +74,18 @@ export function sessionTimeIssue(session, startTime, endTime) {
   if (end && end > DAY_CLOSES) return `A period has to end by ${clock(DAY_CLOSES)}. School hours are ${SCHOOL_HOURS}.`;
   if (end && end <= DAY_OPENS) return `A period cannot end at or before ${clock(DAY_OPENS)}. School hours are ${SCHOOL_HOURS}.`;
   if (!SESSION_LABELS[session]) return null;
-  if (session === 'morning') {
-    if (start && start >= '12:00') return 'A Morning session period must start before 12:00 noon.';
-    if (end && end >= '12:00') return 'A Morning session period must end before 12:00 noon.';
-    return null;
-  }
-  if (start && start < '12:00') return 'An Afternoon session period must start at 12:00 noon or later.';
+  const win = SESSION_WINDOWS[session];
+  const label = SESSION_LABELS[session];
+  const range = `The ${label} session runs ${clock(win.from)} to ${clock(win.to)}.`;
+  if (start && start < win.from) return `${article(label)} ${label} session period cannot start before ${clock(win.from)}. ${range}`;
+  if (start && start >= win.to) return `${article(label)} ${label} session period must start before ${clock(win.to)}. ${range}`;
+  if (end && end > win.to) return `${article(label)} ${label} session period must end by ${clock(win.to)}. ${range}`;
   return null;
 }
 
 export default function AddScheduleDrawer({
   sectionId, gradeLevelId, schoolYearId, sectionName, adviserName,
-  subjects = [], teachers, entry, initialSession, initialStartTime, initialEndTime, onClose, onSaved,
+  subjects = [], teachers: allTeachers = [], entry, initialSession, initialStartTime, initialEndTime, onClose, onSaved,
 }) {
   // An adviser period represents "owns this section all day" and
   // carries no subject at all, so the subject field is left out
@@ -103,6 +109,12 @@ export default function AddScheduleDrawer({
   const [subjectsLoading, setSubjectsLoading] = useState(false);
   const [subjectsError, setSubjectsError] = useState('');
   const [availability, setAvailability] = useState([]);
+  // Only the teachers assigned to the chosen subject are offered for it.
+  const [teacherOptions, setTeacherOptions] = useState([]);
+  const [teachersLoading, setTeachersLoading] = useState(false);
+  const [teachersError, setTeachersError] = useState('');
+  // The room's own check: is it already in use during these hours?
+  const [roomClash, setRoomClash] = useState(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -119,13 +131,60 @@ export default function AddScheduleDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gradeLevelId, schoolYearId]);
 
-  // The period's session, read off its start time rather than asked for.
-  // The times themselves come from the period row that was clicked (or from
-  // the entry being edited), so this is settled before the drawer opens; the
-  // fallbacks only matter for a row that somehow carries no time at all.
-  const session = sessionForTime(form.startTime) || entry?.session || initialSession || 'morning';
+  // The period's session is the one it was created under (the card it sits in),
+  // not asked for again. The time is guessed from only as a last resort.
+  const session = entry?.session || initialSession || sessionForTime(form.startTime) || 'morning';
+
+  // The teacher list follows the subject: pick "Mathematics" and only the
+  // teachers who teach Mathematics can be chosen. An adviser period has no
+  // subject, so it keeps the full list of active teachers.
+  useEffect(() => {
+    if (!isAdviserPeriod && !form.subjectId) { setTeacherOptions([]); return undefined; }
+    let cancelled = false;
+    setTeachersLoading(true);
+    getScheduleTeachers(isAdviserPeriod ? undefined : form.subjectId)
+      .then((list) => {
+        if (cancelled) return;
+        // A period saved earlier keeps its teacher on screen even if they are
+        // no longer linked to the subject, so editing its time is not blocked.
+        const keep = entry && String(entry.subject_id) === String(form.subjectId) && entry.teacher_id
+          && !list.some((t) => t.id === entry.teacher_id)
+          ? allTeachers.filter((t) => t.id === entry.teacher_id) : [];
+        setTeacherOptions([...list, ...keep]);
+        setTeachersError('');
+        // A teacher chosen for another subject is dropped, not carried over.
+        setForm((f) => (f.teacherId && ![...list, ...keep].some((t) => t.id === Number(f.teacherId))
+          ? { ...f, teacherId: '' } : f));
+      })
+      .catch(() => { if (!cancelled) setTeachersError('Could not load the teachers for this subject.'); })
+      .finally(() => { if (!cancelled) setTeachersLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.subjectId, isAdviserPeriod]);
+  const teachers = teacherOptions;
 
   const canCheck = form.teacherId && form.days.length > 0 && form.startTime && form.endTime;
+
+  // Is the room free? Asked as soon as a room, days and hours are all set.
+  const roomKey = `${form.room.trim().toLowerCase()}|${form.days.join(',')}|${form.startTime}|${form.endTime}`;
+  useEffect(() => {
+    if (isAdviserPeriod || !form.room.trim() || form.days.length === 0 || !form.startTime || !form.endTime
+      || form.startTime >= form.endTime) {
+      setRoomClash(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      checkScheduleConflict({
+        room: form.room.trim(), days: form.days.join(','),
+        startTime: form.startTime, endTime: form.endTime, excludeEntryId: entry?.id,
+      })
+        .then((r) => { if (!cancelled) setRoomClash(r.available === false && r.reason === 'room_conflict' ? r : null); })
+        .catch(() => { if (!cancelled) setRoomClash(null); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomKey, isAdviserPeriod]);
 
   useEffect(() => {
     if (!canCheck) return;
@@ -157,9 +216,8 @@ export default function AddScheduleDrawer({
   }, [form.teacherId, availability]);
 
   // What is wrong with this period's hours — shown under the time line, and
-  // the save button stays disabled while it stands. The session half of the
-  // rule cannot fail any more now that the session is read off the start
-  // time; school hours and "end after start" still can.
+  // the save button stays disabled while it stands: school hours, the
+  // session's own window, and "end after start".
   const sessionIssue = useMemo(
     () => (isAdviserPeriod ? null : sessionTimeIssue(session, form.startTime, form.endTime)),
     [isAdviserPeriod, session, form.startTime, form.endTime],
@@ -196,16 +254,14 @@ export default function AddScheduleDrawer({
   const timeRange = form.startTime && form.endTime
     ? `${to12Hour(form.startTime)}–${to12Hour(form.endTime)}` : '—';
 
-  const incomplete = saving || !!conflict || !!sessionIssue || !form.teacherId
+  const incomplete = saving || !!conflict || !!roomClash || !!sessionIssue || !form.teacherId
     || form.days.length === 0 || (!isAdviserPeriod && !form.subjectId);
 
   async function handleSave() {
     setError('');
     setSaving(true);
     try {
-      // session is derived, not held in form state, so it is added here —
-      // the column is still written, and an older row filed under the wrong
-      // half of the day is corrected on the way past.
+      // session is not held in form state, so it is added here.
       const payload = { ...form, session, sectionId, roleType };
       if (isAdviserPeriod) payload.subjectId = null;
       const result = entry
@@ -319,14 +375,32 @@ export default function AddScheduleDrawer({
 
         <div className="field">
           <label className="label">Teacher</label>
-          <select className="input" value={form.teacherId} onChange={(e) => setForm({ ...form, teacherId: Number(e.target.value) })}>
-            <option value="">Select a teacher</option>
+          <select
+            className="input" value={form.teacherId}
+            disabled={(!isAdviserPeriod && !form.subjectId) || teachersLoading}
+            onChange={(e) => setForm({ ...form, teacherId: e.target.value ? Number(e.target.value) : '' })}
+          >
+            <option value="">
+              {!isAdviserPeriod && !form.subjectId ? 'Choose a subject first'
+                : teachersLoading ? 'Loading teachers\u2026' : 'Select a teacher'}
+            </option>
             {teachers.map((t) => (
               <option key={t.id} value={t.id} disabled={canCheck && isUnavailable(t.id)}>
                 {t.last_name}, {t.first_name}{canCheck && isUnavailable(t.id) ? ' — unavailable' : ''}
               </option>
             ))}
           </select>
+
+          {teachersError && <p className="field-error">{teachersError}</p>}
+          {!teachersError && !isAdviserPeriod && form.subjectId && !teachersLoading && teachers.length === 0 && (
+            <p className="field-error">
+              No active teacher is assigned to {selectedSubject?.name || 'this subject'} yet. Add the subject to a
+              teacher&rsquo;s record in Teachers first.
+            </p>
+          )}
+          {!teachersError && !isAdviserPeriod && form.subjectId && teachers.length > 0 && (
+            <p className="hint">Only teachers assigned to {selectedSubject?.name || 'this subject'} are listed.</p>
+          )}
 
           {canCheck && (
             <div style={{ marginTop: 8 }}>
@@ -355,7 +429,14 @@ export default function AddScheduleDrawer({
 
         <div className="field">
           <label className="label">Room</label>
-          <input className="input" value={form.room} onChange={(e) => setForm({ ...form, room: e.target.value })} />
+          <input
+            className={`input${roomClash ? ' input-error' : ''}`} value={form.room} maxLength={40}
+            aria-invalid={roomClash ? 'true' : undefined}
+            onChange={(e) => setForm({ ...form, room: e.target.value })}
+          />
+          {roomClash
+            ? <p className="field-error" role="alert">{roomClash.message}</p>
+            : <p className="hint">A room can only hold one class at a time. Leave it blank if no room is set yet.</p>}
         </div>
 
         <div className="btn-row" style={{ marginTop: 8 }}>
@@ -368,6 +449,7 @@ export default function AddScheduleDrawer({
           </button>
         </div>
         {conflict && <p className="cell-warn" style={{ marginTop: 8 }}>Resolve the conflict to save.</p>}
+        {roomClash && <p className="cell-warn" style={{ marginTop: 8 }}>Pick a free room, or change the day or time, to save.</p>}
         {sessionIssue && <p className="cell-warn" style={{ marginTop: 8 }}>Fix the period’s time to save.</p>}
       </div>
 

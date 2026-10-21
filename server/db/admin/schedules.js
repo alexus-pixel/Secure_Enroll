@@ -378,6 +378,62 @@ async function findTeacherConflict(db, { teacherId, schoolYearId, days, startTim
 }
 
 /**
+ * Is this room already in use during any part of this period?
+ *
+ * A room holds one class at a time, so a room taken at 7:00-8:00 on Monday is
+ * not available to any other section (in any grade) for a period that touches
+ * those hours on that day. Two periods that merely meet (one ends at 8:00, the
+ * next starts at 8:00) do not clash. Room names are compared ignoring case and
+ * surrounding spaces, so "Rm 101" and "rm 101 " are the same room.
+ *
+ * A period with no room, or no days yet (the blank "+ Add Period" slot), has
+ * nothing to clash with.
+ */
+async function findRoomConflict(db, { room, schoolYearId, days, startTime, endTime, excludeEntryId }) {
+  const name = String(room || '').trim();
+  if (!name || !days || days.length === 0 || !startTime || !endTime) return null;
+  const result = await db.query(
+    `SELECT se.id, se.room, se.days, se.start_time, se.end_time,
+            sec.name AS section_name, gl.name AS grade_level_name, sub.name AS subject_name
+       FROM schedule_entries se
+       JOIN sections sec ON sec.id = se.section_id
+       JOIN grade_levels gl ON gl.id = sec.grade_level_id
+       LEFT JOIN subjects sub ON sub.id = se.subject_id
+      WHERE se.school_year_id = $2
+        AND se.role_type = 'subject'
+        AND se.room IS NOT NULL
+        AND LOWER(BTRIM(se.room)) = LOWER($1)
+        AND se.days && $3::smallint[]
+        AND se.start_time < $5::time
+        AND se.end_time > $4::time
+        AND ($6::bigint IS NULL OR se.id <> $6)
+      ORDER BY se.start_time
+      LIMIT 1`,
+    [name, schoolYearId, days, startTime, endTime, excludeEntryId || null]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * A teacher can only be given a subject they are assigned to teach. The link is
+ * made on the teacher's own record (teacher_subjects), so the schedule never
+ * puts someone in front of a class they are not set up for.
+ */
+async function findTeacherSubjectMismatch(db, { teacherId, subjectId }) {
+  if (!teacherId || !subjectId) return null;
+  const { rows: [link] } = await db.query(
+    'SELECT 1 FROM teacher_subjects WHERE teacher_id = $1 AND subject_id = $2', [teacherId, subjectId]
+  );
+  if (link) return null;
+  const { rows: [info] } = await db.query(
+    `SELECT t.first_name, t.last_name, s.name AS subject_name
+       FROM teachers t, subjects s WHERE t.id = $1 AND s.id = $2`,
+    [teacherId, subjectId]
+  );
+  return info || { first_name: '', last_name: '', subject_name: '' };
+}
+
+/**
  * A section shouldn't see the same subject twice in one day — two
  * Math periods on the same Monday almost always means a mistake,
  * not a deliberate double session, regardless of which teacher or
@@ -637,6 +693,25 @@ async function createScheduleEntry(input) {
     await assertTeacherAssignable(client, input.teacherId);
     await assertSectionInYear(client, input.sectionId, input.schoolYearId);
 
+    if (input.roleType === 'subject' && input.teacherId && input.subjectId) {
+      const teacherSubjectMismatch = await findTeacherSubjectMismatch(client, input);
+      if (teacherSubjectMismatch) {
+        await client.query('ROLLBACK');
+        return { teacherSubjectMismatch };
+      }
+    }
+
+    if (input.roleType === 'subject' && input.room) {
+      const roomConflict = await findRoomConflict(client, {
+        room: input.room, schoolYearId: input.schoolYearId, days: input.days,
+        startTime: input.startTime, endTime: input.endTime,
+      });
+      if (roomConflict) {
+        await client.query('ROLLBACK');
+        return { roomConflict };
+      }
+    }
+
     if (input.roleType === 'subject' && input.teacherId) {
       const conflict = await findTeacherConflict(client, input);
       if (conflict) {
@@ -774,6 +849,30 @@ async function updateScheduleEntry(id, input) {
       }
     }
 
+    // The teacher has to be assigned to the subject. Judged on the row as it
+    // will stand, but only when the teacher or the subject is what changed, so
+    // moving an older period's time is never blocked by a link made later.
+    if (roleType === 'subject' && teacherId && subjectId
+      && (input.teacherId !== undefined || input.subjectId !== undefined)) {
+      const teacherSubjectMismatch = await findTeacherSubjectMismatch(client, { teacherId, subjectId });
+      if (teacherSubjectMismatch) {
+        await client.query('ROLLBACK');
+        return { teacherSubjectMismatch };
+      }
+    }
+
+    // A room holds one class at a time.
+    const room = input.room !== undefined ? input.room : row.room;
+    if (roleType === 'subject' && room) {
+      const roomConflict = await findRoomConflict(client, {
+        room, schoolYearId, days, startTime, endTime, excludeEntryId: id,
+      });
+      if (roomConflict) {
+        await client.query('ROLLBACK');
+        return { roomConflict };
+      }
+    }
+
     if (roleType === 'subject' && teacherId) {
       const conflict = await findTeacherConflict(client, {
         teacherId, schoolYearId, days, startTime, endTime, excludeEntryId: id,
@@ -851,7 +950,7 @@ module.exports = {
   listGradeScheduleSummary, listSectionsForGrade, listSubjects, listAllSubjects,
   listSubjectsWithUsage, getSubjectSettings, getGradeLevel, setMaxSubjects, getSectionAdviser,
   createSubject, updateSubject, deleteSubject, getSectionWeeklySchedule, findTeacherConflict,
-  findSectionPeriodOverlap, checkDailyCap,
+  findSectionPeriodOverlap, findRoomConflict, findTeacherSubjectMismatch, checkDailyCap,
   getTeacherWeeklyLoad, createScheduleEntry, updateScheduleEntry, deleteScheduleEntry,
   getTeacherAssignments, assertTeacherAssignable,
 };

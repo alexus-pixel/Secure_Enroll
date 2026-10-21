@@ -3,19 +3,18 @@ const c = require('./common');
 
 const timeString = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM.');
 
-// A period has to sit inside the half of the day its session names:
+// A period has to sit inside the window its session names:
 // a "morning" period that runs 21:00-22:00 is a typo, not a late
-// morning. Times are 24-hour HH:MM strings, so a plain string
-// compare against noon is the whole rule.
+// morning. Times are 24-hour HH:MM strings, so a plain string compare is
+// the whole rule.
 //
-//   morning   - starts AND ends before 12:00 noon
-//   afternoon - starts at 12:00 noon or later
+//   morning   - 6:00 AM to 1:00 PM
+//   afternoon - 12:00 PM to 6:00 PM
 //
 // In both cases the end still has to come after the start.
 //
 // (schedule_entries.session is a CHECK-constrained
 // 'morning' | 'afternoon', so those are the only two that exist.)
-const NOON = '12:00';
 // Every period — morning, afternoon, and a blank placeholder waiting to be
 // filled — has to sit inside the hours the school is open. Those hours are
 // the administrator's to set (System Settings), so they are read from
@@ -23,6 +22,11 @@ const NOON = '12:00';
 // because this function runs on every field of every period.
 const { getHours, clock } = require('../lib/schoolHours');
 const SESSION_LABELS = { morning: 'Morning', afternoon: 'Afternoon' };
+// Morning 6 AM-1 PM, afternoon 12 PM-6 PM (the noon-to-1 PM hour belongs to both).
+const SESSION_WINDOWS = {
+  morning: { from: '06:00', to: '13:00' },
+  afternoon: { from: '12:00', to: '18:00' },
+};
 
 /**
  * The one place the session/time rule lives. Returns null when the
@@ -32,6 +36,8 @@ const SESSION_LABELS = { morning: 'Morning', afternoon: 'Afternoon' };
  * slipped past by a request that omits a field the schema only
  * checks when it is present.
  */
+function article(word) { return /^[aeiou]/i.test(word) ? 'An' : 'A'; }
+
 function sessionTimeIssue(session, startTime, endTime) {
   const start = startTime ? String(startTime).slice(0, 5) : null;
   const end = endTime ? String(endTime).slice(0, 5) : null;
@@ -54,17 +60,20 @@ function sessionTimeIssue(session, startTime, endTime) {
   }
 
   if (!session || !SESSION_LABELS[session]) return null;
-  if (session === 'morning') {
-    if (start && start >= NOON) {
-      return { field: 'startTime', message: 'A Morning session period must start before 12:00 noon.' };
-    }
-    if (end && end >= NOON) {
-      return { field: 'endTime', message: 'A Morning session period must end before 12:00 noon.' };
-    }
-    return null;
+  // Each session has its own window, and the two share the hour from noon to
+  // 1:00 PM: the morning session runs 6:00 AM to 1:00 PM, the afternoon one
+  // 12:00 PM to 6:00 PM. A period only has to fit inside the window of the
+  // session it is filed under.
+  const win = SESSION_WINDOWS[session];
+  const label = SESSION_LABELS[session];
+  if (start && start < win.from) {
+    return { field: 'startTime', message: `${article(label)} ${label} session period cannot start before ${clock(win.from)}. The ${label} session runs ${clock(win.from)} to ${clock(win.to)}.` };
   }
-  if (start && start < NOON) {
-    return { field: 'startTime', message: 'An Afternoon session period must start at 12:00 noon or later.' };
+  if (start && start >= win.to) {
+    return { field: 'startTime', message: `${article(label)} ${label} session period must start before ${clock(win.to)}. The ${label} session runs ${clock(win.from)} to ${clock(win.to)}.` };
+  }
+  if (end && end > win.to) {
+    return { field: 'endTime', message: `${article(label)} ${label} session period must end by ${clock(win.to)}. The ${label} session runs ${clock(win.from)} to ${clock(win.to)}.` };
   }
   return null;
 }
@@ -168,14 +177,20 @@ const updateScheduleEntry = scheduleEntryBase.partial().superRefine((v, ctx) => 
   }
 });
 
+// Live availability check. Two independent questions share one endpoint: is
+// this teacher free (teacherId), and is this room free (room). Either may be
+// asked on its own.
 const conflictCheckQuery = z.object({
-  teacherId: c.id('Teacher'),
+  teacherId: c.id('Teacher').optional(),
+  room: z.preprocess((v) => (v === '' ? undefined : v), c.safeText('Room', 40).optional()),
   days: z.string().regex(/^[1-5](,[1-5]){0,4}$/, 'Days must be numbers 1-5 separated by commas.'), // parsed in controller
   startTime: timeString,
   endTime: timeString,
   excludeEntryId: c.id('Entry').optional(),
 }).refine((v) => v.startTime < v.endTime, {
   message: 'End time must be after start time.', path: ['endTime'],
+}).refine((v) => v.teacherId !== undefined || v.room !== undefined, {
+  message: 'Ask about a teacher, a room, or both.', path: ['teacherId'],
 });
 
 module.exports = {

@@ -257,9 +257,13 @@ WHERE r.name = 'registrar'
   AND p.code IN ('application.view_all','application.review','application.approve',
                  'document.verify','student.view_all');
 
--- admin gets everything
+-- admin: everything EXCEPT the registrar's work (reviewing documents, deciding
+-- an application, walk-in enrollment). Least privilege: the person who creates
+-- staff accounts must not also be able to approve enrollments.
 INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id FROM roles r, permissions p WHERE r.name = 'admin';
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'admin'
+  AND p.code NOT IN ('application.review','application.approve','document.verify');
 
 INSERT INTO grade_levels (name, sort_order) VALUES
     ('Kinder', 0), ('Grade 1', 1), ('Grade 2', 2), ('Grade 3', 3),

@@ -158,8 +158,9 @@ export default function SystemSettingsPage() {
               </div>
             </div>
             <p className="hint">
-              Class periods can only be scheduled between these two times. Morning periods still
-              run before 12:00 noon and afternoon periods from 12:00 onwards.
+              Class periods can only be scheduled between these two times. The morning session
+              runs 6:00 AM to 1:00 PM and the afternoon session 12:00 PM to 6:00 PM, so the hour
+              from noon to 1:00 PM can belong to either.
             </p>
             <button className="btn btn-primary" type="submit" disabled={saving === 'hours'}>
               {saving === 'hours' ? 'Saving...' : 'Save School Hours'}
