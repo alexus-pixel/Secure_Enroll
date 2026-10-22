@@ -39,11 +39,11 @@ const teacherFields = z.object({
         .regex(/^\d{7}$/, 'PRC license number must be exactly 7 digits.')
         .optional())),
   address: c.optionalSafeText('Address', 255),
-  // A teacher handles three to eight periods a day. Anything outside that is
+  // A teacher handles one to eight periods a day. Anything outside that is
   // either not a working day or more than a teacher's day can hold.
   maxPeriodsPerDay: z.coerce.number({ invalid_type_error: 'Periods per day must be a whole number.' })
     .int('Periods per day must be a whole number.')
-    .min(3, 'A teacher handles at least 3 periods a day.')
+    .min(1, 'A teacher handles at least 1 period a day.')
     .max(8, 'A teacher handles at most 8 periods a day.')
     .optional(),
   subjectIds: z.array(c.id('Subject')).max(40, 'Too many subjects selected.')

@@ -444,22 +444,22 @@ async function ensureSchema() {
       ADD COLUMN IF NOT EXISTS enrollment_closed_at TIMESTAMPTZ`);
 
   // --- A teacher's daily teaching load -------------------------------------
-  // A teacher handles three to eight periods a day: fewer is not a working
-  // day, more than eight does not fit a teacher's load. Caps set under the
+  // A teacher handles one to eight periods a day: no teacher is held to a
+  // minimum load, and more than eight does not fit a teacher's load. Caps set under the
   // older rules (1-20, then 10-12) are moved into range before the CHECK goes
   // on, so an existing database is not left failing it.
   await step('teacher daily cap range', `
     ALTER TABLE teachers DROP CONSTRAINT IF EXISTS teachers_max_periods_per_day_check`);
   await step('teacher daily cap backfill', `
     UPDATE teachers
-       SET max_periods_per_day = LEAST(GREATEST(COALESCE(max_periods_per_day, 8), 3), 8)
-     WHERE max_periods_per_day IS NULL OR max_periods_per_day < 3 OR max_periods_per_day > 8`);
+       SET max_periods_per_day = LEAST(GREATEST(COALESCE(max_periods_per_day, 8), 1), 8)
+     WHERE max_periods_per_day IS NULL OR max_periods_per_day < 1 OR max_periods_per_day > 8`);
   await step('teacher daily cap default', `
     ALTER TABLE teachers ALTER COLUMN max_periods_per_day SET DEFAULT 8`);
   await step('teacher daily cap check', `
     ALTER TABLE teachers
       ADD CONSTRAINT teachers_max_periods_per_day_check
-      CHECK (max_periods_per_day >= 3 AND max_periods_per_day <= 8)`);
+      CHECK (max_periods_per_day >= 1 AND max_periods_per_day <= 8)`);
 
   // --- Undoing a schedule hand-over -----------------------------------------
   // Deactivating a teacher means handing every class they still hold to

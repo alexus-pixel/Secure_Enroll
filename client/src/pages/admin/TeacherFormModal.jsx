@@ -29,12 +29,12 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
   // not every teacher on file has one recorded.
   const prcProblem = form.prcLicenseNumber && !/^\d{7}$/.test(form.prcLicenseNumber)
     ? 'PRC license number must be exactly 7 digits.' : '';
-  // A teacher handles three to eight periods a day. The server holds the same
+  // A teacher handles one to eight periods a day. The server holds the same
   // range; this is only so the form says so before Save is pressed.
   const periodsProblem = (() => {
     const n = Number(form.maxPeriodsPerDay);
     if (!Number.isInteger(n)) return 'Periods per day must be a whole number.';
-    if (n < 3) return 'A teacher handles at least 3 periods a day.';
+    if (n < 1) return 'A teacher handles at least 1 period a day.';
     if (n > 8) return 'A teacher handles at most 8 periods a day.';
     return '';
   })();
@@ -273,8 +273,8 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
             <div>
               <label className="label">Max periods per day</label>
               <input
-                className={`input${periodsProblem ? ' input-error' : ''}`} type="number" min="3" max="8" step="1"
-                placeholder="3 to 8, e.g. 8" value={form.maxPeriodsPerDay}
+                className={`input${periodsProblem ? ' input-error' : ''}`} type="number" min="1" max="8" step="1"
+                placeholder="1 to 8, e.g. 8" value={form.maxPeriodsPerDay}
                 onChange={(e) => setForm({ ...form, maxPeriodsPerDay: Number(e.target.value) })}
               />
               {periodsProblem ? <p className="field-error">{periodsProblem}</p> : null}
@@ -285,7 +285,7 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
                 in the middle of an edit form. */}
           </div>
           <p className="hint">
-            The most periods this teacher can be booked for on any single day, across every grade and section. It must be between 3 and 8, and it is separate from the school-wide weekly cap.
+            The most periods this teacher can be booked for on any single day, across every grade and section. It must be between 1 and 8, and it is separate from the school-wide weekly cap.
           </p>
 
           <div className="field">

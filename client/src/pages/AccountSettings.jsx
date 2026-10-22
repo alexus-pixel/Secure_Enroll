@@ -72,7 +72,10 @@ export default function AccountSettings() {
     };
     setProfileErrors(nextErrors);
 
-    const changingPassword = Boolean(pwForm.currentPassword || pwForm.newPassword || pwForm.confirmPassword);
+    // Only a typed NEW password means a password change. The current-password
+    // box alone does not: browsers fill it in by themselves, and that must not
+    // stop a name or email change from being saved.
+    const changingPassword = Boolean(pwForm.newPassword || pwForm.confirmPassword);
     const pwNext = changingPassword ? {
       currentPassword: pwForm.currentPassword ? '' : 'Enter your current password.',
       newPassword: validatePassword(pwForm.newPassword),
@@ -209,11 +212,11 @@ export default function AccountSettings() {
         <div className="card">
           <h2>Change Password</h2>
           <p className="hint hint-spaced">
-            Leave these three boxes empty to keep your current password.
+            Leave the new password boxes empty to keep your current password.
           </p>
           <PasswordInput
             id="currentPassword" label="Current password" value={pwForm.currentPassword}
-            onChange={updatePwField('currentPassword')} autoComplete="current-password"
+            onChange={updatePwField('currentPassword')} autoComplete="new-password"
             error={pwErrors.currentPassword} required={false}
           />
           <div className="field-grid cols-2">

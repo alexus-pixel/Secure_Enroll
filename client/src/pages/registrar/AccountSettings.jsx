@@ -59,8 +59,8 @@ export default function AccountSettings() {
 
   /**
    * One button saves the page. The name fields may not be left blank. The
-   * three password boxes are optional together: empty means "keep my
-   * password", and filling any one of them makes all three required.
+   * password boxes are optional: leaving the new-password boxes empty means
+   * "keep my password", and filling either of them makes all three required.
    */
   const [confirming, setConfirming] = useState(null);
 
@@ -69,7 +69,11 @@ export default function AccountSettings() {
     e.preventDefault();
     setNotice(null);
 
-    const changingPassword = Boolean(pw.current || pw.next || pw.confirm);
+    // A password change is only meant when a NEW password has been typed. The
+    // current-password box alone does not count: browsers fill it in by
+    // themselves with the saved password, and that must not stop a name or
+    // email change from being saved.
+    const changingPassword = Boolean(pw.next || pw.confirm);
     const found = {
       firstName: validateName(profile.firstName, { label: 'First name' }),
       lastName: validateName(profile.lastName, { label: 'Last name' }),
@@ -194,10 +198,10 @@ export default function AccountSettings() {
 
       <div className="reg-card">
         <p className="reg-card-title">Change Password</p>
-        <p className="reg-help">Leave these three boxes empty to keep your current password.</p>
+        <p className="reg-help">Leave the new password boxes empty to keep your current password. You can save your name or email without touching this section.</p>
         <PasswordInput
           {...REG_FIELD}
-          id="reg-cur" label="Current password" autoComplete="current-password"
+          id="reg-cur" label="Current password" autoComplete="new-password"
           value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })}
           error={errors.current}
         />
