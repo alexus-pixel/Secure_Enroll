@@ -10,7 +10,7 @@ const {
 } = require('../utils/validators');
 
 const AY = `(SELECT id FROM school_years WHERE is_active LIMIT 1)`;
-const { getDocumentTypes } = require('../lib/documentTypes');
+const { getDocumentTypes, appliesToKind, getApplicationKind } = require('../lib/documentTypes');
 const { assignSection, sectionsForApplication } = require('../lib/seats');
 
 // Which documents an application is reviewed against is decided in System
@@ -192,7 +192,10 @@ exports.get = async (req, res) => {
   const { rows: docs } = await pool.query(LATEST_DOCS, [a.id]);
   const types = await getDocumentTypes();
   const labelOf = Object.fromEntries(types.map((t) => [t.code, t.label]));
-  const requiredOf = Object.fromEntries(types.map((t) => [t.code, t.isRequired]));
+  // A document is only required of this application if the admin asks for it
+  // from this kind of learner (a returning-only paper is not asked of a new one).
+  const kind = await getApplicationKind(pool, a.id);
+  const requiredOf = Object.fromEntries(types.map((t) => [t.code, t.isRequired && appliesToKind(t, kind)]));
 
   const shape = (type, name) => {
     const d = docs.find((x) => x.doc_type === type);
@@ -216,7 +219,7 @@ exports.get = async (req, res) => {
   const known = new Set(types.map((t) => t.code));
   a.documents = [
     // Required documents always; optional ones only when the parent sent them.
-    ...types.filter((t) => t.isRequired || docs.some((d) => d.doc_type === t.code)).map((t) => shape(t.code, t.label)),
+    ...types.filter((t) => requiredOf[t.code] || docs.some((d) => d.doc_type === t.code)).map((t) => shape(t.code, t.label)),
     ...docs.filter((d) => !known.has(d.doc_type)).map((d) => shape(d.doc_type, d.doc_type)),
   ];
 
@@ -440,7 +443,8 @@ exports.decide = async (req, res) => {
       return res.status(400).json({ message: `Before approving, resolve the flagged or rejected documents (${problems.join(', ')}).` });
     }
     // Every document the admin marked required must be verified.
-    const open = docTypes.filter((t) => t.isRequired && statusOf[t.code] !== 'verified').map((t) => t.label);
+    const kind = await getApplicationKind(pool, req.params.id);
+    const open = docTypes.filter((t) => t.isRequired && appliesToKind(t, kind) && statusOf[t.code] !== 'verified').map((t) => t.label);
     const qualificationBlocks = a.requires_qualification && a.grade_qualification !== 'met';
     if (open.length || qualificationBlocks) {
       const parts = [];

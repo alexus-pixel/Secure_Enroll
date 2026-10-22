@@ -34,4 +34,22 @@ async function getRequiredDocumentTypes(db = pool, kind = null) {
   return (await getDocumentTypes(db)).filter((t) => t.isRequired && appliesToKind(t, kind));
 }
 
-module.exports = { getDocumentTypes, getRequiredDocumentTypes, appliesToKind };
+/**
+ * Whether an existing application is a first-time enrollment ('new') or a
+ * returning learner's ('returning'). A learner who already had an earlier
+ * application is a returning one; the system does not store the kind
+ * separately, so this is what it is judged by.
+ */
+async function getApplicationKind(db, applicationId) {
+  const { rows: [row] } = await db.query(
+    `SELECT EXISTS (
+        SELECT 1 FROM enrollment_applications p
+          JOIN enrollment_applications a ON a.id = $1
+         WHERE p.student_id = a.student_id AND p.id < a.id
+     ) AS returning`,
+    [applicationId]
+  );
+  return row && row.returning ? 'returning' : 'new';
+}
+
+module.exports = { getDocumentTypes, getRequiredDocumentTypes, appliesToKind, getApplicationKind };

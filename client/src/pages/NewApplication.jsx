@@ -88,8 +88,10 @@ export default function NewApplication() {
   // The document checklist and the grades (with slots left) come from the
   // administrator's settings, so changing them there changes this form.
   const enrollment = useEnrollment();
-  const docTypes = enrollment.documents;
-  const docLabels = Object.fromEntries(docTypes.map((d) => [d.code, d.label]));
+  // A first-time learner is only asked for the documents the administrator
+  // set for new learners (or for everyone); returning-only papers are left out.
+  const docTypes = enrollment.documents.filter((d) => !d.appliesTo || d.appliesTo === 'all' || d.appliesTo === 'new');
+  const docLabels = Object.fromEntries(enrollment.documents.map((d) => [d.code, d.label]));
   const labelOf = (code) => docLabels[code] || code.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const grades = enrollment.grades.length ? enrollment.grades : FALLBACK_GRADES;
   // Age for a grade level is counted on the first day of classes.

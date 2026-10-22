@@ -220,6 +220,9 @@ export default function Landing() {
   const data = status.data;
   const grades = data?.gradeLevels?.length ? data.gradeLevels : FALLBACK_GRADES;
   const docs = data?.documents || [];
+  // Some papers are asked of new learners only, or returning ones only.
+  const audienceNote = (d) => (d.appliesTo === 'new' ? ' (new learners only)'
+    : d.appliesTo === 'returning' ? ' (returning learners only)' : '');
   const requiredDocs = docs.filter((d) => d.required);
   const otherDocs = docs.filter((d) => !d.required);
   const home = user ? HOME_BY_ROLE[user.role] || '/dashboard' : null;
@@ -343,7 +346,7 @@ export default function Landing() {
                     <p className="lp-req-label">Required</p>
                     <ul className="lp-checklist">
                       {requiredDocs.map((d) => (
-                        <li key={d.label}><FileCheck2 size={20} aria-hidden="true" />{d.label}</li>
+                        <li key={d.label}><FileCheck2 size={20} aria-hidden="true" />{d.label}{audienceNote(d)}</li>
                       ))}
                     </ul>
                   </>
@@ -368,8 +371,8 @@ export default function Landing() {
                     <span>Full name, sex, birth date and home address.</span>
                   </li>
                   <li>
-                    <strong>LRN for Grades 1 to 6</strong>
-                    <span>The 12-digit Learner Reference Number. Kinder applicants do not need one.</span>
+                    <strong>LRN for a returning learner</strong>
+                    <span>New learners do not need one; the registrar records it. For a returning learner, have the 12-digit Learner Reference Number ready to find their record.</span>
                   </li>
                   <li>
                     <strong>An email address you can open</strong>

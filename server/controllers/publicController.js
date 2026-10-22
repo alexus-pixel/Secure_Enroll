@@ -11,7 +11,7 @@ async function enrollmentInfo(req, res) {
     const year = await getActiveSchoolYear();
     const [grades, docs] = await Promise.all([
       pool.query('SELECT name FROM grade_levels ORDER BY sort_order'),
-      pool.query('SELECT code, label, is_required FROM required_document_types WHERE is_required ORDER BY sort_order, id'),
+      pool.query('SELECT code, label, is_required, applies_to FROM required_document_types WHERE is_required ORDER BY sort_order, id'),
     ]);
     const seats = year ? await gradeSeats(pool, year.id) : [];
     res.set('Cache-Control', 'no-cache');
@@ -34,7 +34,9 @@ async function enrollmentInfo(req, res) {
         }
         : null,
       gradeLevels: grades.rows.map((g) => g.name),
-      documents: docs.rows.map((d) => ({ code: d.code, label: d.label, required: d.is_required })),
+      // appliesTo is 'all', 'new' or 'returning': the forms and the landing page
+      // show each kind of learner only the documents asked of them.
+      documents: docs.rows.map((d) => ({ code: d.code, label: d.label, required: d.is_required, appliesTo: d.applies_to })),
       // Slots left per grade, from the sections and "slots" set in School Settings.
       grades: seats.map((g) => ({ gradeLevelId: g.id, name: g.name, sortOrder: g.sortOrder, slotsLeft: g.left, totalSlots: g.capacity, sections: g.sectionCount })),
     });

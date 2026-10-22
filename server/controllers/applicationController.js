@@ -9,7 +9,7 @@ const {
   getScheduleForGuardian,
 } = require('../db/applications');
 const { getDocumentsForApplication } = require('../db/documents');
-const { getRequiredDocumentTypes } = require('../lib/documentTypes');
+const { getRequiredDocumentTypes, getApplicationKind } = require('../lib/documentTypes');
 const {
   isValidName, isValidContactNumber, isValidSex, isValidRelationship, isValidText,
   birthDateIssue, toId, addressIssue, NAME_MIN, NAME_MAX, CONTACT_MESSAGE,
@@ -332,8 +332,10 @@ async function detail(req, res) {
        WHERE ea.id = $1`,
       [req.params.id]
     );
-    // Only the documents the administrator checked in Settings are requested.
-    const documentTypes = (await getRequiredDocumentTypes()).map((t) => ({ code: t.code, label: t.label, required: true }));
+    // Only the documents the administrator checked in Settings are requested,
+    // and only those asked of this kind of learner (new or returning).
+    const kind = await getApplicationKind(pool, req.params.id);
+    const documentTypes = (await getRequiredDocumentTypes(undefined, kind)).map((t) => ({ code: t.code, label: t.label, required: true }));
     res.json({
       ...application,
       documents,
