@@ -30,6 +30,9 @@ router.get('/sections/:sectionId/entries', ...canManage, schedulesController.sec
 // holds schedule.manage but not the settings permissions — can see it
 // while viewing a schedule.
 router.get('/sections/:sectionId/adviser', ...canManage, schedulesController.sectionAdviser);
+// Show / hide a section's timetable to parents.
+router.post('/sections/:sectionId/publish', ...canManage, schedulesController.publishSchedule);
+router.delete('/sections/:sectionId/publish', ...canManage, schedulesController.unpublishSchedule);
 router.get('/conflict-check', ...canManage, validate(conflictCheckQuery, 'query'), schedulesController.checkConflict);
 router.post('/entries', ...canManage, validate(createScheduleEntry), schedulesController.createEntry);
 router.patch('/entries/:id', ...canManage, validate(updateScheduleEntry), schedulesController.updateEntry);

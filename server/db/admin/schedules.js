@@ -41,7 +41,7 @@ async function listGradeScheduleSummary(schoolYearId) {
 // null for a section that has no adviser yet.
 async function listSectionsForGrade(gradeLevelId, schoolYearId) {
   const result = await pool.query(
-    `SELECT sec.id, sec.name, sec.adviser_teacher_id,
+    `SELECT sec.id, sec.name, sec.adviser_teacher_id, sec.schedule_published_at,
             t.first_name AS adviser_first_name,
             t.last_name  AS adviser_last_name,
             t.middle_name AS adviser_middle_name,
@@ -349,6 +349,45 @@ async function getSectionWeeklySchedule(sectionId, schoolYearId) {
     [sectionId, schoolYearId]
   );
   return result.rows;
+}
+
+/**
+ * Publish (or take down) one section's timetable for parents.
+ *
+ * A parent sees a child's schedule only while the child's section is
+ * published. An empty timetable cannot be published: "assigned" means a period
+ * that has a subject, a teacher and at least one day, which is what a parent's
+ * timetable actually shows.
+ *
+ * @returns {Promise<{notFound:true}|{nothingToPublish:true}|object>}
+ */
+async function setSectionSchedulePublished(sectionId, schoolYearId, userId, publish) {
+  const { rows: [sec] } = await pool.query(
+    `SELECT sec.id, sec.name, gl.name AS grade_level_name,
+            (SELECT COUNT(*) FROM schedule_entries se
+              WHERE se.section_id = sec.id AND se.school_year_id = sec.school_year_id
+                AND se.role_type = 'subject' AND se.subject_id IS NOT NULL
+                AND se.teacher_id IS NOT NULL AND COALESCE(array_length(se.days, 1), 0) > 0)::int AS assigned
+     FROM sections sec JOIN grade_levels gl ON gl.id = sec.grade_level_id
+     WHERE sec.id = $1 AND sec.school_year_id = $2`,
+    [sectionId, schoolYearId]
+  );
+  if (!sec) return { notFound: true };
+  if (publish && sec.assigned === 0) return { nothingToPublish: true, sectionName: sec.name, gradeLevelName: sec.grade_level_name };
+
+  const { rows: [row] } = await pool.query(
+    `UPDATE sections
+        SET schedule_published_at = CASE WHEN $3 THEN now() ELSE NULL END,
+            schedule_published_by = CASE WHEN $3 THEN $4::bigint ELSE NULL END
+      WHERE id = $1 AND school_year_id = $2
+      RETURNING schedule_published_at`,
+    [sectionId, schoolYearId, publish, userId]
+  );
+  return {
+    sectionId: sec.id, sectionName: sec.name, gradeLevelName: sec.grade_level_name,
+    published: Boolean(row.schedule_published_at), publishedAt: row.schedule_published_at,
+    periods: sec.assigned,
+  };
 }
 
 /**
@@ -949,7 +988,7 @@ async function getTeacherAssignments(teacherId, schoolYearId) {
 module.exports = {
   listGradeScheduleSummary, listSectionsForGrade, listSubjects, listAllSubjects,
   listSubjectsWithUsage, getSubjectSettings, getGradeLevel, setMaxSubjects, getSectionAdviser,
-  createSubject, updateSubject, deleteSubject, getSectionWeeklySchedule, findTeacherConflict,
+  createSubject, updateSubject, deleteSubject, getSectionWeeklySchedule, setSectionSchedulePublished, findTeacherConflict,
   findSectionPeriodOverlap, findRoomConflict, findTeacherSubjectMismatch, checkDailyCap,
   getTeacherWeeklyLoad, createScheduleEntry, updateScheduleEntry, deleteScheduleEntry,
   getTeacherAssignments, assertTeacherAssignable,

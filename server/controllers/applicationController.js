@@ -6,6 +6,7 @@ const {
 const { upsertGuardian } = require('../db/guardians');
 const {
   linkStudentGuardian, createApplication, getMyApplications, getApplicationForGuardian, getActiveSchoolYear,
+  getScheduleForGuardian,
 } = require('../db/applications');
 const { getDocumentsForApplication } = require('../db/documents');
 const { getRequiredDocumentTypes } = require('../lib/documentTypes');
@@ -376,4 +377,16 @@ async function detail(req, res) {
   }
 }
 
-module.exports = { submit, promote, mine, detail };
+// The child's weekly timetable, once the school has published it.
+async function schedule(req, res) {
+  try {
+    const result = await getScheduleForGuardian(req.params.id, req.user.id);
+    if (!result) return res.status(404).json({ message: 'Application not found.' });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Could not load the schedule.' });
+  }
+}
+
+module.exports = { submit, promote, mine, detail, schedule };

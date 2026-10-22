@@ -22,6 +22,12 @@
 --   Registrar@test.com   Registrar123_    registrar
 --   Parent@test.com      Parent123_       parent, with 3 children already enrolled
 --   (every other parent in the data uses the password Parent123_)
+--
+-- LIVE DEMO OF "PUBLISH SCHEDULE"
+--   1. Sign in as Parent@test.com > Schedule > Mateo (Grade 3) or Liana (Kinder):
+--      "schedule has not been published yet".
+--   2. Sign in as Registrar@test.com > Class Schedules > Grade 3 > Rosal > Publish schedule.
+--   3. Refresh the parent's Schedule page: the weekly timetable appears.
 -- ============================================================================
 
 DO $mock$
@@ -421,7 +427,7 @@ BEGIN
 
   -- ==========================================================================
   -- 11. CLASS SCHEDULES for the seven Sampaguita sections (Monday to Friday).
-  --     The Rosal sections are left empty on purpose so a schedule can be built
+  --     Rosal sections have no timetable (except Kinder and Grade 3, see below) so one can be built
   --     live. Each grade has its own room (Kinder = Room 101 ... Grade 6 = 107).
   -- ==========================================================================
   FOR v_g IN 0..6 LOOP
@@ -454,6 +460,46 @@ BEGIN
          ARRAY[1,2,3,4,5]::smallint[], slot_start[v_p], slot_end[v_p], 'Room 10' || (v_g + 1), 'subject', sy_now, admin_id);
     END LOOP;
   END LOOP;
+
+  -- Two Rosal sections get a finished timetable but are NOT published: Kinder
+  -- and Grade 3, where Parent@test.com's children are placed. For the demo,
+  -- sign in as that parent (the schedule says "not published yet"), then publish
+  -- it as the registrar and refresh the parent's page.
+  FOR v_g IN SELECT unnest(ARRAY[0, 3]) LOOP
+    SELECT s.id INTO sec_id
+    FROM sections s JOIN grade_levels gl ON gl.id = s.grade_level_id
+    WHERE gl.sort_order = v_g AND s.school_year_id = sy_now AND s.name = 'Rosal';
+
+    n_periods := CASE WHEN v_g = 0 THEN 6 ELSE 8 END;
+    FOR v_p IN 1..n_periods LOOP
+      IF v_g = 0 THEN
+        teach_id := 2;
+        SELECT s.id INTO subj_id FROM subjects s JOIN grade_levels gl ON gl.id = s.grade_level_id
+        WHERE gl.sort_order = 0 AND s.school_year_id = sy_now ORDER BY s.id OFFSET (v_p - 1) LIMIT 1;
+      ELSE
+        -- Offset 7 is the one that no Sampaguita grade (1-6) uses, so no teacher
+        -- is ever in two classrooms at once.
+        v_fam := ((v_p - 1 + 7) % 8) + 1;
+        teach_id := 2 + v_fam;
+        SELECT s.id INTO subj_id
+        FROM mock_fam f JOIN grade_levels gl ON gl.sort_order = f.grade_sort
+        JOIN subjects s ON s.grade_level_id = gl.id AND s.school_year_id = sy_now AND s.name = f.name
+        WHERE f.grade_sort = v_g AND f.fam = v_fam;
+      END IF;
+
+      INSERT INTO schedule_entries
+        (section_id, subject_id, teacher_id, session, days, start_time, end_time, room, role_type, school_year_id, created_by)
+      VALUES
+        (sec_id, subj_id, teach_id,
+         CASE WHEN slot_start[v_p] < time '12:00' THEN 'morning' ELSE 'afternoon' END,
+         ARRAY[1,2,3,4,5]::smallint[], slot_start[v_p], slot_end[v_p], 'Room 20' || (v_g + 1), 'subject', sy_now, admin_id);
+    END LOOP;
+  END LOOP;
+
+  -- Publish the Sampaguita timetables so parents can see them. The Rosal
+  -- sections stay UNPUBLISHED.
+  UPDATE sections SET schedule_published_at = now(), schedule_published_by = registrar_id
+  WHERE school_year_id = sy_now AND name = 'Sampaguita';
 
   -- ==========================================================================
   -- 12. A SAMPLE AUDIT TRAIL (so the Audit Log page is not empty at the start)

@@ -173,6 +173,9 @@ CREATE TABLE sections (
     grade_level_id SMALLINT    NOT NULL REFERENCES grade_levels(id),
     school_year_id SMALLINT    NOT NULL REFERENCES school_years(id),
     capacity       SMALLINT    NOT NULL CHECK (capacity > 0),
+    -- NULL until the registrar/admin publishes the timetable to parents.
+    schedule_published_at TIMESTAMPTZ,
+    schedule_published_by BIGINT,
     UNIQUE (name, grade_level_id, school_year_id)
 );
 

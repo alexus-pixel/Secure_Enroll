@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams, Link, useLocation, useOutletContext } from 'react-router-dom';
 import {
-  getSectionsForGrade, getSectionSchedule,
+  getSectionsForGrade, getSectionSchedule, publishSectionSchedule, unpublishSectionSchedule,
   createScheduleEntry, deleteScheduleEntry,
   getScheduleTeachers, getGradeScheduleSummary, getScheduleSchoolYears,
 } from '../../api/admin';
@@ -40,6 +40,8 @@ export default function GradeSchedulePage() {
   const [addingPeriodFor, setAddingPeriodFor] = useState(null); // 'morning' | 'afternoon' | null
   const [newPeriodTimes, setNewPeriodTimes] = useState({ startTime: '', endTime: '' });
   const [addingPeriod, setAddingPeriod] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     // Whether THIS specific year (not necessarily the active one —
@@ -93,6 +95,32 @@ export default function GradeSchedulePage() {
     getSectionSchedule(activeSectionId, schoolYearId).then(setEntries).catch(() => {});
   }
   useEffect(reloadEntries, [activeSectionId, schoolYearId]);
+
+  // Publish shows this section's timetable to the parents of its learners;
+  // unpublish hides it again. Edits made while it is published are visible to
+  // parents straight away, which the notice below says.
+  async function handleTogglePublish() {
+    if (!activeSection) return;
+    const publish = !activeSection.schedule_published_at;
+    setPublishing(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = publish
+        ? await publishSectionSchedule(activeSection.id)
+        : await unpublishSectionSchedule(activeSection.id);
+      setSections((list) => list.map((s) => (
+        s.id === activeSection.id ? { ...s, schedule_published_at: result.published ? result.publishedAt : null } : s
+      )));
+      setNotice(publish
+        ? `${activeSection.name} schedule is now published. Parents of its learners can see it.`
+        : `${activeSection.name} schedule is unpublished. Parents can no longer see it.`);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not change the publish status.');
+    } finally {
+      setPublishing(false);
+    }
+  }
 
   async function handleRemoveEntry(id) {
     try {
@@ -177,8 +205,30 @@ export default function GradeSchedulePage() {
             </p>
           )}
         </div>
+        {activeSection && !isReadOnly && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ marginBottom: 6 }}>
+              <span className={`pill ${activeSection.schedule_published_at ? 'pill-approved' : 'pill-pending'}`}>
+                {activeSection.schedule_published_at ? 'Published to parents' : 'Not published'}
+              </span>
+            </div>
+            <button
+              className={`btn btn-sm ${activeSection.schedule_published_at ? 'btn-secondary' : 'btn-primary'}`}
+              onClick={handleTogglePublish}
+              disabled={publishing}
+            >
+              {publishing ? 'Saving…' : activeSection.schedule_published_at ? 'Unpublish schedule' : 'Publish schedule'}
+            </button>
+          </div>
+        )}
       </div>
 
+      {notice && <div className="alert alert-ok">{notice}</div>}
+      {activeSection?.schedule_published_at && !isReadOnly && !notice && (
+        <p className="muted" style={{ fontSize: 13.5, margin: '0 0 12px' }}>
+          This schedule is visible to parents. Changes you make here show to them immediately.
+        </p>
+      )}
       {isReadOnly && (
         <div className="alert" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
           {yearLabel} has ended &mdash; viewing this schedule as read-only.
@@ -191,7 +241,7 @@ export default function GradeSchedulePage() {
           <button
             key={s.id}
             className={`btn btn-sm ${activeSectionId === s.id ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setActiveSectionId(s.id)}
+            onClick={() => { setActiveSectionId(s.id); setNotice(''); setError(''); }}
             title={adviserOf(s) ? `Adviser: ${adviserOf(s)}` : 'No adviser assigned yet'}
           >
             {s.name}

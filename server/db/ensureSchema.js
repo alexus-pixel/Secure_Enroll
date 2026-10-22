@@ -206,6 +206,15 @@ async function ensureSchema() {
        AND r.name = 'admin'
        AND p.code IN ('application.review', 'application.approve', 'document.verify')`);
 
+  // --- A section's timetable is shown to parents only once it is published ---
+  // NULL = not published (parents see "not published yet"). The registrar or
+  // administrator publishes it from the class-schedule page when it is ready,
+  // and can take it back down again.
+  await step('sections.schedule_published_at', `
+    ALTER TABLE sections
+      ADD COLUMN IF NOT EXISTS schedule_published_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS schedule_published_by BIGINT REFERENCES users(id) ON DELETE SET NULL`);
+
   // --- A school year created automatically needs its dates confirmed --------
   await step('school year dates confirmed', `
     ALTER TABLE school_years

@@ -31,6 +31,11 @@ export const checkTeacherEmail = (email) =>
   api.get('/admin/teachers/check-email', { params: { email } }).then((r) => r.data);
 export const createSubject = (data) => api.post('/admin/schedules/subjects', data).then((r) => r.data);
 export const deleteSubject = (id) => api.delete(`/admin/schedules/subjects/${id}`).then((r) => r.data);
+// Show / hide a section's timetable to parents.
+export const publishSectionSchedule = (sectionId) =>
+  api.post(`/admin/schedules/sections/${sectionId}/publish`).then((r) => r.data);
+export const unpublishSectionSchedule = (sectionId) =>
+  api.delete(`/admin/schedules/sections/${sectionId}/publish`).then((r) => r.data);
 export const getSectionSchedule = (sectionId, schoolYearId) =>
   api.get(`/admin/schedules/sections/${sectionId}/entries`, { params: { schoolYearId } }).then((r) => r.data);
 export const checkScheduleConflict = (params) =>

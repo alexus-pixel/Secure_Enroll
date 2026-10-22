@@ -248,6 +248,40 @@ async function sectionSchedule(req, res) {
 }
 
 /**
+ * Publish / unpublish a section's timetable for parents. Works on the active
+ * school year only, the same as every other edit on the schedule page.
+ * POST publishes, DELETE takes it down.
+ */
+function publishHandler(publish) {
+  return async (req, res) => {
+    try {
+      const sectionId = Number(req.params.sectionId);
+      if (!Number.isInteger(sectionId) || sectionId <= 0) return res.status(400).json({ message: 'Invalid section.' });
+      const activeYear = await settingsDb.getActiveSchoolYear();
+      if (!activeYear) return res.status(404).json({ message: 'No active school year is set.' });
+
+      const result = await schedulesDb.setSectionSchedulePublished(sectionId, activeYear.id, req.user.id, publish);
+      if (result.notFound) return res.status(404).json({ message: 'Section not found in the active school year.' });
+      if (result.nothingToPublish) {
+        return res.status(409).json({
+          message: `${result.gradeLevelName} · ${result.sectionName} has no scheduled periods yet. Add at least one subject with a teacher before publishing.`,
+          reason: 'nothing_to_publish',
+        });
+      }
+      await logAudit(req.user.id, publish ? 'SCHEDULE_PUBLISHED' : 'SCHEDULE_UNPUBLISHED', 'section', sectionId, req, {
+        section: result.sectionName, grade: result.gradeLevelName, periods: result.periods,
+      });
+      res.json(result);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: publish ? 'Could not publish the schedule.' : 'Could not unpublish the schedule.' });
+    }
+  };
+}
+const publishSchedule = publishHandler(true);
+const unpublishSchedule = publishHandler(false);
+
+/**
  * Live-availability check for the Add Subject Schedule panel: as
  * the admin picks a teacher, session, day(s) and time, this tells
  * the UI whether that combination is free — without saving
@@ -495,5 +529,5 @@ module.exports = {
   scheduleSchoolYears, scheduleTeachers,
   gradeSummary, sectionsForGrade, subjectsForGrade, subjectSettings, allSubjects,
   createSubject, updateSubject, deleteSubject, setMaxSubjects,
-  sectionSchedule, sectionAdviser, checkConflict, createEntry, updateEntry, deleteEntry, teacherAssignments,
+  sectionSchedule, sectionAdviser, publishSchedule, unpublishSchedule, checkConflict, createEntry, updateEntry, deleteEntry, teacherAssignments,
 };
