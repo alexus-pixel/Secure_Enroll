@@ -2,6 +2,7 @@ const pool = require('../../db/pool');
 const walkInDb = require('../../db/admin/walkInEnrollment');
 const { checkParentEmail } = require('../../lib/parentEmail');
 const { sendVerificationEmail } = require('../authController');
+const { notifyApplicationDecision } = require('../../mailer');
 const settingsDb = require('../../db/admin/settings');
 const { logAudit } = require('../../lib/audit');
 const { sendDbError } = require('../../utils/dbErrors');
@@ -118,6 +119,12 @@ async function create(req, res) {
         setPassword: true, sentBy: staff || null,
       });
       result.verificationSent = mail.ok;
+    }
+    else if (result.applicationId) {
+      // An existing parent account gets the same "approved, here is the
+      // section" email an online approval sends. (A new account already got the
+      // invitation above, which says the child was enrolled.)
+      notifyApplicationDecision(result.applicationId, 'approved'); // background, never throws
     }
 
     await logAudit(req.user.id, 'WALKIN_ENROLLMENT_CREATED', 'enrollment_application', result.applicationId, req, {

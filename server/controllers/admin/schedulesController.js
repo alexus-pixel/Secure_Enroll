@@ -3,6 +3,7 @@ const { sendDbError } = require('../../utils/dbErrors');
 const settingsDb = require('../../db/admin/settings');
 const pool = require('../../db/pool');
 const { logAudit } = require('../../lib/audit');
+const { notifySchedulePublished } = require('../../mailer');
 
 // Every read endpoint on this page can be pointed at a specific
 // past school year via ?schoolYearId=, for the "view a previous
@@ -271,6 +272,7 @@ function publishHandler(publish) {
       await logAudit(req.user.id, publish ? 'SCHEDULE_PUBLISHED' : 'SCHEDULE_UNPUBLISHED', 'section', sectionId, req, {
         section: result.sectionName, grade: result.gradeLevelName, periods: result.periods,
       });
+      if (publish) notifySchedulePublished(sectionId); // email the parents; background, never throws
       res.json(result);
     } catch (err) {
       console.error(err);

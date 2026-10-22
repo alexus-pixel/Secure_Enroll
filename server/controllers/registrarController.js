@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const pool = require('../db/pool');
-const { notifyLrnRecorded, notifyLrnFlagged } = require('../mailer');
+const { notifyLrnRecorded, notifyLrnFlagged, notifyApplicationDecision } = require('../mailer');
 const { UPLOAD_DIR } = require('../middleware/upload');
 const {
   isValidName, passwordIssues, PASSWORD_MAX_BYTES, NOTE_MAX, REMARK_MAX, NAME_MIN, NAME_MAX,
@@ -501,6 +501,7 @@ exports.decide = async (req, res) => {
     client.release();
   }
   await audit(pool, req, 'APPLICATION_' + status.toUpperCase(), req.params.id, { remarks });
+  notifyApplicationDecision(req.params.id, status); // email the parent (FR-REV-02); background, never throws
   res.json({ ok: true, status });
 };
 
@@ -529,6 +530,7 @@ exports.assignSection = async (req, res) => {
     if (!placed.ok) { await client.query('ROLLBACK'); return res.status(placed.status).json({ message: placed.message }); }
     await client.query('COMMIT');
     await audit(pool, req, 'APPLICATION_SECTION_ASSIGNED', req.params.id, { sectionId });
+    notifyApplicationDecision(req.params.id, 'placed'); // background, never throws
     res.json({ ok: true, section: placed.sectionName });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
