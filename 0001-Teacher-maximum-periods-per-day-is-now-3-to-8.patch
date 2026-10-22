@@ -1,0 +1,169 @@
+From 3224a39849af5e71929d2abd39cf4a00af012c3c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 22 Oct 2026 11:13:09 +0800
+Subject: [PATCH] Teacher maximum periods per day is now 3 to 8
+
+The Add/Edit Teacher form, the API validator and the database CHECK all
+use 3-8 (default 8). Existing teachers outside the range are moved to the
+nearest limit by the idempotent startup patch; demo data uses 8.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019759nyLiP6iY4Tc6TxEvTM
+---
+ client/src/pages/admin/TeacherFormModal.jsx | 14 +++++++-------
+ server/db/admin/schedules.js                |  2 +-
+ server/db/admin/teachers.js                 |  2 +-
+ server/db/ensureSchema.js                   | 17 ++++++++---------
+ server/db/mock_data.sql                     |  2 +-
+ server/validators/teacherValidators.js      |  8 ++++----
+ 6 files changed, 22 insertions(+), 23 deletions(-)
+
+diff --git a/client/src/pages/admin/TeacherFormModal.jsx b/client/src/pages/admin/TeacherFormModal.jsx
+index 15d5509..b7c28d3 100644
+--- a/client/src/pages/admin/TeacherFormModal.jsx
++++ b/client/src/pages/admin/TeacherFormModal.jsx
+@@ -20,7 +20,7 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
+     sex: teacher?.sex || '',
+     prcLicenseNumber: teacher?.prc_license_number || '',
+     address: teacher?.address || '',
+-    maxPeriodsPerDay: teacher?.max_periods_per_day || 10,
++    maxPeriodsPerDay: teacher?.max_periods_per_day || 8,
+     subjectIds: teacher?.subject_ids ? [...teacher.subject_ids] : [],
+   });
+   const [error, setError] = useState('');
+@@ -29,13 +29,13 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
+   // not every teacher on file has one recorded.
+   const prcProblem = form.prcLicenseNumber && !/^\d{7}$/.test(form.prcLicenseNumber)
+     ? 'PRC license number must be exactly 7 digits.' : '';
+-  // A full teaching day is ten to twelve periods. The server holds the same
++  // A teacher handles three to eight periods a day. The server holds the same
+   // range; this is only so the form says so before Save is pressed.
+   const periodsProblem = (() => {
+     const n = Number(form.maxPeriodsPerDay);
+     if (!Number.isInteger(n)) return 'Periods per day must be a whole number.';
+-    if (n < 10) return 'A teacher handles at least 10 periods a day.';
+-    if (n > 12) return 'A teacher handles at most 12 periods a day.';
++    if (n < 3) return 'A teacher handles at least 3 periods a day.';
++    if (n > 8) return 'A teacher handles at most 8 periods a day.';
+     return '';
+   })();
+ 
+@@ -273,8 +273,8 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
+             <div>
+               <label className="label">Max periods per day</label>
+               <input
+-                className={`input${periodsProblem ? ' input-error' : ''}`} type="number" min="10" max="12" step="1"
+-                placeholder="10 to 12, e.g. 10" value={form.maxPeriodsPerDay}
++                className={`input${periodsProblem ? ' input-error' : ''}`} type="number" min="3" max="8" step="1"
++                placeholder="3 to 8, e.g. 8" value={form.maxPeriodsPerDay}
+                 onChange={(e) => setForm({ ...form, maxPeriodsPerDay: Number(e.target.value) })}
+               />
+               {periodsProblem ? <p className="field-error">{periodsProblem}</p> : null}
+@@ -285,7 +285,7 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
+                 in the middle of an edit form. */}
+           </div>
+           <p className="hint">
+-            The most periods this teacher can be booked for on any single day, across every grade and section \u2014 between 10 and 12, and separate from the school-wide weekly cap.
++            The most periods this teacher can be booked for on any single day, across every grade and section. It must be between 3 and 8, and it is separate from the school-wide weekly cap.
+           </p>
+ 
+           <div className="field">
+diff --git a/server/db/admin/schedules.js b/server/db/admin/schedules.js
+index 0e004f4..d336793 100644
+--- a/server/db/admin/schedules.js
++++ b/server/db/admin/schedules.js
+@@ -612,7 +612,7 @@ async function getTeacherDailyLoad(db, teacherId, schoolYearId, day, excludeEntr
+ 
+ async function getTeacherMaxPeriodsPerDay(db, teacherId) {
+   const result = await db.query('SELECT max_periods_per_day FROM teachers WHERE id = $1', [teacherId]);
+-  return result.rows[0]?.max_periods_per_day ?? 10;
++  return result.rows[0]?.max_periods_per_day ?? 8;
+ }
+ 
+ // Each teacher has their own editable daily cap (teachers.max_periods_per_day,
+diff --git a/server/db/admin/teachers.js b/server/db/admin/teachers.js
+index a828d40..0ff4517 100644
+--- a/server/db/admin/teachers.js
++++ b/server/db/admin/teachers.js
+@@ -153,7 +153,7 @@ async function createTeacher(db, {
+      VALUES ($1, $2, $3, $4, pgp_sym_encrypt($5::text, $13), $6, $7, $8, $9, $10,
+              CASE WHEN $11::text IS NULL THEN NULL ELSE pgp_sym_encrypt($11::text, $13) END,
+              -- A full teaching day, when the form did not say otherwise.
+-             COALESCE($12, 10), $14)
++             COALESCE($12, 8), $14)
+      RETURNING id, first_name, last_name, email`,
+     [
+       firstName, middleName || null, lastName, email, contactNumber || null, degree || null, major || null,
+diff --git a/server/db/ensureSchema.js b/server/db/ensureSchema.js
+index 602e9d2..e5416d6 100644
+--- a/server/db/ensureSchema.js
++++ b/server/db/ensureSchema.js
+@@ -444,23 +444,22 @@ async function ensureSchema() {
+       ADD COLUMN IF NOT EXISTS enrollment_closed_at TIMESTAMPTZ`);
+ 
+   // --- A teacher's daily teaching load -------------------------------------
+-  // A full teaching day here is ten to twelve periods, so the per-teacher cap
+-  // is only meaningful inside that range: below ten it is not a working day,
+-  // above twelve there is no room left for it in a 6 AM - 6 PM school day.
+-  // Caps set under the older 1-20 rule are moved into range before the
+-  // tighter CHECK goes on, so an existing database is not left failing it.
++  // A teacher handles three to eight periods a day: fewer is not a working
++  // day, more than eight does not fit a teacher's load. Caps set under the
++  // older rules (1-20, then 10-12) are moved into range before the CHECK goes
++  // on, so an existing database is not left failing it.
+   await step('teacher daily cap range', `
+     ALTER TABLE teachers DROP CONSTRAINT IF EXISTS teachers_max_periods_per_day_check`);
+   await step('teacher daily cap backfill', `
+     UPDATE teachers
+-       SET max_periods_per_day = LEAST(GREATEST(COALESCE(max_periods_per_day, 10), 10), 12)
+-     WHERE max_periods_per_day IS NULL OR max_periods_per_day < 10 OR max_periods_per_day > 12`);
++       SET max_periods_per_day = LEAST(GREATEST(COALESCE(max_periods_per_day, 8), 3), 8)
++     WHERE max_periods_per_day IS NULL OR max_periods_per_day < 3 OR max_periods_per_day > 8`);
+   await step('teacher daily cap default', `
+-    ALTER TABLE teachers ALTER COLUMN max_periods_per_day SET DEFAULT 10`);
++    ALTER TABLE teachers ALTER COLUMN max_periods_per_day SET DEFAULT 8`);
+   await step('teacher daily cap check', `
+     ALTER TABLE teachers
+       ADD CONSTRAINT teachers_max_periods_per_day_check
+-      CHECK (max_periods_per_day >= 10 AND max_periods_per_day <= 12)`);
++      CHECK (max_periods_per_day >= 3 AND max_periods_per_day <= 8)`);
+ 
+   // --- Undoing a schedule hand-over -----------------------------------------
+   // Deactivating a teacher means handing every class they still hold to
+diff --git a/server/db/mock_data.sql b/server/db/mock_data.sql
+index 0d620b9..dc84c96 100644
+--- a/server/db/mock_data.sql
++++ b/server/db/mock_data.sql
+@@ -204,7 +204,7 @@ BEGIN
+   INSERT INTO teachers (first_name, middle_name, last_name, email, contact_number, degree, major, date_hired,
+                         is_active, status, sex, prc_license_number, address, max_periods_per_day, created_by)
+   SELECT t.first_name, t.middle_name, t.last_name, t.email, pgp_sym_encrypt(t.phone, enc_key), t.degree, t.major, t.hired,
+-         TRUE, 'active', t.sex, t.prc, pgp_sym_encrypt(t.addr, enc_key), 10, admin_id
++         TRUE, 'active', t.sex, t.prc, pgp_sym_encrypt(t.addr, enc_key), 8, admin_id
+   FROM (VALUES
+     (1,  'Maria Cristina', 'Lopez',   'Reyes',      'maria.reyes@caloocan-es.example',      '09181110001', 'BEEd', 'Generalist',        date '2012-06-04', 'female', '1000001', 'Blk 4 Lot 2 Libis Street, Brgy. 28, Caloocan City'),
+     (2,  'Jocelyn',        'Ramos',   'Santos',     'jocelyn.santos@caloocan-es.example',   '09181110002', 'BEEd', 'Generalist',        date '2014-06-02', 'female', '1000002', 'Blk 9 Lot 7 Congress Road, Brgy. 171, Caloocan City'),
+diff --git a/server/validators/teacherValidators.js b/server/validators/teacherValidators.js
+index 409df54..d1bec5a 100644
+--- a/server/validators/teacherValidators.js
++++ b/server/validators/teacherValidators.js
+@@ -39,12 +39,12 @@ const teacherFields = z.object({
+         .regex(/^\d{7}$/, 'PRC license number must be exactly 7 digits.')
+         .optional())),
+   address: c.optionalSafeText('Address', 255),
+-  // A full teaching day is ten to twelve periods. Anything outside that is
+-  // either not a working day or more than a 6 AM - 6 PM day holds.
++  // A teacher handles three to eight periods a day. Anything outside that is
++  // either not a working day or more than a teacher's day can hold.
+   maxPeriodsPerDay: z.coerce.number({ invalid_type_error: 'Periods per day must be a whole number.' })
+     .int('Periods per day must be a whole number.')
+-    .min(10, 'A teacher handles at least 10 periods a day.')
+-    .max(12, 'A teacher handles at most 12 periods a day.')
++    .min(3, 'A teacher handles at least 3 periods a day.')
++    .max(8, 'A teacher handles at most 8 periods a day.')
+     .optional(),
+   subjectIds: z.array(c.id('Subject')).max(40, 'Too many subjects selected.')
+     .refine((list) => new Set(list).size === list.length, 'A subject was selected twice.')
+-- 
+2.43.0
+
