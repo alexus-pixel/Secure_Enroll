@@ -784,4 +784,23 @@ table.data tr.is-selected { background: var(--accent-soft); }
 .tt-time { font-size: 12.5px; color: var(--muted); background: var(--surface-2); }
 .tt-subject { font-weight: 600; font-size: 13.5px; }
 .tt-sub { font-size: 12.5px; color: var(--muted); }
-@media print { .no-print { display: none !important; } }
+/* Printing a timetable: landscape, no navigation, and a table that shrinks to
+   the paper instead of keeping its on-screen minimum width (which cut off the
+   right-hand days). */
+@media print {
+  @page { size: landscape; margin: 8mm; }
+  .no-print, .sidebar, .sidebar-backdrop, .topbar, .verify-banner, .schedule-tabs, .page-head p { display: none !important; }
+  body { background: #fff !important; }
+  .container { max-width: none !important; margin: 0 !important; padding: 0 !important; }
+  .card { border: 0 !important; box-shadow: none !important; }
+  .tt-scroll { overflow: visible !important; }
+  .tt-grid { min-width: 0 !important; width: 100%; grid-template-columns: 78px repeat(5, minmax(0, 1fr)); }
+  .tt-cell { padding: 3px 5px; min-height: 0; }
+  .card-flush div[style*="padding: 24px"] { padding: 0 !important; }
+  .page-head { margin-bottom: 6px !important; }
+  .tt-head { margin-bottom: 8px; }
+  .tt-session h3 { margin: 0 0 4px; font-size: 14px; }
+  .tt-subject { font-size: 11.5px; }
+  .tt-sub, .tt-time { font-size: 10px; }
+  .tt-session { break-inside: avoid; margin-bottom: 8px; }
+}
