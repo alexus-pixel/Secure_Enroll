@@ -3,6 +3,7 @@ const { sendVerificationEmail } = require('../authController');
 const { logAudit } = require('../../lib/audit');
 const { sendDbError } = require('../../utils/dbErrors');
 const { checkEmailAcceptable } = require('../../lib/emailGate');
+const { confirmPassword } = require('../../lib/confirmPassword');
 
 // A staff address may be on the school's own domain, so Gmail is not required
 // of it — the rest of the gate is (lib/emailGate.js).
@@ -92,6 +93,9 @@ async function setActive(req, res) {
     if (sameUser(targetId, req) && req.body.isActive === false) {
       return res.status(400).json({ message: "You can't disable your own account." });
     }
+    // Switching an account on or off is sensitive, so the administrator
+    // has to type their own password again, not just be signed in.
+    if (!(await confirmPassword(req, res, req.body.isActive ? 'USER_ENABLED' : 'USER_DISABLED'))) return;
     const updated = await usersDb.setUserActive(targetId, req.body.isActive);
     if (!updated) return res.status(404).json({ message: 'User not found.' });
 

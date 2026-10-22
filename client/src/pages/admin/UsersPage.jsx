@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import { getUsers, getUserCounts, getRoles, createUser, setUserActive } from '../../api/admin';
 import UserFormModal from './UserFormModal';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import PasswordInput from '../../components/PasswordInput';
 import Pagination, { usePagination } from '../../components/Pagination';
 import ColumnFilterIcon from './ColumnFilterIcon';
 import useAutoRefresh, { useAlive, keepIfSame } from '../../hooks/useAutoRefresh';
@@ -19,6 +20,10 @@ export default function UsersPage() {
   const [addingUser, setAddingUser] = useState(false);
   const [togglingUser, setTogglingUser] = useState(null); // the account being turned on/off
   const [toggleBusy, setToggleBusy] = useState(false);
+  // The administrator's own password, asked for before an account is switched
+  // on or off. It is cleared whenever the dialog closes.
+  const [togglePassword, setTogglePassword] = useState('');
+  const [toggleError, setToggleError] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const alive = useAlive();
@@ -42,6 +47,12 @@ export default function UsersPage() {
   // underneath them would be no help to anyone mid-decision.
   useAutoRefresh(load, { paused: addingUser || Boolean(togglingUser) });
 
+  const closeToggle = useCallback(() => {
+    setTogglingUser(null);
+    setTogglePassword('');
+    setToggleError('');
+  }, []);
+
   async function handleCreate(form) {
     const created = await createUser(form);
     setAddingUser(false);
@@ -55,16 +66,26 @@ export default function UsersPage() {
   }
 
   async function handleToggleActive() {
+    if (!togglePassword) { setToggleError('Enter your password to confirm.'); return; }
     setToggleBusy(true);
     setError('');
     setNotice('');
+    setToggleError('');
     try {
-      await setUserActive(togglingUser.id, !togglingUser.is_active);
-      setTogglingUser(null);
+      await setUserActive(togglingUser.id, !togglingUser.is_active, togglePassword);
+      closeToggle();
       load();
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not change that account.');
-      setTogglingUser(null);
+      const status = err.response?.status;
+      const message = err.response?.data?.message || 'Could not change that account.';
+      if (status === 401 || status === 400 || status === 429) {
+        // A wrong or missing password: stay in the dialog so it can be retyped.
+        setToggleError(message);
+        setTogglePassword('');
+      } else {
+        setError(message);
+        closeToggle();
+      }
     } finally {
       setToggleBusy(false);
     }
@@ -227,8 +248,9 @@ export default function UsersPage() {
           confirmLabel={togglingUser.is_active ? 'Deactivate account' : 'Activate account'}
           tone={togglingUser.is_active ? 'danger' : 'primary'}
           busy={toggleBusy}
+          disabled={!togglePassword}
           onConfirm={handleToggleActive}
-          onClose={() => setTogglingUser(null)}
+          onClose={closeToggle}
         >
           <p><b>{togglingUser.email}</b></p>
           <p>
@@ -236,6 +258,14 @@ export default function UsersPage() {
               ? 'They will be signed out and will not be able to sign in again until the account is activated. Nothing they have already done is removed.'
               : 'They will be able to sign in again with their existing password.'}
           </p>
+          <p>This is a sensitive action. Enter <b>your own</b> administrator password to confirm it.</p>
+          <div onKeyDown={(e) => { if (e.key === 'Enter' && togglePassword && !toggleBusy) handleToggleActive(); }}>
+            <PasswordInput
+              id="confirm_admin_password" label="Your password" value={togglePassword}
+              onChange={(e) => { setTogglePassword(e.target.value); setToggleError(''); }}
+              autoComplete="current-password" error={toggleError}
+            />
+          </div>
         </ConfirmDialog>
       )}
     </div>

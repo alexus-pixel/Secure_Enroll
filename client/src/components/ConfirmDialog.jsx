@@ -25,7 +25,8 @@ export default function ConfirmDialog({
 
   useEffect(() => {
     opener.current = document.activeElement;
-    panel.current?.querySelector('button')?.focus();
+    // A dialog that asks for something typed (a password) starts in that box.
+    panel.current?.querySelector('input, button')?.focus();
     const onKey = (e) => { if (e.key === 'Escape' && !busy) onClose(); };
     document.addEventListener('keydown', onKey);
     return () => {

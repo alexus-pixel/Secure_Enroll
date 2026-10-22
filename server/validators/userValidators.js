@@ -31,6 +31,10 @@ const updateUserRole = z.object({
 
 const setUserActive = z.object({
   isActive: z.boolean({ invalid_type_error: 'isActive must be true or false.' }),
+  // The administrator's own password, asked for again because switching an
+  // account on or off is sensitive. It is only passed through here; whether it
+  // is present and correct is checked in lib/confirmPassword.js.
+  password: z.string({ invalid_type_error: 'Password must be text.' }).max(200).optional(),
 });
 
 const resetPassword = z.object({

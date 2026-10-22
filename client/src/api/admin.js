@@ -8,7 +8,9 @@ export const getUsers = (params) => api.get('/admin/users', { params }).then((r)
 export const getUserCounts = () => api.get('/admin/users/counts').then((r) => r.data);
 export const getRoles = () => api.get('/admin/users/roles').then((r) => r.data);
 export const createUser = (data) => api.post('/admin/users', data).then((r) => r.data);
-export const setUserActive = (id, isActive) => api.patch(`/admin/users/${id}/active`, { isActive }).then((r) => r.data);
+// The administrator's own password is sent too: the server asks for it again
+// before an account is switched on or off.
+export const setUserActive = (id, isActive, password) => api.patch(`/admin/users/${id}/active`, { isActive, password }).then((r) => r.data);
 
 // ---------- Teachers ----------
 export const getTeachers = (search) => api.get('/admin/teachers', { params: { search } }).then((r) => r.data);
