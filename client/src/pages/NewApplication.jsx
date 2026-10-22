@@ -11,7 +11,7 @@ import { sampleFor } from '../utils/samplePlaceholders';
 import {
   validateName, validateContactNumber, validateAddress, validateLrn, validateBirthDate, validateFile,
   validateBirthDateForGrade, validateMiddleName, FILE_ACCEPT,
-  birthDateBounds, sanitizePhone, sanitizeLrn, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
+  birthDateBounds, sanitizePhone, RELATIONSHIPS, NAME_MAX, ADDRESS_MAX,
 } from '../utils/validators';
 
 // Shown only until the school's grade list loads from the server.
@@ -32,7 +32,7 @@ function slotsText(g) {
 const BIRTH_BOUNDS = birthDateBounds();
 
 const FRESH_FIELDS = [
-  'firstName', 'middleName', 'lastName', 'birthDate', 'lrn',
+  'firstName', 'middleName', 'lastName', 'birthDate',
   'guardianFirstName', 'guardianMiddleName', 'guardianLastName',
   'relationshipOther', 'contactNumber', 'address',
 ];
@@ -46,14 +46,6 @@ function validateField(name, form, context = {}) {
       return context.grade
         ? validateBirthDateForGrade(form.birthDate, context.grade, context.yearStartsOn)
         : validateBirthDate(form.birthDate);
-    case 'lrn': {
-      // Kinder is the entry grade and the only one where a learner may have no
-      // LRN yet. Which grade that is comes from the server's own sort order,
-      // not from a hardcoded id, so renumbering the grades cannot silently
-      // change the rule.
-      const entryGrade = context.grade ? context.grade.sortOrder === 0 : form.gradeLevelId === '1';
-      return validateLrn(form.lrn, { required: !entryGrade });
-    }
     case 'guardianFirstName': return validateName(form.guardianFirstName, { label: 'First name' });
     case 'guardianMiddleName':
       return validateMiddleName(form.guardianMiddleName, { none: form.guardianNoMiddleName });
@@ -181,7 +173,7 @@ export default function NewApplication() {
   // ---------------- Fresh application ----------------
   const { user } = useAuth();
   const [form, setForm] = useState({
-    firstName: '', middleName: '', noMiddleName: false, lastName: '', birthDate: '', sex: 'F', lrn: '',
+    firstName: '', middleName: '', noMiddleName: false, lastName: '', birthDate: '', sex: 'F',
     guardianFirstName: user?.firstName || '', guardianMiddleName: user?.middleName || '',
     guardianNoMiddleName: false, guardianLastName: user?.lastName || '',
     relationship: 'Mother', relationshipOther: '', contactNumber: '', address: '',
@@ -206,8 +198,8 @@ export default function NewApplication() {
   const [files, setFiles] = useState({});
   const [fileErrors, setFileErrors] = useState({});
 
-  // The grade level decides the age window and whether the LRN is required,
-  // so both are re-checked whenever it changes.
+  // The grade level decides the age window, so it is re-checked whenever the
+  // grade changes. (A new learner's LRN is entered by the registrar, not here.)
   const chosenGrade = grades.find((g) => String(g.id) === String(form.gradeLevelId)) || null;
   const ageContext = {
     grade: chosenGrade && chosenGrade.sortOrder !== undefined
@@ -215,12 +207,6 @@ export default function NewApplication() {
     yearStartsOn,
   };
   const checkField = (field, next) => validateField(field, next, ageContext);
-  // The entry grade is the one the school lists first, not whichever id it
-  // happens to have; a learner entering any grade above it already has an LRN.
-  const isEntryGrade = chosenGrade && chosenGrade.sortOrder !== undefined
-    ? chosenGrade.sortOrder === 0
-    : String(form.gradeLevelId) === '1';
-
   const update = (field) => (e) => {
     const next = { ...form, [field]: e.target.value };
     setForm(next);
@@ -241,14 +227,11 @@ export default function NewApplication() {
       };
       setErrors((prev) => ({
         ...prev,
-        lrn: touched.lrn ? validateField('lrn', next, nextContext) : prev.lrn,
         birthDate: next.birthDate ? validateField('birthDate', next, nextContext) : prev.birthDate,
       }));
     }
   };
-  // The LRN box accepts digits only, never more than 12.
   const updatePhone = (e) => update('contactNumber')({ target: { value: sanitizePhone(e.target.value) } });
-  const updateLrn = (e) => update('lrn')({ target: { value: sanitizeLrn(e.target.value) } });
   // Ticking "No middle name" clears the box and settles the field.
   const toggleNoMiddle = (key, nameKey) => (checked) => {
     const next = { ...form, [key]: checked, ...(checked ? { [nameKey]: '' } : {}) };
@@ -315,9 +298,6 @@ export default function NewApplication() {
     setError('');
 
     // Check every field at once so the parent sees all the problems together.
-    // LRN is only genuinely optional for Kinder -- reaching Grade 1 or above
-    // means the student has been enrolled somewhere in DepEd's system before,
-    // so they should already have one.
     const found = {};
     FRESH_FIELDS.forEach((f) => { found[f] = checkField(f, form); });
     setErrors(found);
@@ -357,7 +337,6 @@ export default function NewApplication() {
         relationshipOther: form.relationship === 'Other' ? trim(form.relationshipOther) : undefined,
         contactNumber: trim(form.contactNumber),
         address: trim(form.address).replace(/\s+/g, ' '),
-        lrn: trim(form.lrn) || undefined,
       });
       const failed = await uploadDocuments(data.id, files, labelOf);
       if (failed.length) {
@@ -531,20 +510,10 @@ export default function NewApplication() {
                   <option value="F">Female</option><option value="M">Male</option>
                 </select></div>
             </div>
-            <div className="field">
-              <label className="label" htmlFor="lrn">
-                Learner Reference Number (LRN){isEntryGrade ? ' \u2014 if already assigned' : ''}
-              </label>
-              <input {...inputProps('lrn')} onChange={updateLrn} inputMode="numeric" autoComplete="off"
-                maxLength={12} />
-              {errors.lrn
-                ? <p className="field-error">{errors.lrn}</p>
-                : <p className="hint hint-spaced">
-                    {isEntryGrade
-                      ? 'Leave this blank for a first-time Kinder entrant \u2014 the school assigns one.'
-                      : 'Required \u2014 a student entering Grade 1 or above should already have an LRN from a previous enrollment.'}
-                  </p>}
-            </div>
+            <p className="hint hint-spaced">
+              You do not need to enter a Learner Reference Number (LRN). The school registrar records it
+              from your child&rsquo;s documents during enrollment.
+            </p>
           </div>
 
           <div className="card">

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import api from '../../api/client';
 import StatusBadge from '../../components/registrar/StatusBadge';
+import LrnEntry from '../../components/registrar/LrnEntry';
 // Loaded only when a registrar opens a document, so the PDF engine is never
 // downloaded for parents or for pages that don't need it.
 const DocumentViewer = lazy(() => import('../../components/registrar/DocumentViewer'));
@@ -243,8 +244,19 @@ export default function ApplicationView() {
         <StatusBadge status={app.status} />
       </p>
 
-      {app.missingLrn && !app.lrnFlaggedAt && (
-        <div className="reg-banner">This student has no LRN on file yet. You can enter it under Missing LRN.</div>
+      {/* A new learner's LRN is not asked of the parent. The registrar reads it
+          from the submitted documents (for example the report card) or the DepEd
+          LIS and records it here, during review. */}
+      {app.missingLrn && (
+        <div className="reg-card">
+          <p className="reg-card-label">Learner Reference Number</p>
+          <div className="reg-item-meta" style={{ marginBottom: 8 }}>
+            {app.lrnFlaggedAt
+              ? 'The previous LRN was flagged and removed. Enter the correct 12-digit LRN from the report card or the DepEd LIS.'
+              : 'No LRN is on file yet. Read it from the submitted documents (for example the report card) or the DepEd LIS and enter it here.'}
+          </div>
+          <LrnEntry studentId={app.studentId} onSaved={() => { setNotice({ type: 'ok', text: 'The LRN was saved.' }); load(); }} />
+        </div>
       )}
       {app.lrnFlaggedAt && (
         <div className="reg-banner reg-banner-warn">

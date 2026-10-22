@@ -1,6 +1,6 @@
 const pool = require('../db/pool');
 const {
-  createStudent, guardianOwnsStudent, findStudentByFullName, duplicateNameMessage, findStudentByLrn,
+  createStudent, guardianOwnsStudent, findStudentByFullName, duplicateNameMessage,
   activeYearEnrollment, alreadyEnrolledMessage,
 } = require('../db/students');
 const { upsertGuardian } = require('../db/guardians');
@@ -11,7 +11,7 @@ const {
 const { getDocumentsForApplication } = require('../db/documents');
 const { getRequiredDocumentTypes } = require('../lib/documentTypes');
 const {
-  isValidName, isValidContactNumber, isValidLrn, isValidSex, isValidRelationship, isValidText,
+  isValidName, isValidContactNumber, isValidSex, isValidRelationship, isValidText,
   birthDateIssue, toId, addressIssue, NAME_MIN, NAME_MAX, CONTACT_MESSAGE,
 } = require('../utils/validators');
 const { sendDbError } = require('../utils/dbErrors');
@@ -62,7 +62,6 @@ function applicationProblem(b) {
   const dateProblem = birthDateIssue(b.birthDate);
   if (dateProblem) return dateProblem;
   if (!isValidSex(b.sex)) return 'Choose the student\u2019s sex (Male or Female).';
-  if (b.lrn !== undefined && b.lrn !== null && b.lrn !== '' && !isValidLrn(b.lrn)) return 'LRN should be exactly 12 digits.';
   if (toId(b.gradeLevelId) === null) return 'Unrecognized grade level.';
   if (!isValidName(b.guardianFirstName)) return `Enter the guardian's first name (${NAME_RULE}).`;
   const guardianMiddle = middleNameProblem(b.guardianMiddleName, b.guardianNoMiddleName, "guardian's middle name");
@@ -99,7 +98,7 @@ async function submit(req, res) {
   const client = await pool.connect();
   try {
     const {
-      firstName, middleName, lastName, birthDate, sex, lrn,
+      firstName, middleName, lastName, birthDate, sex,
       guardianFirstName, guardianMiddleName, guardianLastName,
       relationship, contactNumber, address, validIdType,
       gradeLevelId,
@@ -113,21 +112,15 @@ async function submit(req, res) {
     if (problem) return res.status(400).json({ message: problem });
 
     const gradeId = toId(gradeLevelId);
-    const lrnValue = lrn ? lrn.trim() : '';
 
-    // Kinder (sort_order 0) is the one level where a genuinely new learner
-    // has no LRN yet -- DepEd issues it immediately on first entry there.
-    // Anyone entering at Grade 1-6 should already have one from wherever
-    // they started, so it's required rather than optional at that point.
-    // Keyed off sort_order from the DB, not a hardcoded grade id, since
-    // ids can drift from whatever a fresh seed happens to assign.
+    // A NEW learner's LRN is not asked of the parent: the registrar reads it from
+    // the submitted documents and records it during review (Missing LRN), so
+    // any `lrn` sent to this endpoint is ignored. A returning learner is found
+    // by LRN on the separate lookup path.
     const gradeResult = await pool.query('SELECT sort_order, name FROM grade_levels WHERE id = $1', [gradeId]);
     const gradeRow = gradeResult.rows[0];
     if (!gradeRow) {
       return res.status(400).json({ message: 'Unrecognized grade level.' });
-    }
-    if (gradeRow.sort_order > 0 && !lrnValue) {
-      return res.status(400).json({ message: 'LRN is required when enrolling into Grade 1 through Grade 6.' });
     }
 
     // The school year is never taken from the client -- a parent submitting
@@ -156,26 +149,6 @@ async function submit(req, res) {
     );
     if (dateProblem) return res.status(400).json({ message: dateProblem, reason: 'birth_date_invalid' });
 
-    // An LRN belongs to one learner in DepEd's register, so it belongs to one
-    // record here. Checked before anything is written, so the parent gets a
-    // sentence rather than a failed insert.
-    if (lrnValue) {
-      // This form makes a NEW learner, so an LRN already in the register
-      // belongs to somebody else — a mistyped digit far more often than a
-      // learner being entered twice. "Already enrolled" is the answer on the
-      // returning-learner path below, where the learner is this parent's own.
-      // The learner that already holds a matching LRN is never named back to
-      // the parent: this form is open to every account, so echoing a name
-      // keyed off an LRN would let one family look up another family's child.
-      const lrnOwner = await findStudentByLrn(lrnValue);
-      if (lrnOwner) {
-        return res.status(409).json({
-          message: `That LRN is already on file. Check the LRN on your child's Form 137, or use "Find Returning Student" to look up a learner who has enrolled here before.`,
-          reason: 'duplicate_lrn',
-        });
-      }
-    }
-
     // No two learners may share a name, whatever grade level they are in.
     const sameName = await findStudentByFullName({ firstName, middleName, lastName });
     if (sameName) {
@@ -200,7 +173,7 @@ async function submit(req, res) {
     await client.query('BEGIN');
     const studentId = await createStudent(client, {
       firstName: firstName.trim(), middleName: middleName ? middleName.trim() : undefined, lastName: lastName.trim(),
-      birthDate: birthDate.trim(), sex, lrn: lrnValue || undefined,
+      birthDate: birthDate.trim(), sex,
     });
     await upsertGuardian(client, {
       userId: req.user.id, firstName: guardianFirstName.trim(),
