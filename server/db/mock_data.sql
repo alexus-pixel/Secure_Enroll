@@ -82,6 +82,12 @@ BEGIN
     RAISE EXCEPTION 'Edit the first line of this script: set enc_key to the ENCRYPTION_KEY from Render, then run it again.';
   END IF;
 
+  -- The "publish schedule" columns. The API adds them on startup, but this makes
+  -- the script work even if it is run before the new API version has started.
+  ALTER TABLE sections
+    ADD COLUMN IF NOT EXISTS schedule_published_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS schedule_published_by BIGINT REFERENCES users(id) ON DELETE SET NULL;
+
   -- ==========================================================================
   -- 1. CLEAR ALL DATA (structure, roles, permissions, grade levels, required
   --    documents and school hours stay).
