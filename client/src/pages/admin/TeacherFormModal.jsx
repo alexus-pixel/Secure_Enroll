@@ -20,7 +20,7 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
     sex: teacher?.sex || '',
     prcLicenseNumber: teacher?.prc_license_number || '',
     address: teacher?.address || '',
-    maxPeriodsPerDay: teacher?.max_periods_per_day || 10,
+    maxPeriodsPerDay: teacher?.max_periods_per_day || 8,
     subjectIds: teacher?.subject_ids ? [...teacher.subject_ids] : [],
   });
   const [error, setError] = useState('');
@@ -29,13 +29,13 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
   // not every teacher on file has one recorded.
   const prcProblem = form.prcLicenseNumber && !/^\d{7}$/.test(form.prcLicenseNumber)
     ? 'PRC license number must be exactly 7 digits.' : '';
-  // A full teaching day is ten to twelve periods. The server holds the same
+  // A teacher handles three to eight periods a day. The server holds the same
   // range; this is only so the form says so before Save is pressed.
   const periodsProblem = (() => {
     const n = Number(form.maxPeriodsPerDay);
     if (!Number.isInteger(n)) return 'Periods per day must be a whole number.';
-    if (n < 10) return 'A teacher handles at least 10 periods a day.';
-    if (n > 12) return 'A teacher handles at most 12 periods a day.';
+    if (n < 3) return 'A teacher handles at least 3 periods a day.';
+    if (n > 8) return 'A teacher handles at most 8 periods a day.';
     return '';
   })();
 
@@ -273,8 +273,8 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
             <div>
               <label className="label">Max periods per day</label>
               <input
-                className={`input${periodsProblem ? ' input-error' : ''}`} type="number" min="10" max="12" step="1"
-                placeholder="10 to 12, e.g. 10" value={form.maxPeriodsPerDay}
+                className={`input${periodsProblem ? ' input-error' : ''}`} type="number" min="3" max="8" step="1"
+                placeholder="3 to 8, e.g. 8" value={form.maxPeriodsPerDay}
                 onChange={(e) => setForm({ ...form, maxPeriodsPerDay: Number(e.target.value) })}
               />
               {periodsProblem ? <p className="field-error">{periodsProblem}</p> : null}
@@ -285,7 +285,7 @@ export default function TeacherFormModal({ mode, teacher, onClose, onSubmit }) {
                 in the middle of an edit form. */}
           </div>
           <p className="hint">
-            The most periods this teacher can be booked for on any single day, across every grade and section \u2014 between 10 and 12, and separate from the school-wide weekly cap.
+            The most periods this teacher can be booked for on any single day, across every grade and section. It must be between 3 and 8, and it is separate from the school-wide weekly cap.
           </p>
 
           <div className="field">

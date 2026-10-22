@@ -204,7 +204,7 @@ BEGIN
   INSERT INTO teachers (first_name, middle_name, last_name, email, contact_number, degree, major, date_hired,
                         is_active, status, sex, prc_license_number, address, max_periods_per_day, created_by)
   SELECT t.first_name, t.middle_name, t.last_name, t.email, pgp_sym_encrypt(t.phone, enc_key), t.degree, t.major, t.hired,
-         TRUE, 'active', t.sex, t.prc, pgp_sym_encrypt(t.addr, enc_key), 10, admin_id
+         TRUE, 'active', t.sex, t.prc, pgp_sym_encrypt(t.addr, enc_key), 8, admin_id
   FROM (VALUES
     (1,  'Maria Cristina', 'Lopez',   'Reyes',      'maria.reyes@caloocan-es.example',      '09181110001', 'BEEd', 'Generalist',        date '2012-06-04', 'female', '1000001', 'Blk 4 Lot 2 Libis Street, Brgy. 28, Caloocan City'),
     (2,  'Jocelyn',        'Ramos',   'Santos',     'jocelyn.santos@caloocan-es.example',   '09181110002', 'BEEd', 'Generalist',        date '2014-06-02', 'female', '1000002', 'Blk 9 Lot 7 Congress Road, Brgy. 171, Caloocan City'),

@@ -612,7 +612,7 @@ async function getTeacherDailyLoad(db, teacherId, schoolYearId, day, excludeEntr
 
 async function getTeacherMaxPeriodsPerDay(db, teacherId) {
   const result = await db.query('SELECT max_periods_per_day FROM teachers WHERE id = $1', [teacherId]);
-  return result.rows[0]?.max_periods_per_day ?? 10;
+  return result.rows[0]?.max_periods_per_day ?? 8;
 }
 
 // Each teacher has their own editable daily cap (teachers.max_periods_per_day,

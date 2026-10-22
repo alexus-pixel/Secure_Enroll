@@ -444,23 +444,22 @@ async function ensureSchema() {
       ADD COLUMN IF NOT EXISTS enrollment_closed_at TIMESTAMPTZ`);
 
   // --- A teacher's daily teaching load -------------------------------------
-  // A full teaching day here is ten to twelve periods, so the per-teacher cap
-  // is only meaningful inside that range: below ten it is not a working day,
-  // above twelve there is no room left for it in a 6 AM - 6 PM school day.
-  // Caps set under the older 1-20 rule are moved into range before the
-  // tighter CHECK goes on, so an existing database is not left failing it.
+  // A teacher handles three to eight periods a day: fewer is not a working
+  // day, more than eight does not fit a teacher's load. Caps set under the
+  // older rules (1-20, then 10-12) are moved into range before the CHECK goes
+  // on, so an existing database is not left failing it.
   await step('teacher daily cap range', `
     ALTER TABLE teachers DROP CONSTRAINT IF EXISTS teachers_max_periods_per_day_check`);
   await step('teacher daily cap backfill', `
     UPDATE teachers
-       SET max_periods_per_day = LEAST(GREATEST(COALESCE(max_periods_per_day, 10), 10), 12)
-     WHERE max_periods_per_day IS NULL OR max_periods_per_day < 10 OR max_periods_per_day > 12`);
+       SET max_periods_per_day = LEAST(GREATEST(COALESCE(max_periods_per_day, 8), 3), 8)
+     WHERE max_periods_per_day IS NULL OR max_periods_per_day < 3 OR max_periods_per_day > 8`);
   await step('teacher daily cap default', `
-    ALTER TABLE teachers ALTER COLUMN max_periods_per_day SET DEFAULT 10`);
+    ALTER TABLE teachers ALTER COLUMN max_periods_per_day SET DEFAULT 8`);
   await step('teacher daily cap check', `
     ALTER TABLE teachers
       ADD CONSTRAINT teachers_max_periods_per_day_check
-      CHECK (max_periods_per_day >= 10 AND max_periods_per_day <= 12)`);
+      CHECK (max_periods_per_day >= 3 AND max_periods_per_day <= 8)`);
 
   // --- Undoing a schedule hand-over -----------------------------------------
   // Deactivating a teacher means handing every class they still hold to

@@ -153,7 +153,7 @@ async function createTeacher(db, {
      VALUES ($1, $2, $3, $4, pgp_sym_encrypt($5::text, $13), $6, $7, $8, $9, $10,
              CASE WHEN $11::text IS NULL THEN NULL ELSE pgp_sym_encrypt($11::text, $13) END,
              -- A full teaching day, when the form did not say otherwise.
-             COALESCE($12, 10), $14)
+             COALESCE($12, 8), $14)
      RETURNING id, first_name, last_name, email`,
     [
       firstName, middleName || null, lastName, email, contactNumber || null, degree || null, major || null,
